@@ -126,6 +126,33 @@ echo.
 pause
 goto :eof
 
+:whisper_not_found
+echo.
+echo  ╔═══════════════════════════════════════════════╗
+echo  ║  [錯誤] 找不到 Whisper 語音辨識引擎！         ║
+echo  ╚═══════════════════════════════════════════════╝
+echo.
+echo  faster-whisper 套件未正確安裝。
+echo.
+echo  請手動執行以下指令安裝：
+echo.
+echo    pip install faster-whisper
+echo.
+echo  或使用專案的 requirements.txt：
+echo.
+echo    pip install -r requirements.txt
+echo.
+echo  如果安裝失敗，可能原因：
+echo    1. 網路連線問題
+echo    2. Python 版本不相容
+echo    3. 缺少必要的系統套件
+echo.
+echo  詳細安裝說明請參考：
+echo    https://github.com/SYSTRAN/faster-whisper
+echo.
+pause
+goto :eof
+
 :python_found
 
 REM =====================================================
@@ -173,6 +200,12 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo        [OK] 套件安裝完成
+
+REM 驗證 faster-whisper 是否成功安裝
+"%PYTHON_PATH%" -c "import faster_whisper" >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    goto :whisper_not_found
+)
 
 :packages_ready
 
