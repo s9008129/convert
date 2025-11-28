@@ -56,25 +56,26 @@ ollama pull qwen2.5:7b
 ollama pull llama3.1:8b
 ```
 
-### 2. 下載 faster-whisper-xxl（Windows）
+### 2. 建立 Python 環境並安裝依賴
 
-從 [GitHub Releases](https://github.com/Purfview/whisper-standalone-win/releases) 下載 `Faster-Whisper-XXL_rXXX_windows.zip`。
+建立虛擬環境或使用可攜式 Python，並安裝 `requirements.txt`：
 
-解壓縮後，將 `faster-whisper-xxl.exe` 放入專案根目錄。
-
-### 3. 準備 Python 環境
-
-**方法 A：使用可攜式 Python（推薦）**
-
-1. 下載 [WinPython](https://winpython.github.io/) 精簡版
-2. 解壓縮到 `python/` 目錄
-3. 安裝依賴：`python\python.exe -m pip install pyyaml httpx`
-
-**方法 B：使用系統 Python**
-
-```bash
-pip install pyyaml httpx
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+或執行：
+
+```powershell
+python install_deps.py
+```
+
+> 若您偏好可攜式 Python，請將其放在 `python/` 目錄後執行 `python\python.exe -m pip install -r requirements.txt`。
+
+### 3. （選用）下載 faster-whisper-xxl.exe
+
+若仍需舊版獨立執行檔，可從 [GitHub Releases](https://github.com/Purfview/whisper-standalone-win/releases) 下載並放在專案根目錄，但預設流程已改為 Python 版 faster-whisper。
 
 ### 4. 開始使用
 
@@ -91,8 +92,10 @@ pip install pyyaml httpx
 ├── 開始轉錄.bat          # Windows 啟動腳本
 ├── main.py               # 主程式
 ├── config.yaml           # 配置檔
-├── faster-whisper-xxl.exe # 語音轉錄引擎（需下載）
-├── python/               # 可攜式 Python（可選）
+├── .venv/                # 推薦：專案虛擬環境
+├── requirements.txt      # Python 依賴清單
+├── faster-whisper-xxl.exe # （選用）舊版獨立轉錄引擎
+├── python/               # （選用）可攜式 Python
 ├── src/                  # 核心模組
 │   ├── ollama_client.py  # Ollama LLM 客戶端
 │   ├── whisper_transcriber.py # Whisper 轉錄器
@@ -170,6 +173,12 @@ whisper:
 1. 嘗試更換模型（推薦 qwen2.5:7b 處理中文）
 2. 調低 temperature（如 0.5）讓輸出更精確
 3. 自訂 system_prompt 符合您的需求
+
+---
+
+## 部署 / 移轉檢查表
+
+若需要將專案移轉至另一台工作站，請參考 `docs/deployment_checklist.md`，逐項確認 GPU、Ollama、Python 依賴與批次腳本流程是否就緒。
 
 ---
 

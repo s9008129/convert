@@ -245,7 +245,8 @@ def main():
             language=whisper_config.get("language", "zh"),
             device=whisper_config.get("device", "auto"),
             compute_type=whisper_config.get("compute_type", "float16"),
-            cache_dir=str(temp_dir)
+            cache_dir=str(temp_dir),
+            backend=whisper_config.get("backend", "auto")
         )
     except Exception as e:
         logger.error("初始化 Whisper 失敗: %s", e)

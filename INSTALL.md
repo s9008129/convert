@@ -48,80 +48,44 @@ curl http://localhost:11434/api/tags
 
 ---
 
-## 步驟 3：下載 faster-whisper-xxl
+## 步驟 3：建立 Python 環境並安裝依賴
 
-### 下載執行檔
-
-1. 前往 [GitHub Releases](https://github.com/Purfview/whisper-standalone-win/releases)
-2. 下載最新的 `Faster-Whisper-XXL_rXXX_windows.zip`
-3. 解壓縮到專案根目錄
-
-### 驗證安裝
+### 建立虛擬環境（推薦）
 
 ```powershell
 cd 會議轉錄工具
-.\faster-whisper-xxl.exe --help
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-應該會顯示使用說明。
+### 使用可攜式 Python
 
----
-
-## 步驟 4：設定 Python 環境
-
-### 方法 A：可攜式 Python（推薦）
-
-**優點**：不影響系統環境，可隨專案移動
-
-1. 前往 [WinPython](https://winpython.github.io/)
-2. 下載 `WinPython64-3.11.x.0dot`（精簡版，約 30MB）
-3. 解壓縮到 `會議轉錄工具\python\` 目錄
-
-安裝依賴：
+1. 下載 [WinPython](https://winpython.github.io/) 或官方 embeddable 版本
+2. 解壓縮到 `會議轉錄工具\python\` 目錄
+3. 執行：
 
 ```powershell
 cd 會議轉錄工具
-.\python\python.exe -m pip install pyyaml httpx
+.\python\python.exe -m pip install -r requirements.txt
 ```
 
-### 方法 B：Python Embedded
+### 指令式安裝
 
-1. 前往 [Python 官方下載](https://www.python.org/downloads/windows/)
-2. 下載「Windows embeddable package (64-bit)」
-3. 解壓縮到 `會議轉錄工具\python\` 目錄
-
-**重要設定**：
-
-1. 編輯 `python\python311._pth`（版本號依下載版本調整）
-2. 取消註解最後一行 `import site`
-3. 新增一行 `Lib\site-packages`
-
-下載 pip：
+亦可直接執行：
 
 ```powershell
-# 下載 get-pip.py
-Invoke-WebRequest -Uri https://bootstrap.pypa.io/get-pip.py -OutFile python\get-pip.py
-
-# 安裝 pip
-.\python\python.exe python\get-pip.py
-
-# 安裝依賴
-.\python\python.exe -m pip install pyyaml httpx
+python install_deps.py
 ```
 
-### 方法 C：系統 Python
+> `requirements.txt` 已包含 `pyyaml`, `httpx`, `faster-whisper` 等必要套件，與批次腳本一致。
 
-```powershell
-# 確認 Python 版本
-python --version
+### （選用）Legacy faster-whisper-xxl.exe
 
-# 安裝依賴
-pip install pyyaml httpx
-```
+若仍需傳統的 Windows 獨立執行檔，可依照原流程下載 `faster-whisper-xxl.exe` 至根目錄，但預設流程已改為 Python 版本。
 
 ---
 
-## 步驟 5：設定 Windows 安全性
+## 步驟 4：設定 Windows 安全性
 
 ### Windows Defender 例外
 
@@ -131,9 +95,11 @@ pip install pyyaml httpx
 # 將工具資料夾加入例外
 Add-MpPreference -ExclusionPath "C:\Tools\會議轉錄工具"
 
-# 或只排除特定執行檔
-Add-MpPreference -ExclusionPath "C:\Tools\會議轉錄工具\faster-whisper-xxl.exe"
+# 或只排除特定執行檔（依實際環境選擇）
+Add-MpPreference -ExclusionPath "C:\Tools\會議轉錄工具\.venv\Scripts\python.exe"
 Add-MpPreference -ExclusionPath "C:\Tools\會議轉錄工具\python\python.exe"
+# （選用）若仍使用 legacy exe 可再加上：
+# Add-MpPreference -ExclusionPath "C:\Tools\會議轉錄工具\faster-whisper-xxl.exe"
 
 # 驗證設定
 Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
@@ -148,7 +114,7 @@ Get-ChildItem "C:\Tools\會議轉錄工具" -Recurse | Unblock-File
 
 ---
 
-## 步驟 6：驗證安裝
+## 步驟 5：驗證安裝
 
 ### 檢查清單
 
@@ -159,11 +125,14 @@ curl http://localhost:11434/api/tags
 # 2. GPU
 nvidia-smi
 
-# 3. Python
-.\python\python.exe -c "import yaml; print('Python OK')"
+# 3. Python 依賴
+.\.venv\Scripts\python.exe -c "import yaml, httpx, faster_whisper; print('Python OK')"
 
-# 4. Whisper
-.\faster-whisper-xxl.exe --help
+# 4. Whisper Backend
+.\.venv\Scripts\python.exe -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu'); print('Whisper backend OK')"
+
+# （選用）Legacy exe
+# .\faster-whisper-xxl.exe --help
 ```
 
 ### 測試完整流程
@@ -185,8 +154,10 @@ nvidia-smi
 ├── config.yaml                ✅ 配置檔
 ├── README.md                  ✅ 說明文件
 ├── INSTALL.md                 ✅ 本安裝指南
-├── faster-whisper-xxl.exe     📥 需下載
-├── python/                    📥 需設定
+├── .venv/                     ✅ 推薦：虛擬環境（或 python/ 可攜版本）
+├── requirements.txt           ✅ 依賴清單
+├── faster-whisper-xxl.exe     ⚙️ （選用）legacy 轉錄引擎
+├── python/                    ⚙️ （選用）可攜式 Python
 │   ├── python.exe
 │   └── Lib/site-packages/
 │       ├── yaml/

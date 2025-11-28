@@ -100,7 +100,8 @@ class WhisperTranscriber:
         language: str = "zh",
         device: str = "auto",
         compute_type: str = "float16",
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
+        backend: str = "auto"
     ):
         """
         初始化轉錄器
@@ -112,6 +113,7 @@ class WhisperTranscriber:
             device: 運算裝置 (auto/cuda/cpu)
             compute_type: 計算精度 (float16/int8/int8_float16)
             cache_dir: 快取目錄
+            backend: 後端來源 (auto/python/exe)
         """
         self.model = model
         self.language = language
@@ -119,9 +121,13 @@ class WhisperTranscriber:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         
         # 決定後端和裝置
-        self.backend = self._detect_backend(exe_path)
+        self.backend = self._detect_backend(exe_path, backend)
         self.device = self._detect_device(device)
         self.exe_path = self._resolve_exe_path(exe_path) if self.backend == "exe" else None
+        if self.backend == "exe" and not self.exe_path:
+            raise TranscriptionError(
+                "找不到 faster-whisper-xxl.exe，請確認路徑或改用 python 後端"
+            )
         
         logger.info("[Whisper] 初始化完成")
         logger.info("[Whisper] 後端: %s", self.backend)
@@ -129,37 +135,43 @@ class WhisperTranscriber:
         logger.info("[Whisper] 模型: %s", model)
         logger.info("[Whisper] 語言: %s", language)
     
-    def _detect_backend(self, exe_path: Optional[str]) -> str:
+    def _detect_backend(self, exe_path: Optional[str], preferred: str) -> str:
         """檢測可用的後端"""
-        # Windows 優先使用獨立執行檔
-        if platform.system() == "Windows":
-            if exe_path and Path(exe_path).exists():
-                return "exe"
-            
-            # 檢查常見位置
-            common_paths = [
-                Path.cwd() / "faster-whisper-xxl.exe",
-                Path.cwd() / "Whisper-Faster-XXL" / "faster-whisper-xxl.exe",
-            ]
-            for p in common_paths:
-                if p.exists():
-                    return "exe"
+        preferred = (preferred or "auto").lower()
+        if preferred not in {"auto", "exe", "python"}:
+            raise TranscriptionError("不支援的後端設定: %s" % preferred)
         
-        # 嘗試使用 Python 套件
-        try:
-            import faster_whisper
+        # python 後端優先，除非使用者強制 exe
+        if preferred in {"python", "auto"} and self._python_backend_available():
             return "python"
-        except ImportError:
-            pass
         
-        # Windows 時回退到 exe
-        if platform.system() == "Windows":
+        if preferred == "python":
+            raise TranscriptionError(
+                "faster-whisper 套件未安裝，無法使用 python 後端\n"
+                "請執行: pip install faster-whisper"
+            )
+        
+        exe_path_resolved = self._resolve_exe_path(exe_path)
+        if exe_path_resolved:
             return "exe"
+        
+        if preferred == "exe":
+            raise TranscriptionError(
+                "找不到 faster-whisper-xxl.exe，請更新設定或改用 python 後端"
+            )
         
         raise TranscriptionError(
             "找不到可用的 Whisper 後端\n"
             "請安裝 faster-whisper-xxl.exe 或 pip install faster-whisper"
         )
+
+    def _python_backend_available(self) -> bool:
+        """檢測 faster-whisper 套件"""
+        try:
+            import faster_whisper  # type: ignore
+            return True
+        except ImportError:
+            return False
     
     def _detect_device(self, device: str) -> str:
         """檢測運算裝置"""
@@ -186,7 +198,7 @@ class WhisperTranscriber:
         except Exception:
             return False
     
-    def _resolve_exe_path(self, exe_path: Optional[str]) -> Path:
+    def _resolve_exe_path(self, exe_path: Optional[str]) -> Optional[Path]:
         """解析執行檔路徑"""
         if exe_path:
             p = Path(exe_path)
@@ -204,10 +216,7 @@ class WhisperTranscriber:
             if p.exists():
                 return p.resolve()
         
-        raise AudioFileNotFoundError(
-            "找不到 faster-whisper-xxl.exe\n"
-            "請從 https://github.com/Purfview/whisper-standalone-win/releases 下載"
-        )
+        return None
     
     def _get_cache_path(self, audio_path: Path) -> Optional[Path]:
         """取得快取檔案路徑"""
