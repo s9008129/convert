@@ -229,8 +229,13 @@ class MeetingSummarizer:
         estimated_tokens = self._estimate_tokens(transcript)
         system_prompt = custom_prompt or self.system_prompt
         
-        if estimated_tokens <= self.max_input_tokens:
+        # 根據 Ollama 客戶端的上下文視窗調整最大輸入
+        actual_max_tokens = min(self.max_input_tokens, int(self.client.num_ctx * 0.7))
+        logger.info("[摘要] 預估 tokens: %d, 允許上限: %d", estimated_tokens, actual_max_tokens)
+        
+        if estimated_tokens <= actual_max_tokens:
             # 單次處理
+            logger.info("[摘要] 使用單次處理模式")
             summary = self._generate_summary(
                 transcript, 
                 system_prompt,
@@ -240,7 +245,7 @@ class MeetingSummarizer:
             chunks_processed = 1
         else:
             # 分段處理
-            logger.info("[摘要] 文本過長，啟用分段處理")
+            logger.info("[摘要] 文本過長 (%d > %d)，啟用分段處理", estimated_tokens, actual_max_tokens)
             summary = self._summarize_long_text(
                 transcript,
                 system_prompt,
@@ -302,8 +307,12 @@ class MeetingSummarizer:
         on_token: Optional[Callable[[str], None]]
     ) -> str:
         """處理長文本（分段摘要後合併）"""
-        # 計算每段最大字元數
-        max_chars = self._tokens_to_chars(self.max_input_tokens - 2000)  # 預留空間
+        # 根據實際上下文視窗計算每段最大字元數
+        actual_max_tokens = min(self.max_input_tokens, int(self.client.num_ctx * 0.6))
+        max_chars = self._tokens_to_chars(actual_max_tokens - 1000)  # 預留空間給 prompt 和輸出
+        
+        logger.info("[摘要] 每段最大: %d 字元 (基於 %d tokens)", max_chars, actual_max_tokens)
+        
         chunks = self._split_text(transcript, max_chars)
         
         logger.info("[摘要] 分為 %d 段處理", len(chunks))
@@ -311,7 +320,7 @@ class MeetingSummarizer:
         # 第一階段：各段摘要
         chunk_summaries = []
         for i, chunk in enumerate(chunks, 1):
-            logger.info("[摘要] 處理第 %d/%d 段", i, len(chunks))
+            logger.info("[摘要] 處理第 %d/%d 段 (%d 字元)", i, len(chunks), len(chunk))
             
             chunk_prompt = f"""這是會議逐字稿的第 {i}/{len(chunks)} 部分。
 請提取這部分的重點：
@@ -323,12 +332,20 @@ class MeetingSummarizer:
 2. 提到的決議或結論
 3. 待辦事項（如有）"""
             
-            summary = self.client.generate(
-                prompt=chunk_prompt,
-                temperature=self.temperature,
-                stream=False
-            )
-            chunk_summaries.append(summary)
+            try:
+                summary = self.client.generate(
+                    prompt=chunk_prompt,
+                    temperature=self.temperature,
+                    stream=False
+                )
+                chunk_summaries.append(summary)
+                logger.info("[摘要] 第 %d 段完成 (%d 字)", i, len(summary))
+            except Exception as e:
+                logger.error("[摘要] 第 %d 段處理失敗: %s", i, e)
+                chunk_summaries.append(f"(第 {i} 段處理失敗)")
+        
+        if not chunk_summaries:
+            raise ValueError("所有段落處理都失敗了")
         
         # 第二階段：合併摘要
         logger.info("[摘要] 合併各段摘要")
@@ -354,7 +371,8 @@ class MeetingSummarizer:
     
     def _count_chunks(self, transcript: str) -> int:
         """計算需要的分段數"""
-        max_chars = self._tokens_to_chars(self.max_input_tokens - 2000)
+        actual_max_tokens = min(self.max_input_tokens, int(self.client.num_ctx * 0.6))
+        max_chars = self._tokens_to_chars(actual_max_tokens - 1000)
         return (len(transcript) + max_chars - 1) // max_chars
     
     def _validate_summary(self, summary: str) -> bool:

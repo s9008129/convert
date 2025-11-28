@@ -1,3 +1,12 @@
-pyyaml>=6.0
-httpx>=0.27
-faster-whisper>=1.0
+# 會議轉錄工具 - Python 依賴套件
+# Meeting Transcription Tool - Python Dependencies
+
+# 核心套件
+pyyaml>=6.0              # YAML 設定檔解析
+httpx>=0.27              # HTTP 客戶端（連接 Ollama）
+faster-whisper>=1.0      # Whisper 語音轉錄引擎
+
+# CUDA 加速（選用，有 NVIDIA GPU 時安裝）
+# 如果沒有 GPU，可以註解掉以下兩行
+# nvidia-cudnn-cu12>=9.0
+# nvidia-cublas-cu12>=12.0

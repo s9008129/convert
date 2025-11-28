@@ -12,12 +12,19 @@ llm:
     base_url: "http://localhost:11434"
     
     # 使用的模型
-    # 推薦選項：
-    #   - qwen2.5:7b       中文優化，推薦首選
-    #   - llama3.1:8b      平衡速度與品質
-    #   - mistral:7b       快速，英文較好
-    #   - llama3.1:70b     最高品質（需 40GB+ VRAM）
-    model: "gemma3:270m"
+    # 推薦選項（按 VRAM 需求排序）：
+    #   - gemma3:1b         極小，快速但品質有限（~2GB VRAM）
+    #   - gemma3:4b         小型，平衡速度與品質（~4GB VRAM）
+    #   - qwen2.5:7b        中文優化，推薦首選（~6GB VRAM）
+    #   - llama3.1:8b       平衡速度與品質（~6GB VRAM）
+    #   - gemma3:12b        高品質推薦（~10GB VRAM）
+    #   - mistral:7b        快速，英文較好（~6GB VRAM）
+    #   - qwen2.5:14b       中文最佳（~12GB VRAM）
+    #   - llama3.1:70b      最高品質（需 40GB+ VRAM）
+    #
+    # ⚠️ 注意：gemma3:270m (270M 參數) 過小，無法處理長文本摘要！
+    # RTX 4090 (24GB) 建議使用 gemma3:12b 或 qwen2.5:14b
+    model: "gemma3:12b"
     
     # 上下文視窗大小（token 數）
     # 影響可處理的逐字稿長度

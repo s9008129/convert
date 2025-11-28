@@ -144,6 +144,7 @@ class OllamaClient:
                     if stream:
                         return client.stream("POST", url, json=payload)
                     else:
+                        logger.debug("[Ollama] 發送請求到 %s", endpoint)
                         response = client.post(url, json=payload)
                         response.raise_for_status()
                         return response
@@ -160,12 +161,22 @@ class OllamaClient:
                     raise OllamaModelError("模型不存在: %s" % self.model)
                 elif status == 503:
                     logger.warning("[Ollama] 服務暫時不可用，重試中...")
+                elif status == 500:
+                    # 伺服器內部錯誤，可能是模型問題
+                    error_text = e.response.text[:500] if e.response.text else "未知錯誤"
+                    logger.error("[Ollama] 伺服器錯誤: %s", error_text)
+                    raise OllamaError("Ollama 伺服器錯誤 (可能是輸入過長或模型問題): %s" % error_text)
                 else:
                     raise OllamaError("HTTP 錯誤 %d: %s" % (status, e.response.text))
                     
             except httpx.RequestError as e:
                 last_error = e
                 logger.warning("[Ollama] 連線錯誤: %s", e)
+            
+            except Exception as e:
+                # 捕獲所有其他異常，防止崩潰
+                last_error = e
+                logger.error("[Ollama] 未預期錯誤: %s (%s)", e, type(e).__name__)
             
             if attempt < self.max_retries - 1:
                 time.sleep(self.retry_delay * (attempt + 1))
@@ -202,6 +213,12 @@ class OllamaClient:
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
         
+        # 估算 token 並警告
+        estimated_tokens = self.estimate_tokens(full_prompt)
+        if estimated_tokens > self.num_ctx * 0.9:
+            logger.warning("[Ollama] 輸入可能超出上下文視窗！估計: %d tokens, 上限: %d", 
+                          estimated_tokens, self.num_ctx)
+        
         payload = {
             "model": self.model,
             "prompt": full_prompt,
@@ -214,30 +231,42 @@ class OllamaClient:
         }
         
         logger.info("[Ollama] 開始生成，模型: %s", self.model)
-        logger.info("[Ollama] 輸入長度: %d 字元", len(full_prompt))
+        logger.info("[Ollama] 輸入長度: %d 字元 (~%d tokens)", len(full_prompt), estimated_tokens)
         
         start_time = time.time()
         
-        if stream:
-            return self._generate_stream(payload, on_token)
-        else:
-            return self._generate_sync(payload, start_time)
+        try:
+            if stream:
+                return self._generate_stream(payload, on_token)
+            else:
+                return self._generate_sync(payload, start_time)
+        except Exception as e:
+            logger.error("[Ollama] 生成過程發生錯誤: %s", e)
+            raise
     
     def _generate_sync(self, payload: Dict[str, Any], start_time: float) -> str:
         """同步生成"""
-        response = self._make_request("/api/generate", payload)
-        result = response.json()
-        
-        output = result.get("response", "")
-        elapsed = time.time() - start_time
-        
-        logger.info("[Ollama] 生成完成，輸出長度: %d 字元", len(output))
-        logger.info("[Ollama] 耗時: %.1f 秒", elapsed)
-        
-        # 顯示效能統計
-        self._log_performance_stats(result)
-        
-        return output
+        try:
+            response = self._make_request("/api/generate", payload)
+            result = response.json()
+            
+            output = result.get("response", "")
+            elapsed = time.time() - start_time
+            
+            logger.info("[Ollama] 生成完成，輸出長度: %d 字元", len(output))
+            logger.info("[Ollama] 耗時: %.1f 秒", elapsed)
+            
+            # 顯示效能統計
+            self._log_performance_stats(result)
+            
+            return output
+            
+        except json.JSONDecodeError as e:
+            logger.error("[Ollama] JSON 解析失敗: %s", e)
+            raise OllamaError("回應格式錯誤: %s" % e)
+        except Exception as e:
+            logger.error("[Ollama] 生成失敗: %s", e)
+            raise OllamaError("生成失敗: %s" % e)
     
     def _log_performance_stats(self, result: Dict[str, Any]) -> None:
         """記錄效能統計資訊"""
