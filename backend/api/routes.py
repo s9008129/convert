@@ -41,7 +41,7 @@ async def health_check():
     
     return HealthStatus(
         status="healthy",
-        version="2.1.0",
+        version="2.1.2",
         gpu_available=device_info.get("gpu_available", False),
         gpu_name=device_info.get("gpu_name"),
         ollama_available=ollama_available,
@@ -156,9 +156,11 @@ async def get_task_result(task_id: str):
             detail=f"任務尚未完成，目前狀態: {task.status.value}"
         )
     
-    # 尋找結果檔案
-    base_name = os.path.splitext(task.original_filename)[0]
-    result_filename = f"{base_name}_{task_id}.md"
+    # 尋找結果檔案（安全地組合路徑）
+    base_name = os.path.splitext(os.path.basename(task.original_filename))[0]
+    # 清理檔名，只保留安全字符（含中文）
+    safe_base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-', ' ', '.') or '\u4e00' <= c <= '\u9fff')
+    result_filename = f"{safe_base_name}_{task_id}.md"
     result_path = os.path.join(settings.outputs_dir, result_filename)
     
     if not os.path.exists(result_path):
@@ -175,10 +177,25 @@ async def get_task_result(task_id: str):
 async def cancel_task(task_id: str):
     """
     取消/刪除任務
+    注意：只能取消排隊中的任務，正在處理中的任務無法取消
     """
+    task = task_queue.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"找不到任務: {task_id}")
+    
+    # 檢查任務狀態
+    if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"任務已經結束，狀態: {task.status.value}"
+        )
+    
     success = await task_queue.cancel_task(task_id)
     if not success:
-        raise HTTPException(status_code=404, detail=f"找不到任務: {task_id}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"無法取消任務 {task_id}（可能正在處理中）"
+        )
     
     return {"message": f"任務 {task_id} 已取消"}
 

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
             raise ValueError("GEMINI_API_KEY 必須是字串")
         if v and len(v) < 10:
             raise ValueError("GEMINI_API_KEY 格式無效（長度過短）")
+        # 檢查是否包含特殊字符（API Key 應該只包含英數字符和連字號/底線）
+        if v:
+            import re
+            if not re.match(r'^[A-Za-z0-9_-]+$', v):
+                raise ValueError("GEMINI_API_KEY 格式無效（包含不允許的字符）")
         return v
     GEMINI_BASE_URL: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",

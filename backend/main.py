@@ -56,14 +56,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MeetingScribe",
     description="會議轉錄工具 - 將會議錄音轉換為結構化會議記錄",
-    version="2.1.0",
+    version="2.1.2",
     lifespan=lifespan
 )
 
 # CORS 設定
+# 注意：生產環境應限制 allow_origins 為特定域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # TODO: 生產環境應設定為特定域名
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

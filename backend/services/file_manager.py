@@ -3,6 +3,7 @@ MeetingScribe 檔案管理服務
 """
 
 import os
+import re
 import uuid
 import hashlib
 import aiofiles
@@ -11,6 +12,9 @@ from fastapi import UploadFile
 
 from backend.core.config import settings
 from backend.core.logger import log
+
+# 預編譯正則表達式以提升效能
+SHA256_HASH_PATTERN = re.compile(r'^[0-9a-f]{64}$')
 
 
 class FileManagerService:
@@ -38,6 +42,10 @@ class FileManagerService:
         
         # 安全性檢查：防止路徑遍歷
         if ".." in file.filename or "/" in file.filename or "\\" in file.filename:
+            return False, "檔案名稱包含無效字符"
+        
+        # 額外檢查：防止空字節注入
+        if "\x00" in file.filename:
             return False, "檔案名稱包含無效字符"
         
         # 檢查副檔名
@@ -98,7 +106,12 @@ class FileManagerService:
         return hash_sha256.hexdigest()
     
     def get_cached_transcript(self, file_hash: str) -> Optional[str]:
-        """取得快取的逐字稿"""
+        """取得快取的逐字稿（驗證 hash 格式）"""
+        # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
+        if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
+            log.warning(f"無效的快取 hash 格式: {file_hash}")
+            return None
+        
         cache_file = os.path.join(settings.cache_dir, f"{file_hash}.txt")
         if os.path.exists(cache_file):
             with open(cache_file, 'r', encoding='utf-8') as f:
@@ -106,7 +119,12 @@ class FileManagerService:
         return None
     
     def save_transcript_cache(self, file_hash: str, transcript: str):
-        """儲存逐字稿到快取"""
+        """儲存逐字稿到快取（驗證 hash 格式）"""
+        # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
+        if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
+            log.warning(f"無效的快取 hash 格式，跳過儲存: {file_hash}")
+            return
+        
         cache_file = os.path.join(settings.cache_dir, f"{file_hash}.txt")
         with open(cache_file, 'w', encoding='utf-8') as f:
             f.write(transcript)
@@ -120,8 +138,11 @@ class FileManagerService:
             結果檔案路徑
         """
         # 使用原始檔名（去除副檔名）+ 任務 ID
-        base_name = os.path.splitext(filename)[0]
-        result_filename = f"{base_name}_{task_id}.md"
+        # 安全地處理檔名，避免路徑遍歷
+        base_name = os.path.splitext(os.path.basename(filename))[0]
+        # 清理檔名，只保留安全字符
+        safe_base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-', ' ', '.') or '\u4e00' <= c <= '\u9fff')
+        result_filename = f"{safe_base_name}_{task_id}.md"
         result_path = os.path.join(settings.outputs_dir, result_filename)
         
         async with aiofiles.open(result_path, 'w', encoding='utf-8') as f:
@@ -131,10 +152,23 @@ class FileManagerService:
         return result_path
     
     def delete_file(self, file_path: str) -> bool:
-        """刪除檔案"""
+        """刪除檔案（安全地限制在允許的目錄內）"""
         try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            # 安全性檢查：確保路徑在允許的目錄內
+            abs_path = os.path.abspath(file_path)
+            allowed_dirs = [
+                os.path.abspath(settings.uploads_dir),
+                os.path.abspath(settings.outputs_dir),
+                os.path.abspath(settings.cache_dir)
+            ]
+            
+            is_safe = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+            if not is_safe:
+                log.warning(f"嘗試刪除不允許目錄中的檔案: {file_path}")
+                return False
+            
+            if os.path.exists(abs_path):
+                os.remove(abs_path)
                 return True
         except Exception as e:
             log.error(f"刪除檔案失敗: {e}")

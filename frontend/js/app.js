@@ -186,6 +186,9 @@ async function downloadResult() {
     }
 }
 
+// WebSocket 心跳 - 使用獨立的 interval ID 以便清理
+let heartbeatIntervalId = null;
+
 // ===== WebSocket =====
 function connectWebSocket(taskId) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -204,14 +207,22 @@ function connectWebSocket(taskId) {
     
     state.websocket.onclose = () => {
         console.log('WebSocket 已斷開');
+        // 清理心跳 interval
+        if (heartbeatIntervalId) {
+            clearInterval(heartbeatIntervalId);
+            heartbeatIntervalId = null;
+        }
     };
     
     state.websocket.onerror = (error) => {
         console.error('WebSocket 錯誤:', error);
     };
     
-    // 心跳
-    setInterval(() => {
+    // 心跳 - 清理之前的 interval（如果存在）
+    if (heartbeatIntervalId) {
+        clearInterval(heartbeatIntervalId);
+    }
+    heartbeatIntervalId = setInterval(() => {
         if (state.websocket && state.websocket.readyState === WebSocket.OPEN) {
             state.websocket.send('ping');
         }
@@ -320,14 +331,19 @@ async function showCompleted() {
     // 載入結果
     try {
         const response = await fetch(`/api/tasks/${state.taskId}/result`);
+        if (!response.ok) {
+            throw new Error('載入結果失敗');
+        }
         const text = await response.text();
         
-        // 使用 DOMPurify 或簡單的 textContent 來防止 XSS
-        // 為了安全，直接使用 textContent，Markdown 轉換交由後端
-        const tempDiv = document.createElement('div');
-        tempDiv.textContent = text;
+        // 使用 textContent 來防止 XSS
+        // 創建 pre 元素以保留格式
+        const preElement = document.createElement('pre');
+        preElement.style.whiteSpace = 'pre-wrap';
+        preElement.style.wordWrap = 'break-word';
+        preElement.textContent = text;
         elements.resultPreview.innerHTML = '';
-        elements.resultPreview.appendChild(tempDiv);
+        elements.resultPreview.appendChild(preElement);
         
     } catch (error) {
         console.error('載入結果失敗:', error);
@@ -349,6 +365,12 @@ function resetUI() {
         state.websocket = null;
     }
     
+    // 清理心跳 interval
+    if (heartbeatIntervalId) {
+        clearInterval(heartbeatIntervalId);
+        heartbeatIntervalId = null;
+    }
+    
     // 重置所有區塊
     elements.uploadArea.parentElement.style.display = 'block';
     elements.queueSection.style.display = 'none';
@@ -368,6 +390,9 @@ function resetUI() {
     
     // 清空自訂 Prompt
     elements.userPrompt.value = '';
+    
+    // 重置文件輸入
+    elements.fileInput.value = '';
     
     // 更新健康狀態
     checkHealth();

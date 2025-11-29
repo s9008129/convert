@@ -221,13 +221,13 @@ class WhisperTranscriber:
         return self.cache_dir / cache_name
     
     def _calculate_file_hash(self, file_path: Path) -> str:
-        """計算檔案 hash"""
-        hasher = hashlib.md5()
+        """計算檔案 hash（使用 SHA256 確保安全性）"""
+        hasher = hashlib.sha256()
         
-        # 只讀取前 1MB 加速計算
+        # 讀取整個檔案以確保 hash 準確性
         with open(file_path, 'rb') as f:
-            chunk = f.read(1024 * 1024)
-            hasher.update(chunk)
+            for chunk in iter(lambda: f.read(8192), b""):
+                hasher.update(chunk)
             # 加入檔案大小
             hasher.update(str(file_path.stat().st_size).encode())
         

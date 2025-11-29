@@ -137,6 +137,11 @@ class TaskQueueManager:
             if not task:
                 return False
             
+            # 如果任務正在處理中，無法取消
+            if task_id in self._processing:
+                log.warning(f"任務 {task_id} 正在處理中，無法取消")
+                return False
+            
             # 如果任務在排隊中，從佇列移除
             if task_id in self._queue:
                 self._queue.remove(task_id)
