@@ -3,6 +3,7 @@ MeetingScribe 檔案管理服務
 """
 
 import os
+import re
 import uuid
 import hashlib
 import aiofiles
@@ -11,6 +12,9 @@ from fastapi import UploadFile
 
 from backend.core.config import settings
 from backend.core.logger import log
+
+# 預編譯正則表達式以提升效能
+SHA256_HASH_PATTERN = re.compile(r'^[0-9a-f]{64}$')
 
 
 class FileManagerService:
@@ -36,9 +40,7 @@ class FileManagerService:
         if not file.filename:
             return False, "檔案名稱不能為空"
         
-        # 安全性檢查：防止路徑遍歷（更嚴格的檢查）
-        # 只允許字母、數字、底線、連字號、點號和中文字符
-        import re
+        # 安全性檢查：防止路徑遍歷
         if ".." in file.filename or "/" in file.filename or "\\" in file.filename:
             return False, "檔案名稱包含無效字符"
         
@@ -106,7 +108,7 @@ class FileManagerService:
     def get_cached_transcript(self, file_hash: str) -> Optional[str]:
         """取得快取的逐字稿（驗證 hash 格式）"""
         # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
-        if not file_hash or len(file_hash) != 64 or not all(c in '0123456789abcdef' for c in file_hash.lower()):
+        if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
             log.warning(f"無效的快取 hash 格式: {file_hash}")
             return None
         
@@ -119,7 +121,7 @@ class FileManagerService:
     def save_transcript_cache(self, file_hash: str, transcript: str):
         """儲存逐字稿到快取（驗證 hash 格式）"""
         # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
-        if not file_hash or len(file_hash) != 64 or not all(c in '0123456789abcdef' for c in file_hash.lower()):
+        if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
             log.warning(f"無效的快取 hash 格式，跳過儲存: {file_hash}")
             return
         
