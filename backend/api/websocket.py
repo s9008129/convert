@@ -1,0 +1,143 @@
+"""
+MeetingScribe WebSocket 進度推送
+"""
+
+import asyncio
+from typing import Dict, Set
+from fastapi import WebSocket, WebSocketDisconnect
+
+from backend.core.logger import log
+from backend.models.schemas import ProgressMessage, TaskStatus
+from backend.services import task_queue
+
+
+class ConnectionManager:
+    """
+    WebSocket 連接管理器
+    管理所有活躍的 WebSocket 連接
+    """
+    
+    def __init__(self):
+        self._connections: Dict[str, Set[WebSocket]] = {}  # task_id -> WebSocket 集合
+        
+    async def connect(self, websocket: WebSocket, task_id: str):
+        """接受新的 WebSocket 連接"""
+        await websocket.accept()
+        
+        if task_id not in self._connections:
+            self._connections[task_id] = set()
+        self._connections[task_id].add(websocket)
+        
+        log.debug(f"WebSocket 連接建立: {task_id}")
+    
+    def disconnect(self, websocket: WebSocket, task_id: str):
+        """移除 WebSocket 連接"""
+        if task_id in self._connections:
+            self._connections[task_id].discard(websocket)
+            if not self._connections[task_id]:
+                del self._connections[task_id]
+        
+        log.debug(f"WebSocket 連接斷開: {task_id}")
+    
+    async def send_progress(self, task_id: str, message: ProgressMessage):
+        """發送進度訊息到特定任務的所有連接"""
+        if task_id not in self._connections:
+            return
+        
+        dead_connections = set()
+        
+        for websocket in self._connections[task_id]:
+            try:
+                await websocket.send_json(message.model_dump())
+            except Exception:
+                dead_connections.add(websocket)
+        
+        # 清理失效連接
+        for websocket in dead_connections:
+            self.disconnect(websocket, task_id)
+    
+    async def broadcast_queue_update(self):
+        """廣播排隊狀態更新到所有連接"""
+        queue_status = task_queue.get_queue_status()
+        
+        for task_id, connections in self._connections.items():
+            task = task_queue.get_task(task_id)
+            if task and task.status == TaskStatus.QUEUED:
+                message = ProgressMessage(
+                    task_id=task_id,
+                    status=task.status,
+                    progress=task.progress,
+                    stage=task.stage,
+                    message="排隊中",
+                    queue_position=task.queue_position,
+                    queue_total=queue_status.total_queued
+                )
+                await self.send_progress(task_id, message)
+
+
+# 全域連接管理器
+connection_manager = ConnectionManager()
+
+
+async def websocket_endpoint(websocket: WebSocket, task_id: str):
+    """
+    WebSocket 端點
+    即時推送任務處理進度
+    """
+    await connection_manager.connect(websocket, task_id)
+    
+    try:
+        # 立即發送當前狀態
+        task = task_queue.get_task(task_id)
+        if task:
+            queue_status = task_queue.get_queue_status()
+            message = ProgressMessage(
+                task_id=task_id,
+                status=task.status,
+                progress=task.progress,
+                stage=task.stage,
+                message=f"目前狀態: {task.status.value}",
+                eta_seconds=task.estimated_wait_seconds,
+                queue_position=task.queue_position,
+                queue_total=queue_status.total_queued
+            )
+            await websocket.send_json(message.model_dump())
+        
+        # 保持連接並定期發送更新
+        while True:
+            try:
+                # 等待客戶端訊息（心跳）或超時
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
+                
+                # 處理心跳
+                if data == "ping":
+                    await websocket.send_text("pong")
+                
+            except asyncio.TimeoutError:
+                # 超時，發送當前狀態
+                task = task_queue.get_task(task_id)
+                if task:
+                    queue_status = task_queue.get_queue_status()
+                    message = ProgressMessage(
+                        task_id=task_id,
+                        status=task.status,
+                        progress=task.progress,
+                        stage=task.stage,
+                        message=task.stage,
+                        eta_seconds=task.estimated_wait_seconds,
+                        queue_position=task.queue_position,
+                        queue_total=queue_status.total_queued
+                    )
+                    await websocket.send_json(message.model_dump())
+                    
+                    # 如果任務已完成，關閉連接
+                    if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                        break
+                        
+    except WebSocketDisconnect:
+        log.debug(f"WebSocket 客戶端斷開: {task_id}")
+    finally:
+        connection_manager.disconnect(websocket, task_id)

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeetingScribe - 會議轉錄工具</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 標題區 -->
+        <header class="header">
+            <h1 class="title">MeetingScribe</h1>
+            <p class="subtitle">將會議錄音轉換為結構化會議記錄</p>
+        </header>
+
+        <!-- 系統狀態 -->
+        <div class="status-bar" id="statusBar">
+            <div class="status-item">
+                <span class="status-label">系統狀態</span>
+                <span class="status-value" id="systemStatus">檢查中...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">GPU</span>
+                <span class="status-value" id="gpuStatus">--</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">排隊人數</span>
+                <span class="status-value" id="queueCount">--</span>
+            </div>
+        </div>
+
+        <!-- 模式選擇 -->
+        <section class="section mode-section">
+            <h2 class="section-title">選擇處理模式</h2>
+            <div class="mode-selector">
+                <div class="mode-card selected" data-mode="local" id="modeLocal">
+                    <div class="mode-icon">🔒</div>
+                    <div class="mode-name">方案 A：本地模式</div>
+                    <ul class="mode-features">
+                        <li>✓ 完全離線處理</li>
+                        <li>✓ 資料不外傳</li>
+                        <li>✓ 適合機敏資料</li>
+                    </ul>
+                    <div class="mode-model">使用：Gemma3:12B (本地 Ollama)</div>
+                </div>
+                <div class="mode-card" data-mode="cloud" id="modeCloud">
+                    <div class="mode-icon">☁️</div>
+                    <div class="mode-name">方案 B：雲端模式</div>
+                    <ul class="mode-features">
+                        <li>✓ 高品質摘要</li>
+                        <li>✓ 處理速度較快</li>
+                        <li>✓ 適合非機敏資料</li>
+                    </ul>
+                    <div class="mode-model">使用：Gemini API</div>
+                    <div class="mode-warning" id="cloudWarning" style="display: none;">
+                        ⚠️ 未設定 API Key
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 自訂 Prompt -->
+        <section class="section prompt-section">
+            <h2 class="section-title">📝 自訂會議記錄格式（選填）</h2>
+            <div class="prompt-container">
+                <textarea 
+                    id="userPrompt" 
+                    class="prompt-input" 
+                    placeholder="請輸入您希望的會議記錄格式或特殊要求...&#10;&#10;範例：&#10;• 請列出所有決議事項和負責人&#10;• 請用表格呈現待辦事項&#10;• 請特別標註預算相關討論"
+                    rows="4"
+                ></textarea>
+                <p class="prompt-hint">💡 留空則使用預設格式</p>
+            </div>
+        </section>
+
+        <!-- 檔案上傳 -->
+        <section class="section upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">拖放檔案至此處</div>
+                <div class="upload-text-sub">或點擊選擇檔案</div>
+                <input type="file" id="fileInput" accept=".mp3,.mp4,.wav,.m4a,.mkv,.webm,.ogg,.flac,.avi,.mov" hidden>
+                <p class="upload-hint">支援格式：MP3, MP4, WAV, M4A, MKV... (最大 <span id="maxFileSize">100</span>MB)</p>
+            </div>
+        </section>
+
+        <!-- 排隊狀態 -->
+        <section class="section queue-section" id="queueSection" style="display: none;">
+            <h2 class="section-title">📊 排隊狀態</h2>
+            <div class="queue-info">
+                <div class="queue-item">
+                    <span class="queue-label">目前排隊人數</span>
+                    <span class="queue-value" id="queueTotal">0</span>
+                    <span class="queue-unit">人</span>
+                </div>
+                <div class="queue-item">
+                    <span class="queue-label">您的排隊位置</span>
+                    <span class="queue-value" id="queuePosition">--</span>
+                </div>
+                <div class="queue-item">
+                    <span class="queue-label">預估等待時間</span>
+                    <span class="queue-value" id="estimatedWait">--</span>
+                    <span class="queue-unit">分鐘</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- 處理進度 -->
+        <section class="section progress-section" id="progressSection" style="display: none;">
+            <h2 class="section-title">處理進度</h2>
+            <div class="progress-stages">
+                <div class="stage" data-stage="upload">
+                    <div class="stage-dot"></div>
+                    <div class="stage-label">檔案上傳</div>
+                </div>
+                <div class="stage" data-stage="transcribe">
+                    <div class="stage-dot"></div>
+                    <div class="stage-label">語音轉錄</div>
+                </div>
+                <div class="stage" data-stage="summarize">
+                    <div class="stage-dot"></div>
+                    <div class="stage-label">生成摘要</div>
+                </div>
+                <div class="stage" data-stage="complete">
+                    <div class="stage-dot"></div>
+                    <div class="stage-label">完成</div>
+                </div>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-info">
+                <span id="progressText">準備中...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="device-info" id="deviceInfo"></div>
+        </section>
+
+        <!-- 處理結果 -->
+        <section class="section result-section" id="resultSection" style="display: none;">
+            <h2 class="section-title">處理結果</h2>
+            <div class="result-preview" id="resultPreview"></div>
+            <div class="result-actions">
+                <button class="btn btn-secondary" id="copyBtn">📋 複製文字</button>
+                <button class="btn btn-primary" id="downloadBtn">⬇️ 下載 Markdown</button>
+                <button class="btn btn-outline" id="resetBtn">🔄 重新處理</button>
+            </div>
+        </section>
+
+        <!-- 錯誤訊息 -->
+        <section class="section error-section" id="errorSection" style="display: none;">
+            <div class="error-box">
+                <div class="error-icon">❌</div>
+                <div class="error-title">處理失敗</div>
+                <div class="error-message" id="errorMessage"></div>
+                <button class="btn btn-primary" id="retryBtn">重試</button>
+            </div>
+        </section>
+
+        <!-- 頁尾 -->
+        <footer class="footer">
+            <div class="footer-mode" id="footerMode">
+                🔒 本地模式：完全離線，資料不外傳
+            </div>
+            <div class="footer-version">MeetingScribe v2.1.0</div>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
