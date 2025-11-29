@@ -1,233 +1,378 @@
-# 會議轉錄工具
+# MeetingScribe v2.1
 
-**本地 AI 驅動的影音轉逐字稿轉會議紀錄工具**
+<div align="center">
 
-> 🔒 完全離線運行，資料不離開本機  
-> ⚡ RTX 4090 + CUDA 加速，2 小時音訊約 6 分鐘處理完成  
-> 💰 零 API 成本，使用本地 LLM  
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.1.0-blue?style=for-the-badge)
+![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
----
+**將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-## 功能特點
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件)
 
-- ✅ **語音轉逐字稿**：使用 faster-whisper (Whisper large-v3) 高品質轉錄
-- ✅ **智能會議摘要**：使用本地 Ollama LLM 生成結構化會議紀錄
-- ✅ **完全離線**：所有處理都在本機完成，資料安全有保障
-- ✅ **多格式支援**：MP3, MP4, WAV, M4A, MKV, WebM, FLAC 等
-- ✅ **中文優化**：針對中文語音和摘要特別優化
-- ✅ **快取機制**：相同檔案不重複轉錄，節省時間
-- ✅ **批次處理**：一次處理多個檔案
+</div>
 
 ---
 
-## 系統需求
+## 🎯 簡介
 
-### 硬體需求
+MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，完全隔離執行環境，不影響主機其他服務。
 
-| 組件 | 最低需求 | 建議配置 |
+### 核心特點
+
+- 🔒 **本地模式**：完全離線處理，使用 Ollama + Gemma3:12B，資料不外傳，適合機敏資料
+- ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
+- ��️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
+- 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
+- 🎨 **Apple 風格 UI**：簡約現代的使用者介面
+- �� **自訂 Prompt**：使用者可自訂會議記錄格式和內容
+- 🛡️ **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
+
+---
+
+## 🚀 快速開始
+
+### 系統需求
+
+| 項目 | 最低需求 | 建議配置 |
 |------|----------|----------|
-| CPU | 4 核心 | 8+ 核心 |
-| RAM | 16 GB | 32 GB |
-| GPU | - | NVIDIA RTX 3060+ (8GB VRAM) |
-| 儲存空間 | 10 GB | 20+ GB |
+| 作業系統 | Windows 10/11, macOS 10.15+, Linux | Windows 11 / Ubuntu 20.04+ |
+| Docker | Docker Desktop 4.0+ | 最新版本 |
+| GPU | 無（CPU 模式）| NVIDIA RTX 4090 |
+| 記憶體 | 8GB | 32GB |
+| 磁碟空間 | 20GB | 50GB |
 
-### 軟體需求
+### 前置準備
 
-- Windows 10/11 (64-bit) 或 macOS 10.15+ 或 Linux
-- NVIDIA 驅動程式（如使用 GPU 加速）
-- Ollama（本地 LLM 運行環境）
-- Python 3.10+ 或可攜式 Python
+1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
+   ```bash
+   ollama pull gemma3:12b
+   ```
+3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
 
----
+### 三步驟部署
 
-## 快速開始
+```powershell
+# 1. 建構映像（首次約 10-30 分鐘）
+cd scripts
+.\deploy.ps1 build
 
-### 1. 安裝 Ollama
+# 2. 啟動服務
+.\deploy.ps1 up
 
-前往 [ollama.ai](https://ollama.ai) 下載並安裝 Ollama。
-
-安裝後，下載推薦的中文優化模型：
-
-```bash
-# 推薦：中文優化模型
-ollama pull qwen2.5:7b
-
-# 或使用通用模型
-ollama pull llama3.1:8b
-```
-
-### 2. 下載 faster-whisper-xxl（Windows）
-
-從 [GitHub Releases](https://github.com/Purfview/whisper-standalone-win/releases) 下載 `Faster-Whisper-XXL_rXXX_windows.zip`。
-
-解壓縮後，將 `faster-whisper-xxl.exe` 放入專案根目錄。
-
-### 3. 準備 Python 環境
-
-**方法 A：使用可攜式 Python（推薦）**
-
-1. 下載 [WinPython](https://winpython.github.io/) 精簡版
-2. 解壓縮到 `python/` 目錄
-3. 安裝依賴：`python\python.exe -m pip install pyyaml httpx`
-
-**方法 B：使用系統 Python**
-
-```bash
-pip install pyyaml httpx
-```
-
-### 4. 開始使用
-
-1. 將音訊/視訊檔案放入 `input/` 資料夾
-2. 雙擊 `開始轉錄.bat`（Windows）或執行 `python main.py`
-3. 查看 `output/` 資料夾中的會議摘要
-
----
-
-## 目錄結構
-
-```
-會議轉錄工具/
-├── 開始轉錄.bat          # Windows 啟動腳本
-├── main.py               # 主程式
-├── config.yaml           # 配置檔
-├── faster-whisper-xxl.exe # 語音轉錄引擎（需下載）
-├── python/               # 可攜式 Python（可選）
-├── src/                  # 核心模組
-│   ├── ollama_client.py  # Ollama LLM 客戶端
-│   ├── whisper_transcriber.py # Whisper 轉錄器
-│   └── summarizer.py     # 會議摘要生成器
-├── input/                # 放入待處理的音訊/視訊
-├── output/               # 輸出的會議摘要
-├── temp/                 # 暫存（逐字稿快取）
-└── logs/                 # 日誌檔案
+# 3. 開啟瀏覽器
+# 訪問 http://localhost:9527
 ```
 
 ---
 
-## 配置說明
+## ✨ 功能特色
 
-編輯 `config.yaml` 自訂設定：
+### 🔄 雙模式處理
+
+| 模式 | 說明 | 適用場景 | 優點 | 缺點 |
+|------|------|----------|------|------|
+| 🔒 本地模式 | Ollama + Gemma3:12B | 政府、醫療、商業機密 | 資料安全、無延遲 | 品質一般 |
+| ☁️ 雲端模式 | Gemini API | 一般會議、非機敏 | 品質優良 | 需網路、隱私 |
+
+### 📝 自訂 Prompt
+
+使用者可自訂會議記錄格式：
+- 指定輸出項目（決議事項、待辦清單、參與者等）
+- 調整摘要長度和風格
+- 新增特殊要求或專業術語
+
+### 📊 智能排隊系統
+
+- **FIFO 公平排隊**：先進先出，保證公平性
+- **即時顯示**：前端實時顯示排隊位置和預估時間
+- **併發控制**：可配置同時處理任務數（預設 1）
+
+### 🎛️ 自動裝置偵測
+
+```
+優先順序：CUDA GPU → Apple MPS → CPU
+自動降級：若 GPU 記憶體 < 4GB → 切換到 CPU 模式
+逾時保護：若 GPU 超時 30 秒 → 降級到 CPU 模式
+```
+
+---
+
+## 📦 部署指南
+
+### Docker Compose 部署
 
 ```yaml
-# LLM 設定
-llm:
-  ollama:
-    model: "qwen2.5:7b"    # 使用的模型
-    num_ctx: 32768         # 上下文視窗大小
-
-# Whisper 設定
-whisper:
-  model: "large-v3"        # 轉錄模型
-  language: "zh"           # 語言
-  device: "auto"           # 運算裝置（auto/cuda/cpu）
+services:
+  meetingscribe:
+    build: ./docker
+    container_name: meetingscribe-app
+    ports:
+      - "9527:9527"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - MAX_FILE_SIZE_MB=100
+      - ENABLE_BATCH_UPLOAD=false
+    restart: unless-stopped
+    networks:
+      - app-network
 ```
 
-### 推薦的 Ollama 模型
+### 環境變數配置
 
-| 模型 | VRAM 需求 | 中文品質 | 特點 |
-|------|-----------|----------|------|
-| qwen2.5:7b | ~5GB | ⭐⭐⭐⭐⭐ | 中文優化，推薦首選 |
-| llama3.1:8b | ~5GB | ⭐⭐⭐ | 通用平衡 |
-| mistral:7b | ~5GB | ⭐⭐⭐ | 速度快 |
-| llama3.1:70b | ~40GB | ⭐⭐⭐⭐ | 最高品質 |
+複製 `.env.example` 為 `.env`，設定以下參數：
 
----
+| 變數 | 說明 | 預設值 | 範圍 |
+|------|------|--------|------|
+| `MAX_FILE_SIZE_MB` | 單檔大小上限 | 100 | 1-1024 |
+| `ENABLE_BATCH_UPLOAD` | 批次上傳 | false | true/false |
+| `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
+| `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
+| `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
+| `WHISPER_MODEL` | Whisper 模型 | large-v3 | tiny/base/small/medium/large-v3 |
+| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:12b | ollama 支援的任何模型 |
 
-## 效能參考
+### 服務管理腳本（Windows PowerShell）
 
-### RTX 4090 測試結果
+```powershell
+# 設定 API Key（雲端模式）
+.\scripts\setup-api-key.ps1
 
-| 音訊長度 | 轉錄時間 | 摘要時間 | 總時間 |
-|----------|----------|----------|--------|
-| 10 分鐘 | ~30 秒 | ~30 秒 | ~1 分鐘 |
-| 30 分鐘 | ~1.5 分鐘 | ~1 分鐘 | ~2.5 分鐘 |
-| 1 小時 | ~3 分鐘 | ~1.5 分鐘 | ~4.5 分鐘 |
-| 2 小時 | ~6 分鐘 | ~2 分鐘 | ~8 分鐘 |
+# 重啟服務（不影響其他 Docker 服務）
+.\scripts\restart-service.ps1
 
----
+# 健康檢查
+.\scripts\health-check.ps1
 
-## 常見問題
-
-### Q: 批次腳本顯示亂碼？
-
-確認 `.bat` 檔案以「UTF-8 with BOM」編碼儲存。
-
-### Q: Ollama 連線失敗？
-
-1. 確認 Ollama 已啟動（系統匣有圖示）
-2. 執行 `ollama list` 確認正常
-3. 測試連線：`curl http://localhost:11434/api/tags`
-
-### Q: GPU 未被使用？
-
-1. 確認已安裝 NVIDIA 驅動程式
-2. 執行 `nvidia-smi` 確認 GPU 可被偵測
-3. 檢查 config.yaml 中 `device` 設為 `cuda` 或 `auto`
-
-### Q: 摘要品質不佳？
-
-1. 嘗試更換模型（推薦 qwen2.5:7b 處理中文）
-2. 調低 temperature（如 0.5）讓輸出更精確
-3. 自訂 system_prompt 符合您的需求
+# 部署工具
+.\scripts\deploy.ps1 [build|up|down|restart|status|logs]
+```
 
 ---
 
-## 隱私與安全
+## 📚 API 文件
 
-- 🔒 **完全離線**：所有處理都在本機完成
-- 🔒 **不傳輸資料**：音訊和逐字稿不會上傳到任何伺服器
-- 🔒 **本地 LLM**：使用 Ollama 運行的本地模型
-- 🔒 **可審計**：完整開源，可檢視所有程式碼
+### REST API 端點
 
----
+| 端點 | 方法 | 說明 | 身份驗證 |
+|------|------|------|--------|
+| `/api/health` | GET | 健康檢查 | 無 |
+| `/api/config` | GET | 取得系統配置 | 無 |
+| `/api/upload` | POST | 上傳音訊/視訊檔案 | 無 |
+| `/api/tasks/{task_id}` | GET | 查詢任務狀態 | 無 |
+| `/api/tasks/{task_id}/result` | GET | 下載結果（Markdown） | 無 |
+| `/api/queue/status` | GET | 排隊狀態 | 無 |
 
-## 授權
-
-MIT License
-
----
-
-## 技術架構
+### WebSocket 即時推送
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     使用者操作                          │
-│              雙擊「開始轉錄.bat」                        │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                    批次腳本檢查                          │
-│  • Ollama 服務 → GPU 狀態 → Python 環境 → 輸入檔案      │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                   main.py 主程式                         │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────┐  │
-│  │   Whisper    │    │   Ollama     │    │ Markdown │  │
-│  │   轉錄器     │ → │   摘要器     │ → │  輸出器  │  │
-│  │              │    │              │    │          │  │
-│  │ large-v3    │    │ qwen2.5:7b  │    │  .md     │  │
-│  └──────────────┘    └──────────────┘    └──────────┘  │
-│         │                   │                           │
-│         └───────────────────┘                           │
-│                    │                                    │
-│                    ▼                                    │
-│         ┌──────────────────┐                           │
-│         │   GPU 加速       │                           │
-│         │   RTX 4090       │                           │
-│         │   CUDA           │                           │
-│         └──────────────────┘                           │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                    輸出結果                              │
-│           output/會議名稱_摘要.md                        │
-└─────────────────────────────────────────────────────────┘
+ws://localhost:9527/ws/tasks/{task_id}
 ```
+
+接收實時進度更新：
+```json
+{
+  "status": "processing",
+  "progress": 45,
+  "stage": "summarizing",
+  "message": "正在產製摘要..."
+}
+```
+
+### 上傳檔案範例
+
+```bash
+curl -X POST http://localhost:9527/api/upload \
+  -F "file=@meeting.mp3" \
+  -F "processing_mode=local" \
+  -F "user_prompt=請列出所有決議事項和負責人"
+```
+
+### 回應範例
+
+```json
+{
+  "task_id": "task-20251129-abc123",
+  "status": "queued",
+  "queue_position": 2,
+  "estimated_wait_seconds": 180,
+  "file_size_mb": 45.5
+}
+```
+
+---
+
+## 🏗️ 專案結構
+
+```
+convert/
+├── backend/                         # 後端服務（FastAPI）
+│   ├── api/                         # API 路由
+│   │   ├── routes.py               # REST API 端點
+│   │   └── websocket.py            # WebSocket 進度推送
+│   ├── core/                        # 核心模組
+│   │   ├── config.py               # 參數化配置
+│   │   └── logger.py               # 日誌系統
+│   ├── models/                      # 資料模型
+│   │   └── schemas.py              # Pydantic 資料模型
+│   ├── services/                    # 業務邏輯
+│   │   ├── device_detector.py      # 裝置偵測和降級
+│   │   ├── queue_manager.py        # 排隊系統
+│   │   ├── transcription.py        # Whisper 轉錄
+│   │   ├── summarization.py        # LLM 摘要（本地/雲端）
+│   │   ├── file_manager.py         # 檔案管理和安全驗證
+│   │   └── task_processor.py       # 任務處理流程
+│   └── main.py                      # FastAPI 主應用
+│
+├── frontend/                        # 前端介面
+│   ├── css/
+│   │   └── style.css               # Apple 風格 CSS
+│   ├── js/
+│   │   └── app.js                  # 前端邏輯（Vue-like）
+│   └── index.html                  # 主頁面
+│
+├── docker/                          # Docker 配置
+│   ├── Dockerfile                  # 映像定義
+│   └── docker-compose.yml          # 容器編排
+│
+├── scripts/                         # 管理腳本
+│   ├── deploy.ps1                  # 部署工具
+│   ├── setup-api-key.ps1           # API Key 設定
+│   ├── restart-service.ps1         # 安全重啟
+│   └── health-check.ps1            # 健康檢查
+│
+├── data/                            # 資料目錄
+│   ├── uploads/                    # 上傳檔案
+│   ├── outputs/                    # 處理結果
+│   └── cache/                      # 快取檔案
+│
+├── doc/                             # 文件
+│   ├── 規劃和實作計劃.md            # 完整規劃
+│   ├── 快速入門指南.md              # 快速入門
+│   ├── DESIGN.md                   # 架構設計
+│   └── Docker部署經驗指南.md       # Docker 經驗
+│
+└── requirements.txt                 # Python 依賴
+```
+
+---
+
+## 🔧 故障排除
+
+### 常見問題
+
+**Q: 服務無法啟動？**
+
+```powershell
+# 查看詳細日誌
+docker compose logs -f
+
+# 執行健康檢查
+.\scripts\health-check.ps1
+
+# 確認 Docker Desktop 運行
+docker ps
+```
+
+**Q: GPU 沒有被使用？**
+
+- 確認 NVIDIA 驅動版本 >= 520
+- 確認 Docker Desktop 設定中啟用 GPU 支援（Settings → Resources → GPU）
+- 查看日誌確認 CUDA 初始化
+- 系統會自動降級到 CPU 模式，檔案轉錄仍可正常運行
+
+**Q: 雲端模式不可用？**
+
+```powershell
+# 設定 API Key
+.\scripts\setup-api-key.ps1
+
+# 驗證配置
+curl http://localhost:9527/api/config | findstr gemini_available
+```
+
+**Q: 處理速度很慢？**
+
+- 建議使用 GPU 模式（確認 NVIDIA 驅動已安裝）
+- 嘗試減少 `MAX_CONCURRENT_TASKS` 以節省記憶體
+- 考慮使用較小的 Whisper 模型（修改環境變數 `WHISPER_MODEL=base`）
+- 檢查磁碟 I/O 是否為瓶頸
+
+**Q: 檔案上傳失敗「檔案名稱包含無效字符」？**
+
+檔案名稱不能包含 `..`、`/` 或 `\` 字符。重新命名檔案後重試。
+
+---
+
+## 🔐 安全性考量
+
+### 已實施的安全措施
+
+- ✅ API Key 使用 Pydantic `SecretStr` 保護，避免日誌暴露
+- ✅ 檔案上傳路徑遍歷防護，防止目錄脫逃攻擊
+- ✅ XSS 防衛，前端使用 `textContent` 而非 `innerHTML`
+- ✅ 檔案大小驗證，預設 100MB 上限（可配置）
+- ✅ 副檔名白名單驗證
+- ✅ SHA256 檔案 hash 確保完整性
+
+### 建議的部署安全做法
+
+1. **生產環境**：設定 `DEBUG=false`
+2. **API Key**：使用環境變數而非硬碼
+3. **網路**：在防火牆後運行，限制 API 訪問
+4. **監控**：啟用容器日誌監控和告警
+5. **備份**：定期備份 `/data` 目錄
+
+---
+
+## 📊 效能指標
+
+### 典型效能表現（Windows 11 RTX 4090）
+
+| 音訊長度 | GPU 模式 | CPU 模式 | 品質 |
+|---------|---------|---------|------|
+| 30 分鐘 | ~3 分鐘 | ~15 分鐘 | 高 |
+| 60 分鐘 | ~6 分鐘 | ~30 分鐘 | 高 |
+| 120 分鐘 | ~12 分鐘 | ~60 分鐘 | 高 |
+
+*實際時間因檔案品質、背景雜音、模型配置而異*
+
+---
+
+## 📄 授權條款
+
+本專案採用 MIT 授權條款。詳見 [LICENSE](LICENSE) 檔案。
+
+---
+
+## 🙏 致謝
+
+感謝以下開源專案的支援：
+
+- [OpenAI Whisper](https://github.com/openai/whisper) - 語音轉文字引擎
+- [Ollama](https://ollama.ai/) - 本地 LLM 推理框架
+- [FastAPI](https://fastapi.tiangolo.com/) - 現代化 Python Web 框架
+- [Google Gemini](https://ai.google.dev/) - 雲端 AI 模型
+- [Docker](https://www.docker.com/) - 容器化部署平台
+
+---
+
+## 📞 聯絡和反饋
+
+有任何問題或建議，請提出 Issue 或 Pull Request。
+
+---
+
+<div align="center">
+
+**Made with ❤️ for better meetings**
+
+⭐ 如果本專案對您有幫助，請給予 Star 支持
+
+[⬆ 回到頂部](#meetingscribe-v21)
+
+</div>
