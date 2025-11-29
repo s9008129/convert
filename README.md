@@ -1,15 +1,15 @@
-# MeetingScribe v2.1.3
+# MeetingScribe v2.2.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.1.3-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.2.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md)
 
 </div>
 
@@ -17,17 +17,25 @@
 
 ## 🎯 簡介
 
-MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，完全隔離執行環境，不影響主機其他服務。
+MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🔒 v2.2.0 隔離保證（首要任務）
+
+- ✅ **獨立網路**: 使用專屬 Docker 網路 `meetingscribe-network` (172.30.0.0/16)
+- ✅ **獨立命名**: 所有容器、Volume、網路都使用 `meetingscribe-` 前綴
+- ✅ **資源限制**: 設定 CPU/記憶體上限，不影響其他服務
+- ✅ **完全隔離**: 不與其他 Docker 專案共用任何資源
 
 ### 核心特點
 
 - 🔒 **本地模式**：完全離線處理，使用 Ollama + Gemma3:12B，資料不外傳，適合機敏資料
 - ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
-- ��️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
+- 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務
+- 🖥️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
 - 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
 - 🎨 **Apple 風格 UI**：簡約現代的使用者介面
-- �� **自訂 Prompt**：使用者可自訂會議記錄格式和內容
-- 🛡️ **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
+- 📝 **自訂 Prompt**：使用者可自訂會議記錄格式和內容
+- 🔐 **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
 
 ---
 
@@ -375,6 +383,6 @@ curl http://localhost:9527/api/config | findstr gemini_available
 
 ⭐ 如果本專案對您有幫助，請給予 Star 支持
 
-[⬆ 回到頂部](#meetingscribe-v213)
+[⬆ 回到頂部](#meetingscribe-v220)
 
 </div>

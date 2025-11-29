@@ -5,6 +5,40 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.2.0] - 2025-11-29
+
+### 🔒 重大變更：Docker 服務完全隔離
+
+此版本重點解決 Docker 服務與其他專案混合的問題，確保 MeetingScribe 完全獨立運行。
+
+### 新增功能 ✨
+- **macOS 專用部署** - 新增 MAC Docker 部署指南和專用配置檔案
+  - `docker/Dockerfile.mac` - macOS 專用映像
+  - `docker/docker-compose-mac.yml` - macOS 專用編排
+  - `scripts/start-mac.sh` - macOS 一鍵啟動腳本
+  - `scripts/restart-mac.sh` - macOS 服務重啟腳本
+
+### 安全性修正 🔐 (首要任務)
+- **Docker 服務完全隔離**
+  - 使用獨立的 `COMPOSE_PROJECT_NAME` (meetingscribe)
+  - 使用獨立的 Docker 網路 `meetingscribe-network` (172.30.0.0/16)
+  - 所有容器、Volume、網路都使用 `meetingscribe-` 前綴
+  - 設定資源限制 (CPU: 8核心, 記憶體: 16GB)
+  - 確保絕對不影響 Docker 中其他運行的服務
+
+### 技術改進 ✅
+- Docker Compose 配置升級到 v2.2 版本
+- 新增獨立 IP 範圍設定，避免與其他專案衝突
+- 新增容器標籤 (labels) 方便識別和管理
+- 優化健康檢查配置
+
+### 文件更新 📚
+- 新增 `doc/MAC_Docker部署指南.md` - macOS 完整部署文件
+- 更新 README.md 新增隔離保證說明
+- 更新系統開發及實作規劃.md
+
+---
+
 ## [2.1.3] - 2025-11-29
 
 ### 新增功能 ✨
@@ -128,7 +162,8 @@
 
 | 版本 | 發布日期 | 主要特色 | 狀態 |
 |------|---------|----------|------|
-| 2.1.3 | 2025-11-29 | 快速部署指南、文件更新 | ✅ 現行版本 |
+| 2.2.0 | 2025-11-29 | Docker 服務完全隔離、macOS 專用部署 | ✅ 現行版本 |
+| 2.1.3 | 2025-11-29 | 快速部署指南、文件更新 | 📦 已棄用 |
 | 2.1.2 | 2025-11-29 | 安全性加固、邏輯錯誤修正、程式碼品質改善 | 📦 已棄用 |
 | 2.1.1 | 2025-11-29 | Docker 跨平台、雙模式、排隊系統、安全加固 | 📦 已棄用 |
 | 2.1.0 | 2025-11-01 | 初始版本、基本功能 | 📦 已棄用 |
@@ -136,6 +171,28 @@
 ---
 
 ## 升級指南
+
+### 從 2.1.3 升級到 2.2.0
+
+1. **重要**：此版本重新設計 Docker 配置以確保隔離
+   ```powershell
+   # 先停止舊服務
+   docker compose down
+   
+   # 重新建構並啟動
+   cd scripts
+   .\deploy.ps1 build
+   .\deploy.ps1 up
+   ```
+
+2. **驗證隔離**
+   ```powershell
+   # 確認容器名稱正確
+   docker ps --filter "name=meetingscribe"
+   
+   # 確認網路獨立
+   docker network ls | findstr meetingscribe
+   ```
 
 ### 從 2.1.1 升級到 2.1.2
 
