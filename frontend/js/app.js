@@ -324,7 +324,7 @@ function updateStages(status) {
     });
 }
 
-async def showCompleted() {
+async function showCompleted() {
     elements.progressSection.style.display = 'none';
     elements.resultSection.style.display = 'block';
     

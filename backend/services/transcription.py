@@ -81,10 +81,14 @@ class TranscriptionService:
             self._load_model()
         
         # 安全檢查：驗證路徑不包含路徑遍歷字符
-        if ".." in audio_path or audio_path.startswith("/etc") or audio_path.startswith("/root"):
+        abs_audio_path = os.path.abspath(audio_path)
+        abs_uploads_dir = os.path.abspath(settings.uploads_dir)
+        
+        # 確保檔案在上傳目錄內
+        if not abs_audio_path.startswith(abs_uploads_dir):
             raise ValueError(f"不允許的檔案路徑: {audio_path}")
         
-        if not os.path.exists(audio_path):
+        if not os.path.exists(abs_audio_path):
             raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
         
         start_time = time.time()
