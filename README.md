@@ -1,15 +1,15 @@
-# MeetingScribe v2.1.2
+# MeetingScribe v2.1.3
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.1.2-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.1.3-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md)
 
 </div>
 
@@ -252,6 +252,8 @@ convert/
 │
 ├── doc/                             # 文件
 │   ├── 規劃和實作計劃.md            # 完整規劃
+│   ├── 系統開發及實作規劃.md        # 詳細開發規劃
+│   ├── 快速部署指南.md              # Windows 快速部署（非技術人員友善）
 │   ├── 快速入門指南.md              # 快速入門
 │   ├── DESIGN.md                   # 架構設計
 │   └── Docker部署經驗指南.md       # Docker 經驗
@@ -373,6 +375,6 @@ curl http://localhost:9527/api/config | findstr gemini_available
 
 ⭐ 如果本專案對您有幫助，請給予 Star 支持
 
-[⬆ 回到頂部](#meetingscribe-v212)
+[⬆ 回到頂部](#meetingscribe-v213)
 
 </div>
