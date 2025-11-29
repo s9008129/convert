@@ -86,8 +86,7 @@ async def upload_file(
         raise HTTPException(status_code=400, detail=f"無效的處理模式: {processing_mode}")
     
     # 如果選擇雲端模式，檢查 API Key
-    api_key = settings.gemini_api_key_value if hasattr(settings, 'gemini_api_key_value') else settings.GEMINI_API_KEY
-    if mode == ProcessingMode.CLOUD and not api_key:
+    if mode == ProcessingMode.CLOUD and not summarization_service.check_gemini_available():
         raise HTTPException(
             status_code=400,
             detail="未設定 Gemini API Key，無法使用雲端模式。請執行 setup-api-key.ps1 設定 API Key。"
@@ -225,5 +224,5 @@ async def get_config():
         "max_concurrent_tasks": settings.MAX_CONCURRENT_TASKS,
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
-        "gemini_available": bool(settings.gemini_api_key_value if hasattr(settings, 'gemini_api_key_value') else settings.GEMINI_API_KEY)
+        "gemini_available": summarization_service.check_gemini_available()
     }

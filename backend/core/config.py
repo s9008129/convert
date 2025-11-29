@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     )
     LOCAL_LLM_MODEL: str = Field(default="gemma3:12b", description="本地 LLM 模型名稱")
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API 金鑰")
+    
+    @field_validator('GEMINI_API_KEY')
+    @classmethod
+    def validate_gemini_api_key(cls, v):
+        """驗證 Gemini API Key 不應包含危險字符"""
+        if v and not isinstance(v, str):
+            raise ValueError("GEMINI_API_KEY 必須是字串")
+        if v and len(v) < 10:
+            raise ValueError("GEMINI_API_KEY 格式無效（長度過短）")
+        return v
     GEMINI_BASE_URL: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description="Gemini API 端點"

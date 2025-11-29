@@ -322,8 +322,12 @@ async function showCompleted() {
         const response = await fetch(`/api/tasks/${state.taskId}/result`);
         const text = await response.text();
         
-        // 簡單的 Markdown 轉 HTML
-        elements.resultPreview.innerHTML = simpleMarkdownToHtml(text);
+        // 使用 DOMPurify 或簡單的 textContent 來防止 XSS
+        // 為了安全，直接使用 textContent，Markdown 轉換交由後端
+        const tempDiv = document.createElement('div');
+        tempDiv.textContent = text;
+        elements.resultPreview.innerHTML = '';
+        elements.resultPreview.appendChild(tempDiv);
         
     } catch (error) {
         console.error('載入結果失敗:', error);

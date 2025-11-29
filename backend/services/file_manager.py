@@ -36,6 +36,10 @@ class FileManagerService:
         if not file.filename:
             return False, "檔案名稱不能為空"
         
+        # 安全性檢查：防止路徑遍歷
+        if ".." in file.filename or "/" in file.filename or "\\" in file.filename:
+            return False, "檔案名稱包含無效字符"
+        
         # 檢查副檔名
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in settings.allowed_extensions_list:

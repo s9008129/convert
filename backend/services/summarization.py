@@ -31,13 +31,17 @@ class SummarizationService:
             )
         return self._ollama_client
     
+    def _get_gemini_api_key(self) -> str:
+        """安全地取得 Gemini API Key"""
+        api_key = settings.GEMINI_API_KEY
+        if not api_key:
+            raise ValueError("未設定 GEMINI_API_KEY 環境變數")
+        return api_key
+    
     def _get_gemini_client(self) -> OpenAI:
         """取得 Gemini API 客戶端（OpenAI 相容介面）"""
         if not self._gemini_client:
-            api_key = settings.gemini_api_key_value if hasattr(settings, 'gemini_api_key_value') else settings.GEMINI_API_KEY
-            if not api_key:
-                raise ValueError("未設定 GEMINI_API_KEY 環境變數")
-            
+            api_key = self._get_gemini_api_key()
             self._gemini_client = OpenAI(
                 api_key=api_key,
                 base_url=settings.GEMINI_BASE_URL
@@ -164,8 +168,11 @@ class SummarizationService:
     
     def check_gemini_available(self) -> bool:
         """檢查 Gemini API 是否已配置"""
-        api_key = settings.gemini_api_key_value if hasattr(settings, 'gemini_api_key_value') else settings.GEMINI_API_KEY
-        return bool(api_key)
+        try:
+            self._get_gemini_api_key()
+            return True
+        except ValueError:
+            return False
     
     async def close(self):
         """關閉客戶端連接"""
