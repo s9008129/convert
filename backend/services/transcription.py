@@ -63,7 +63,8 @@ class TranscriptionService:
     def transcribe(
         self,
         audio_path: str,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        max_retries: int = 1
     ) -> Tuple[str, float]:
         """
         轉錄音訊檔案
@@ -71,12 +72,17 @@ class TranscriptionService:
         Args:
             audio_path: 音訊檔案路徑
             progress_callback: 進度回調函數 (progress: float, message: str)
+            max_retries: 最大重試次數（用於 CPU 降級）
             
         Returns:
             (逐字稿文字, 音訊時長秒數)
         """
         if not self._model:
             self._load_model()
+        
+        # 安全檢查：驗證路徑不包含路徑遍歷字符
+        if ".." in audio_path or audio_path.startswith("/etc") or audio_path.startswith("/root"):
+            raise ValueError(f"不允許的檔案路徑: {audio_path}")
         
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
@@ -125,13 +131,13 @@ class TranscriptionService:
         except Exception as e:
             log.error(f"轉錄失敗: {e}")
             
-            # 如果是 GPU 錯誤，嘗試降級
-            if self._device != DeviceType.CPU:
+            # 如果是 GPU 錯誤，嘗試降級（限制重試次數避免無限遞迴）
+            if self._device != DeviceType.CPU and max_retries > 0:
                 log.info("嘗試降級到 CPU 重新轉錄...")
                 device_detector.fallback_to_cpu()
                 self._model = None
                 self._load_model(force_cpu=True)
-                return self.transcribe(audio_path, progress_callback)
+                return self.transcribe(audio_path, progress_callback, max_retries - 1)
             
             raise
     

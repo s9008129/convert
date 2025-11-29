@@ -362,14 +362,19 @@ class MeetingSummarizer:
         if not summary:
             return False
         
-        # 檢查長度
-        if len(summary) < 100:
+        # 去除空白後檢查長度
+        summary_stripped = summary.strip()
+        if len(summary_stripped) < 100:
             return False
         
         # 檢查是否有結構
         has_structure = any(marker in summary for marker in ['###', '##', '一、', '二、', '1.', '•', '-'])
         
-        return has_structure
+        # 檢查是否包含異常內容（例如錯誤訊息）
+        error_indicators = ['error', 'exception', 'traceback', 'failed']
+        has_error = any(indicator in summary.lower() for indicator in error_indicators)
+        
+        return has_structure and not has_error
     
     def quick_summary(
         self,

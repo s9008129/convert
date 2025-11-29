@@ -4,6 +4,7 @@ MeetingScribe 任務處理器
 """
 
 import asyncio
+import os
 import time
 from typing import Optional, Callable
 
@@ -67,8 +68,14 @@ class TaskProcessor:
             # 更新狀態
             task_queue.update_task_progress(task.task_id, 5.0, "準備處理", TaskStatus.PENDING)
             
-            # 取得檔案路徑
-            file_path = f"{settings.uploads_dir}/{task.filename}"
+            # 取得檔案路徑（安全地組合路徑）
+            # 確保 filename 不包含路徑遍歷字符
+            safe_filename = os.path.basename(task.filename)
+            file_path = os.path.join(settings.uploads_dir, safe_filename)
+            
+            # 驗證檔案存在
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"找不到上傳的檔案: {file_path}")
             
             # 計算檔案 hash 並檢查快取
             file_hash = file_manager.get_file_hash(file_path)
@@ -87,6 +94,10 @@ class TaskProcessor:
                     task_queue.update_task_progress(task.task_id, progress, message)
                 
                 transcript, duration = transcription_service.transcribe(file_path, progress_cb)
+                
+                # 驗證轉錄結果
+                if not transcript or not transcript.strip():
+                    raise RuntimeError("轉錄結果為空")
                 
                 # 儲存快取
                 file_manager.save_transcript_cache(file_hash, transcript)

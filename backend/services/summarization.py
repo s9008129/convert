@@ -120,6 +120,11 @@ class SummarizationService:
             data = response.json()
             summary = data.get("message", {}).get("content", "")
             
+            # 檢查摘要是否為空
+            if not summary or not summary.strip():
+                log.warning("Ollama 摘要生成結果為空")
+                raise RuntimeError("摘要生成失敗：結果為空")
+            
             log.info(f"Ollama 摘要生成成功，模型: {settings.LOCAL_LLM_MODEL}")
             return summary
             
@@ -149,6 +154,11 @@ class SummarizationService:
             )
             
             summary = response.choices[0].message.content
+            
+            # 檢查摘要是否為空
+            if not summary or not summary.strip():
+                log.warning("Gemini 摘要生成結果為空")
+                raise RuntimeError("摘要生成失敗：結果為空")
             
             log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}")
             return summary
