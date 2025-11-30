@@ -70,20 +70,15 @@ class SummarizationService:
         
         Args:
             transcript: 逐字稿文字
-            mode: 處理模式（local/lmstudio/cloud）
+            mode: 處理模式（local/cloud）- local 會自動選擇 Ollama 或 LM Studio
             user_prompt: 使用者自訂 prompt（可選）
             progress_callback: 進度回調函數
             
         Returns:
             會議摘要（Markdown 格式）
         """
-        mode_names = {
-            ProcessingMode.LOCAL: "本地 Ollama",
-            ProcessingMode.LMSTUDIO: "本地 LM Studio",
-            ProcessingMode.CLOUD: "雲端"
-        }
         if progress_callback:
-            progress_callback(65.0, f"使用{mode_names.get(mode, '未知')}模式生成摘要...")
+            progress_callback(65.0, "生成摘要中...")
         
         # 組合 prompt
         system_prompt = settings.DEFAULT_SYSTEM_PROMPT
@@ -95,12 +90,12 @@ class SummarizationService:
         user_message = f"以下是會議的逐字稿，請整理成會議記錄：\n\n{transcript}"
         
         try:
-            if mode == ProcessingMode.LOCAL:
-                summary = await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
-            elif mode == ProcessingMode.LMSTUDIO:
-                summary = await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
-            else:
+            if mode == ProcessingMode.CLOUD:
+                # 雲端模式：使用 Gemini API
                 summary = await self._summarize_with_gemini(system_prompt, user_message, progress_callback)
+            else:
+                # 本地模式：自動偵測並選擇可用的引擎（Ollama 優先，其次 LM Studio）
+                summary = await self._summarize_with_local_llm(system_prompt, user_message, progress_callback)
             
             if progress_callback:
                 progress_callback(95.0, "摘要生成完成")
@@ -110,6 +105,31 @@ class SummarizationService:
         except Exception as e:
             log.error(f"摘要生成失敗: {e}")
             raise
+    
+    async def _summarize_with_local_llm(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None
+    ) -> str:
+        """
+        使用本地 LLM 生成摘要
+        自動偵測並選擇可用的引擎（Ollama 優先，其次 LM Studio）
+        """
+        # 優先嘗試 Ollama
+        ollama_available = await self.check_ollama_health()
+        if ollama_available:
+            log.info("使用 Ollama 本地模式")
+            return await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
+        
+        # 其次嘗試 LM Studio
+        lmstudio_available = await self.check_lmstudio_health()
+        if lmstudio_available:
+            log.info("使用 LM Studio 本地模式")
+            return await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
+        
+        # 都不可用，拋出錯誤
+        raise RuntimeError("本地 LLM 不可用：請確認 Ollama 或 LM Studio 已啟動")
     
     async def _summarize_with_ollama(
         self,

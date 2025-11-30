@@ -60,7 +60,10 @@ const elements = {
     retryBtn: document.getElementById('retryBtn'),
     
     // 頁尾
-    footerMode: document.getElementById('footerMode')
+    footerMode: document.getElementById('footerMode'),
+    
+    // 本地模式資訊
+    localModelInfo: document.getElementById('localModelInfo')
 };
 
 // ===== 初始化 =====
@@ -122,6 +125,28 @@ async function checkHealth() {
         // 更新排隊狀態
         if (elements.queueCount && data.queue_status) {
             elements.queueCount.textContent = `排隊: ${data.queue_status.total_queued}`;
+        }
+        
+        // 更新本地模式資訊（自動偵測 Ollama 或 LM Studio）
+        if (elements.localModelInfo) {
+            const localAvailable = data.ollama_available || data.lmstudio_available;
+            if (localAvailable) {
+                elements.localModelInfo.textContent = '使用：本地 LLM（已就緒）';
+                elements.localModelInfo.style.color = '#34C759';
+            } else {
+                elements.localModelInfo.textContent = '使用：本地 LLM（未偵測）';
+                elements.localModelInfo.style.color = '#FF9500';
+            }
+        }
+        
+        // 更新本地模式可用性
+        if (elements.modeLocal) {
+            const localAvailable = data.ollama_available || data.lmstudio_available;
+            if (!localAvailable) {
+                elements.modeLocal.classList.add('disabled');
+            } else {
+                elements.modeLocal.classList.remove('disabled');
+            }
         }
     } catch (error) {
         console.error('健康檢查失敗:', error);

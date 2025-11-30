@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20241130">
+    <link rel="stylesheet" href="/static/css/style.css?v=20241201">
 </head>
 <body>
     <div class="container">
@@ -42,7 +42,7 @@
                         <li>✓ 資料不外傳</li>
                         <li>✓ 適合機敏資料</li>
                     </ul>
-                    <div class="mode-model">使用：Gemma3:12B (本地 Ollama)</div>
+                    <div class="mode-model" id="localModelInfo">使用：本地 LLM</div>
                 </div>
                 <div class="mode-card" data-mode="cloud" id="modeCloud">
                     <div class="mode-icon">☁️</div>
@@ -166,6 +166,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=20241130"></script>
+    <script src="/static/js/app.js?v=20241201"></script>
 </body>
 </html>

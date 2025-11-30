@@ -5,6 +5,30 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.2] - 2025-12-01
+
+### UX 優化：本地模式抽象化 🎨
+
+此版本簡化使用者介面，移除底層技術細節，讓使用者只需關注「本地模式」vs「雲端模式」。
+
+### 改進 🔧
+- **本地模式自動偵測** - 後端自動選擇可用的本地 LLM 引擎
+  - 優先使用 Ollama
+  - 若 Ollama 不可用，自動切換到 LM Studio
+  - 使用者無需了解底層技術細節
+
+- **前端 UI 抽象化**
+  - 移除「Ollama」字樣，改為「本地 LLM」
+  - 動態顯示「已就緒」或「未偵測」狀態
+  - 統一的本地/雲端模式選擇體驗
+
+### 技術改進 ✅
+- `summarization.py`: 新增 `_summarize_with_local_llm()` 自動選擇引擎
+- `schemas.py`: 簡化 `ProcessingMode` 為 `LOCAL`/`CLOUD` 兩種
+- `app.js`: 動態更新本地模式狀態顯示
+
+---
+
 ## [未發布] - TBD
 
 ### 重要修復 🔧

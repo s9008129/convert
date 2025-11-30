@@ -23,8 +23,7 @@ class TaskStatus(str, Enum):
 
 class ProcessingMode(str, Enum):
     """處理模式"""
-    LOCAL = "local"       # 本地模式（Ollama）
-    LMSTUDIO = "lmstudio" # 本地模式（LM Studio - OpenAI 相容）
+    LOCAL = "local"       # 本地模式（自動選擇 Ollama 或 LM Studio）
     CLOUD = "cloud"       # 雲端模式（Gemini API）
 
 
