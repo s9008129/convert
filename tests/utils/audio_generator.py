@@ -6,12 +6,13 @@ Audio Generation Utility for Testing
 This module provides utilities to generate synthetic WAV audio files
 for deterministic testing of the Whisper transcription system.
 """
+import math
+import random
 import struct
+import tempfile
 import wave
 from pathlib import Path
 from typing import Optional, List, Tuple
-import math
-import tempfile
 
 
 def generate_sine_wave(
@@ -76,7 +77,6 @@ def generate_white_noise(
     Returns:
         List of 16-bit integer samples
     """
-    import random
     # Use fixed seed for deterministic testing
     rng = random.Random(42)
     
@@ -193,7 +193,16 @@ def create_temp_wav_file(
     
     Returns:
         Tuple of (path to temp file, temp file object)
-        Note: The caller is responsible for closing the temp file
+    
+    Note:
+        The caller is responsible for cleaning up the temporary file.
+        Use `path.unlink()` to delete the file when done.
+        
+        For automatic cleanup, consider using AudioGenerator context manager instead:
+        
+        >>> with AudioGenerator() as generator:
+        ...     wav_file = generator.generate("test.wav")
+        ...     # wav_file is automatically cleaned up after the with block
     """
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     tmp.close()

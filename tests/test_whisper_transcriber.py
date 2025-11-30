@@ -455,7 +455,9 @@ class TestTranscriptionWithMockedBackend:
                 # Verify progress callbacks were made
                 assert len(progress_calls) >= 2
                 assert progress_calls[0][0] == "載入模型..."
-                assert progress_calls[-1][1] == 100
+                # Check that final progress is 100 (completion indicator)
+                final_progress = progress_calls[-1][1]
+                assert final_progress == 100, f"Expected final progress 100, got {final_progress}"
 
 
 # =============================================================================
