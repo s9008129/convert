@@ -91,3 +91,9 @@ yarn-error.log
 .env.example (備份)
 *.bak
 *.backup
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
