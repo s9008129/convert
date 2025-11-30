@@ -1,12 +1,26 @@
+# ⚠️ 已禁用工作流
+# 
+# 此工作流已被禁用，原因：
+# 1. 本專案已轉換為 Docker FastAPI 服務（會議轉錄工具）
+# 2. 不再維護 Windows 桌面應用版本
+# 3. 依賴和專案結構不適合 PyInstaller 構建
+#
+# 如需重新啟用，請執行以下操作：
+# 1. 更新 PyInstaller 命令以匹配當前項目結構
+# 2. 確保所有依賴在 requirements.txt 中正確列出
+# 3. 移除下面的 "if: false" 條件
+
 name: Build Windows EXE
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 保留手動觸發選項供將來使用
   push:
     branches: [ main ]
 
 jobs:
   build-windows:
+    # ⚠️ 禁用此任務 - 本專案現為 Docker 服務
+    if: false
     runs-on: windows-latest
     
     steps:
