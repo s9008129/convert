@@ -27,21 +27,25 @@ services:
     hostname: meetingscribe-app
     restart: unless-stopped
     
+    # 載入環境變數檔案
+    env_file:
+      - ../.env
+    
     # ========================================
     # 資源限制 - 確保不影響其他服務
     # ========================================
-    deploy:
-      resources:
-        limits:
-          cpus: '8'
-          memory: 16G
-        reservations:
-          cpus: '2'
-          memory: 4G
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '8'
+    #       memory: 16G
+    #     reservations:
+    #       cpus: '2'
+    #       memory: 4G
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     
     ports:
       - "9527:9527"
@@ -58,7 +62,7 @@ services:
       # ========================================
       - GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
       - GEMINI_MODEL=gemini-2.5-flash-lite
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # GEMINI_API_KEY 從 .env 檔案讀取
       
       # ========================================
       # Whisper 轉錄設定
@@ -85,6 +89,10 @@ services:
       - ../data/outputs:/app/data/outputs
       - ../data/cache:/app/data/cache
       - meetingscribe-whisper-models:/app/models
+      # 開發模式：前端檔案即時同步（修改後重整瀏覽器即可）
+      - ../frontend:/app/frontend
+      # 開發模式：後端程式碼即時同步（需重啟容器）
+      - ../backend:/app/backend
     
     # 允許連接主機網路（存取 Ollama）
     extra_hosts:

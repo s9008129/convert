@@ -10,12 +10,13 @@ from typing import Optional, Callable
 
 from backend.core.config import settings
 from backend.core.logger import log
-from backend.models.schemas import TaskInfo, TaskStatus, ProcessingMode, TranscriptionResult
+from backend.models.schemas import TaskInfo, TaskStatus, ProcessingMode, TranscriptionResult, ProgressMessage
 from backend.services.transcription import transcription_service
 from backend.services.summarization import summarization_service
 from backend.services.file_manager import file_manager
 from backend.services.queue_manager import task_queue
 from backend.services.device_detector import device_detector
+from backend.api.websocket import connection_manager
 
 
 class TaskProcessor:
@@ -27,6 +28,26 @@ class TaskProcessor:
     def __init__(self):
         self._running = False
         self._current_task: Optional[TaskInfo] = None
+        
+    async def _update_progress(self, task_id: str, progress: float, stage: str, status: TaskStatus = None):
+        """更新進度並推送 WebSocket"""
+        task_queue.update_task_progress(task_id, progress, stage, status)
+        
+        # 推送 WebSocket 更新
+        task = task_queue.get_task(task_id)
+        if task:
+            queue_status = task_queue.get_queue_status()
+            message = ProgressMessage(
+                task_id=task_id,
+                status=task.status,
+                progress=progress,
+                stage=stage,
+                message=stage,
+                eta_seconds=task.estimated_wait_seconds,
+                queue_position=task.queue_position,
+                queue_total=queue_status.total_queued
+            )
+            await connection_manager.send_progress(task_id, message)
         
     async def start(self):
         """啟動任務處理器"""
@@ -66,7 +87,7 @@ class TaskProcessor:
             log.info(f"開始處理任務: {task.task_id}, 檔案: {task.original_filename}")
             
             # 更新狀態
-            task_queue.update_task_progress(task.task_id, 5.0, "準備處理", TaskStatus.PENDING)
+            await self._update_progress(task.task_id, 5.0, "準備處理", TaskStatus.PENDING)
             
             # 取得檔案路徑（安全地組合路徑）
             # 確保 filename 不包含路徑遍歷字符
@@ -85,15 +106,29 @@ class TaskProcessor:
                 log.info(f"找到快取的逐字稿: {file_hash}")
                 transcript = cached_transcript
                 duration = 0.0  # 快取時無法取得時長
-                task_queue.update_task_progress(task.task_id, 60.0, "使用快取逐字稿", TaskStatus.TRANSCRIBING)
+                await self._update_progress(task.task_id, 60.0, "使用快取逐字稿", TaskStatus.TRANSCRIBING)
             else:
                 # 執行轉錄
-                task_queue.update_task_progress(task.task_id, 10.0, "開始轉錄", TaskStatus.TRANSCRIBING)
+                await self._update_progress(task.task_id, 10.0, "載入 Whisper 模型...", TaskStatus.TRANSCRIBING)
                 
-                def progress_cb(progress: float, message: str):
-                    task_queue.update_task_progress(task.task_id, progress, message)
+                # 使用 asyncio 包裝同步轉錄並定期更新進度
+                loop = asyncio.get_event_loop()
                 
-                transcript, duration = transcription_service.transcribe(file_path, progress_cb)
+                # 創建一個可以在同步回調中更新異步進度的機制
+                async def async_progress_update(progress: float, message: str):
+                    await self._update_progress(task.task_id, progress, message)
+                
+                def sync_progress_cb(progress: float, message: str):
+                    # 在事件循環中排程異步更新
+                    asyncio.run_coroutine_threadsafe(
+                        async_progress_update(progress, message),
+                        loop
+                    )
+                
+                transcript, duration = await loop.run_in_executor(
+                    None,
+                    lambda: transcription_service.transcribe(file_path, sync_progress_cb)
+                )
                 
                 # 驗證轉錄結果
                 if not transcript or not transcript.strip():
@@ -103,16 +138,16 @@ class TaskProcessor:
                 file_manager.save_transcript_cache(file_hash, transcript)
             
             # 生成摘要
-            task_queue.update_task_progress(task.task_id, 65.0, "生成摘要", TaskStatus.SUMMARIZING)
+            await self._update_progress(task.task_id, 65.0, "生成摘要", TaskStatus.SUMMARIZING)
             
-            async def async_progress_cb(progress: float, message: str):
-                task_queue.update_task_progress(task.task_id, progress, message)
+            async def summarize_progress_cb(progress: float, message: str):
+                await self._update_progress(task.task_id, progress, message)
             
             summary = await summarization_service.summarize(
                 transcript,
                 mode=task.processing_mode,
                 user_prompt=task.user_prompt,
-                progress_callback=lambda p, m: task_queue.update_task_progress(task.task_id, p, m)
+                progress_callback=lambda p, m: asyncio.create_task(summarize_progress_cb(p, m))
             )
             
             # 組合最終結果
@@ -130,11 +165,24 @@ class TaskProcessor:
             
             await task_queue.complete_task(task.task_id, success=True)
             
+            # 推送完成訊息到 WebSocket
+            await self._update_progress(task.task_id, 100.0, "完成", TaskStatus.COMPLETED)
+            
             log.info(f"任務 {task.task_id} 處理完成，耗時: {processing_time:.1f}秒")
             
         except Exception as e:
             log.error(f"任務 {task.task_id} 處理失敗: {e}")
             await task_queue.complete_task(task.task_id, success=False, error_message=str(e))
+            
+            # 推送失敗訊息到 WebSocket
+            message = ProgressMessage(
+                task_id=task.task_id,
+                status=TaskStatus.FAILED,
+                progress=0.0,
+                stage="失敗",
+                message=str(e)
+            )
+            await connection_manager.send_progress(task.task_id, message)
     
     def _format_result(self, task: TaskInfo, transcript: str, summary: str) -> str:
         """格式化最終結果"""

@@ -35,7 +35,7 @@ const elements = {
     queueSection: document.getElementById('queueSection'),
     queueTotal: document.getElementById('queueTotal'),
     queuePosition: document.getElementById('queuePosition'),
-    estimatedWait: document.getElementById('estimatedWait'),
+    queueStatus: document.getElementById('queueStatus'),
     
     // 進度
     progressSection: document.getElementById('progressSection'),
@@ -77,12 +77,18 @@ async function loadConfig() {
         state.config = await response.json();
         
         // 更新 UI
-        elements.maxFileSize.textContent = state.config.max_file_size_mb;
+        if (elements.maxFileSize) {
+            elements.maxFileSize.textContent = state.config.max_file_size_mb;
+        }
         
         // 檢查雲端模式是否可用
         if (!state.config.gemini_available) {
-            elements.cloudWarning.style.display = 'block';
-            elements.modeCloud.classList.add('disabled');
+            if (elements.cloudWarning) {
+                elements.cloudWarning.style.display = 'block';
+            }
+            if (elements.modeCloud) {
+                elements.modeCloud.classList.add('disabled');
+            }
         }
     } catch (error) {
         console.error('載入配置失敗:', error);
@@ -95,34 +101,50 @@ async function checkHealth() {
         const health = await response.json();
         
         // 更新系統狀態
-        elements.systemStatus.textContent = health.status === 'healthy' ? '正常' : '異常';
-        elements.systemStatus.className = `status-value ${health.status === 'healthy' ? 'online' : 'offline'}`;
+        if (elements.systemStatus) {
+            elements.systemStatus.textContent = health.status === 'healthy' ? '正常' : '異常';
+            elements.systemStatus.className = `status-value ${health.status === 'healthy' ? 'online' : 'offline'}`;
+        }
         
         // 更新 GPU 狀態
-        if (health.gpu_available) {
-            elements.gpuStatus.textContent = health.gpu_name || 'GPU';
-            elements.gpuStatus.className = 'status-value online';
-        } else {
-            elements.gpuStatus.textContent = 'CPU 模式';
-            elements.gpuStatus.className = 'status-value';
+        if (elements.gpuStatus) {
+            if (health.gpu_available) {
+                elements.gpuStatus.textContent = health.gpu_name || 'GPU';
+                elements.gpuStatus.className = 'status-value online';
+            } else {
+                elements.gpuStatus.textContent = 'CPU 模式';
+                elements.gpuStatus.className = 'status-value';
+            }
         }
         
         // 更新排隊狀態
-        elements.queueCount.textContent = health.queue_status.total_queued;
+        if (elements.queueCount) {
+            elements.queueCount.textContent = health.queue_status.total_queued;
+        }
         
         // 更新雲端模式可用性
         if (!health.gemini_available) {
-            elements.cloudWarning.style.display = 'block';
-            elements.modeCloud.classList.add('disabled');
+            if (elements.cloudWarning) {
+                elements.cloudWarning.style.display = 'block';
+            }
+            if (elements.modeCloud) {
+                elements.modeCloud.classList.add('disabled');
+            }
         } else {
-            elements.cloudWarning.style.display = 'none';
-            elements.modeCloud.classList.remove('disabled');
+            if (elements.cloudWarning) {
+                elements.cloudWarning.style.display = 'none';
+            }
+            if (elements.modeCloud) {
+                elements.modeCloud.classList.remove('disabled');
+            }
         }
         
     } catch (error) {
         console.error('健康檢查失敗:', error);
-        elements.systemStatus.textContent = '無法連接';
-        elements.systemStatus.className = 'status-value offline';
+        if (elements.systemStatus) {
+            elements.systemStatus.textContent = '無法連接';
+            elements.systemStatus.className = 'status-value offline';
+        }
     }
 }
 
@@ -234,11 +256,20 @@ function handleProgressUpdate(message) {
     
     // 更新排隊資訊
     if (message.queue_position) {
-        elements.queuePosition.textContent = `第 ${message.queue_position} 位`;
-        elements.queueTotal.textContent = message.queue_total || 0;
+        if (elements.queuePosition) {
+            elements.queuePosition.textContent = `第 ${message.queue_position} 位`;
+        }
+        if (elements.queueTotal) {
+            elements.queueTotal.textContent = message.queue_total || 0;
+        }
         
-        if (message.eta_seconds) {
-            elements.estimatedWait.textContent = Math.ceil(message.eta_seconds / 60);
+        // 更新狀態文字
+        if (elements.queueStatus) {
+            if (message.queue_position === 1) {
+                elements.queueStatus.textContent = '即將處理';
+            } else {
+                elements.queueStatus.textContent = '排隊中';
+            }
         }
     }
     
@@ -267,36 +298,74 @@ function handleProgressUpdate(message) {
 
 // ===== UI 更新函數 =====
 function showQueueStatus(result) {
-    elements.queueSection.style.display = 'block';
-    elements.queuePosition.textContent = `第 ${result.queue_position} 位`;
-    elements.queueTotal.textContent = result.queue_position;
-    elements.estimatedWait.textContent = Math.ceil(result.estimated_wait_seconds / 60);
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'block';
+    }
+    if (elements.queuePosition) {
+        elements.queuePosition.textContent = `第 ${result.queue_position} 位`;
+    }
+    if (elements.queueTotal) {
+        elements.queueTotal.textContent = result.queue_position;
+    }
+    
+    // 更新狀態文字
+    if (elements.queueStatus) {
+        if (result.queue_position === 1) {
+            elements.queueStatus.textContent = '即將處理';
+        } else {
+            elements.queueStatus.textContent = '排隊中';
+        }
+    }
     
     // 隱藏其他區塊
-    elements.uploadArea.parentElement.style.display = 'none';
-    elements.progressSection.style.display = 'none';
-    elements.resultSection.style.display = 'none';
-    elements.errorSection.style.display = 'none';
+    if (elements.uploadArea && elements.uploadArea.parentElement) {
+        elements.uploadArea.parentElement.style.display = 'none';
+    }
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.resultSection) {
+        elements.resultSection.style.display = 'none';
+    }
+    if (elements.errorSection) {
+        elements.errorSection.style.display = 'none';
+    }
 }
 
 function showQueueSection() {
-    elements.queueSection.style.display = 'block';
-    elements.progressSection.style.display = 'none';
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'block';
+    }
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
 }
 
 function hideQueueSection() {
-    elements.queueSection.style.display = 'none';
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
 }
 
 function showProgress(message) {
-    elements.progressSection.style.display = 'block';
-    elements.queueSection.style.display = 'none';
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'block';
+    }
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
     
     // 更新進度條
     const progress = message.progress || 0;
-    elements.progressBar.style.width = `${progress}%`;
-    elements.progressPercent.textContent = `${Math.round(progress)}%`;
-    elements.progressText.textContent = message.stage || message.message || '處理中...';
+    if (elements.progressBar) {
+        elements.progressBar.style.width = `${progress}%`;
+    }
+    if (elements.progressPercent) {
+        elements.progressPercent.textContent = `${Math.round(progress)}%`;
+    }
+    if (elements.progressText) {
+        elements.progressText.textContent = message.stage || message.message || '處理中...';
+    }
     
     // 更新階段指示器
     updateStages(message.status);
@@ -325,8 +394,12 @@ function updateStages(status) {
 }
 
 async function showCompleted() {
-    elements.progressSection.style.display = 'none';
-    elements.resultSection.style.display = 'block';
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.resultSection) {
+        elements.resultSection.style.display = 'block';
+    }
     
     // 載入結果
     try {
@@ -338,24 +411,36 @@ async function showCompleted() {
         
         // 使用 textContent 來防止 XSS
         // 創建 pre 元素以保留格式
-        const preElement = document.createElement('pre');
-        preElement.style.whiteSpace = 'pre-wrap';
-        preElement.style.wordWrap = 'break-word';
-        preElement.textContent = text;
-        elements.resultPreview.innerHTML = '';
-        elements.resultPreview.appendChild(preElement);
+        if (elements.resultPreview) {
+            const preElement = document.createElement('pre');
+            preElement.style.whiteSpace = 'pre-wrap';
+            preElement.style.wordWrap = 'break-word';
+            preElement.textContent = text;
+            elements.resultPreview.innerHTML = '';
+            elements.resultPreview.appendChild(preElement);
+        }
         
     } catch (error) {
         console.error('載入結果失敗:', error);
-        elements.resultPreview.textContent = '載入結果失敗';
+        if (elements.resultPreview) {
+            elements.resultPreview.textContent = '載入結果失敗';
+        }
     }
 }
 
 function showError(message) {
-    elements.progressSection.style.display = 'none';
-    elements.queueSection.style.display = 'none';
-    elements.errorSection.style.display = 'block';
-    elements.errorMessage.textContent = message;
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
+    if (elements.errorSection) {
+        elements.errorSection.style.display = 'block';
+    }
+    if (elements.errorMessage) {
+        elements.errorMessage.textContent = message;
+    }
 }
 
 function resetUI() {
@@ -372,16 +457,32 @@ function resetUI() {
     }
     
     // 重置所有區塊
-    elements.uploadArea.parentElement.style.display = 'block';
-    elements.queueSection.style.display = 'none';
-    elements.progressSection.style.display = 'none';
-    elements.resultSection.style.display = 'none';
-    elements.errorSection.style.display = 'none';
+    if (elements.uploadArea && elements.uploadArea.parentElement) {
+        elements.uploadArea.parentElement.style.display = 'block';
+    }
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.resultSection) {
+        elements.resultSection.style.display = 'none';
+    }
+    if (elements.errorSection) {
+        elements.errorSection.style.display = 'none';
+    }
     
     // 重置進度
-    elements.progressBar.style.width = '0%';
-    elements.progressPercent.textContent = '0%';
-    elements.progressText.textContent = '準備中...';
+    if (elements.progressBar) {
+        elements.progressBar.style.width = '0%';
+    }
+    if (elements.progressPercent) {
+        elements.progressPercent.textContent = '0%';
+    }
+    if (elements.progressText) {
+        elements.progressText.textContent = '準備中...';
+    }
     
     // 重置階段
     document.querySelectorAll('.stage').forEach(stage => {
@@ -389,10 +490,14 @@ function resetUI() {
     });
     
     // 清空自訂 Prompt
-    elements.userPrompt.value = '';
+    if (elements.userPrompt) {
+        elements.userPrompt.value = '';
+    }
     
     // 重置文件輸入
-    elements.fileInput.value = '';
+    if (elements.fileInput) {
+        elements.fileInput.value = '';
+    }
     
     // 更新健康狀態
     checkHealth();
@@ -401,41 +506,65 @@ function resetUI() {
 // ===== 事件處理 =====
 function setupEventListeners() {
     // 模式選擇
-    elements.modeLocal.addEventListener('click', () => selectMode('local'));
-    elements.modeCloud.addEventListener('click', () => {
-        if (!elements.modeCloud.classList.contains('disabled')) {
-            selectMode('cloud');
-        }
-    });
+    if (elements.modeLocal) {
+        elements.modeLocal.addEventListener('click', () => selectMode('local'));
+    }
+    if (elements.modeCloud) {
+        elements.modeCloud.addEventListener('click', () => {
+            if (!elements.modeCloud.classList.contains('disabled')) {
+                selectMode('cloud');
+            }
+        });
+    }
     
     // 上傳區域
-    elements.uploadArea.addEventListener('click', () => elements.fileInput.click());
-    elements.uploadArea.addEventListener('dragover', handleDragOver);
-    elements.uploadArea.addEventListener('dragleave', handleDragLeave);
-    elements.uploadArea.addEventListener('drop', handleDrop);
-    elements.fileInput.addEventListener('change', handleFileSelect);
+    if (elements.uploadArea) {
+        elements.uploadArea.addEventListener('click', () => {
+            if (elements.fileInput) elements.fileInput.click();
+        });
+        elements.uploadArea.addEventListener('dragover', handleDragOver);
+        elements.uploadArea.addEventListener('dragleave', handleDragLeave);
+        elements.uploadArea.addEventListener('drop', handleDrop);
+    }
+    if (elements.fileInput) {
+        elements.fileInput.addEventListener('change', handleFileSelect);
+    }
     
     // 按鈕
-    elements.copyBtn.addEventListener('click', copyResult);
-    elements.downloadBtn.addEventListener('click', downloadResult);
-    elements.resetBtn.addEventListener('click', resetUI);
-    elements.retryBtn.addEventListener('click', resetUI);
+    if (elements.copyBtn) {
+        elements.copyBtn.addEventListener('click', copyResult);
+    }
+    if (elements.downloadBtn) {
+        elements.downloadBtn.addEventListener('click', downloadResult);
+    }
+    if (elements.resetBtn) {
+        elements.resetBtn.addEventListener('click', resetUI);
+    }
+    if (elements.retryBtn) {
+        elements.retryBtn.addEventListener('click', resetUI);
+    }
 }
 
 function selectMode(mode) {
     state.currentMode = mode;
     
     // 更新 UI
-    elements.modeLocal.classList.toggle('selected', mode === 'local');
-    elements.modeCloud.classList.toggle('selected', mode === 'cloud');
+    if (elements.modeLocal) {
+        elements.modeLocal.classList.toggle('selected', mode === 'local');
+    }
+    if (elements.modeCloud) {
+        elements.modeCloud.classList.toggle('selected', mode === 'cloud');
+    }
     
     // 更新頁尾
-    if (mode === 'local') {
-        elements.footerMode.textContent = '🔒 本地模式：完全離線，資料不外傳';
-        elements.footerMode.className = 'footer-mode local';
-    } else {
-        elements.footerMode.textContent = '☁️ 雲端模式：使用 Gemini API';
-        elements.footerMode.className = 'footer-mode cloud';
+    if (elements.footerMode) {
+        if (mode === 'local') {
+            elements.footerMode.textContent = '🔒 本地模式：完全離線，資料不外傳';
+            elements.footerMode.className = 'footer-mode local';
+        } else {
+            elements.footerMode.textContent = '☁️ 雲端模式：使用 Gemini API';
+            elements.footerMode.className = 'footer-mode cloud';
+        }
     }
 }
 
@@ -486,12 +615,16 @@ function handleFile(file) {
 }
 
 function copyResult() {
+    if (!elements.resultPreview) return;
+    
     const text = elements.resultPreview.innerText;
     navigator.clipboard.writeText(text).then(() => {
-        elements.copyBtn.textContent = '✓ 已複製';
-        setTimeout(() => {
-            elements.copyBtn.textContent = '📋 複製文字';
-        }, 2000);
+        if (elements.copyBtn) {
+            elements.copyBtn.textContent = '✓ 已複製';
+            setTimeout(() => {
+                elements.copyBtn.textContent = '📋 複製文字';
+            }, 2000);
+        }
     }).catch(err => {
         console.error('複製失敗:', err);
         alert('複製失敗');

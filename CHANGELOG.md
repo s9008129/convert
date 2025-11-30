@@ -5,6 +5,52 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.2.1] - 2025-11-30
+
+### 前端優化與 UX 改善 🎨
+
+此版本重點優化前端使用者體驗，改善排隊狀態顯示和 WebSocket 即時進度推送。
+
+### 新增功能 ✨
+- **WebSocket 即時進度推送** - 後端主動推送進度更新到前端
+  - `task_processor.py` 新增 `_update_progress()` 方法
+  - 進度更新時自動推送 WebSocket 訊息
+  - 任務完成/失敗時推送最終狀態
+
+- **開發模式 Volume Mount** - 前端/後端程式碼即時同步
+  - 前端變更只需刷新瀏覽器
+  - 後端變更只需重啟容器
+  - 不需重建 Docker 映像檔
+
+### 改進 🔧
+- **排隊狀態顯示優化**
+  - 移除不準確的「預估等待時間」
+  - 改為顯示「狀態」(即將處理/排隊中)
+  - 更直覺的使用者體驗
+
+- **前端 JavaScript 穩定性**
+  - 所有 DOM 操作添加 null 安全檢查
+  - 避免元素不存在時的 JavaScript 錯誤
+  - Cache Busting 版本號確保載入最新資源
+
+- **Docker Compose 優化**
+  - 移除過嚴格的資源限制
+  - 新增 `env_file` 設定支援環境變數
+  - Volume Mount 支援開發模式
+
+### 修正 🐛
+- 修正 WebSocket 進度不即時更新的問題
+- 修正 `Cannot set properties of null` JavaScript 錯誤
+- 修正 Gemini API Key 環境變數未載入問題
+- 修正 Docker 容器記憶體不足導致 Whisper 模型載入失敗
+
+### 技術改進 ✅
+- WebSocket 連接管理器 (`connection_manager`) 整合到任務處理器
+- 使用 `asyncio.run_coroutine_threadsafe()` 實現同步回調觸發異步推送
+- 靜態資源添加版本號防止瀏覽器快取
+
+---
+
 ## [2.2.0] - 2025-11-29
 
 ### 🔒 重大變更：Docker 服務完全隔離

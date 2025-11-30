@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=20241130">
 </head>
 <body>
     <div class="container">
@@ -99,9 +99,8 @@
                     <span class="queue-value" id="queuePosition">--</span>
                 </div>
                 <div class="queue-item">
-                    <span class="queue-label">預估等待時間</span>
-                    <span class="queue-value" id="estimatedWait">--</span>
-                    <span class="queue-unit">分鐘</span>
+                    <span class="queue-label">狀態</span>
+                    <span class="queue-value" id="queueStatus">等待中</span>
                 </div>
             </div>
         </section>
@@ -167,6 +166,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=20241130"></script>
 </body>
 </html>

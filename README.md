@@ -1,8 +1,8 @@
-# MeetingScribe v2.2.0
+# MeetingScribe v2.2.1
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.2.0-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.2.1-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -19,11 +19,17 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🔒 v2.2.0 隔離保證（首要任務）
+### 🔒 v2.2.1 新功能
+
+- ✅ **WebSocket 即時進度推送**: 後端主動推送進度更新，前端即時顯示處理狀態
+- ✅ **優化排隊狀態顯示**: 移除不準確的預估時間，改為顯示「即將處理」或「排隊中」
+- ✅ **開發模式 Volume Mount**: 前端/後端程式碼變更無需重建 Docker 映像
+- ✅ **前端穩定性提升**: 所有 DOM 操作添加 null 安全檢查
+
+### 🔒 隔離保證（首要任務）
 
 - ✅ **獨立網路**: 使用專屬 Docker 網路 `meetingscribe-network` (172.30.0.0/16)
 - ✅ **獨立命名**: 所有容器、Volume、網路都使用 `meetingscribe-` 前綴
-- ✅ **資源限制**: 設定 CPU/記憶體上限，不影響其他服務
 - ✅ **完全隔離**: 不與其他 Docker 專案共用任何資源
 
 ### 核心特點
