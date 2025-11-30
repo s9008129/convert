@@ -14,6 +14,7 @@ Test Strategy:
 """
 
 import json
+import math
 import os
 import struct
 import sys
@@ -36,6 +37,23 @@ from src.whisper_transcriber import (
     UnsupportedFormatError,
     WhisperTranscriber,
 )
+
+
+# ============================================================
+# Constants for Test Data
+# ============================================================
+
+# File size constants
+MOCK_MP3_FILE_SIZE = 1000
+MOCK_FILE_SIZE = 100
+
+# SHA256 hex digest length
+SHA256_HEX_LENGTH = 64
+
+# Test transcription text samples
+TEST_SEGMENT_TEXT_1 = "這是測試語音"
+TEST_SEGMENT_TEXT_2 = "用於驗證轉錄功能"
+TEST_SEGMENT_TEXT_3 = "確保系統正常運作"
 
 
 # ============================================================
@@ -63,8 +81,6 @@ def generate_wav_file(
     Returns:
         Path to the generated file
     """
-    import math
-    
     num_samples = int(duration_seconds * sample_rate)
     
     with wave.open(filepath, "wb") as wav_file:
@@ -114,9 +130,9 @@ class MockWhisperModel:
         """Mock transcription that returns predefined segments"""
         # Simulated transcription result
         segments = [
-            MockSegment(0.0, 2.0, "這是測試語音"),
-            MockSegment(2.0, 4.0, "用於驗證轉錄功能"),
-            MockSegment(4.0, 6.0, "確保系統正常運作"),
+            MockSegment(0.0, 2.0, TEST_SEGMENT_TEXT_1),
+            MockSegment(2.0, 4.0, TEST_SEGMENT_TEXT_2),
+            MockSegment(4.0, 6.0, TEST_SEGMENT_TEXT_3),
         ]
         info = MockTranscriptionInfo(language=language or "zh", duration=6.0)
         
@@ -149,7 +165,7 @@ def sample_mp3_file(temp_dir):
     filepath = os.path.join(temp_dir, "test_audio.mp3")
     # Create a minimal file - in real testing this would be actual MP3 data
     with open(filepath, "wb") as f:
-        f.write(b"\x00" * 1000)
+        f.write(b"\x00" * MOCK_MP3_FILE_SIZE)
     return filepath
 
 
@@ -337,7 +353,7 @@ class TestFileValidation:
         for ext in supported_extensions:
             filepath = os.path.join(temp_dir, f"test{ext}")
             with open(filepath, "wb") as f:
-                f.write(b"\x00" * 100)
+                f.write(b"\x00" * MOCK_FILE_SIZE)
             
             # Should not raise an exception
             transcriber._validate_file(Path(filepath))
@@ -488,7 +504,7 @@ class TestCachingFunctionality:
         hash2 = transcriber._calculate_file_hash(Path(sample_audio_file))
         
         assert hash1 == hash2
-        assert len(hash1) == 64  # SHA256 hex digest length
+        assert len(hash1) == SHA256_HEX_LENGTH
     
     @patch("src.whisper_transcriber.WhisperTranscriber._check_cuda")
     @patch("src.whisper_transcriber.WhisperTranscriber._detect_backend")
