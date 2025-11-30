@@ -1,8 +1,8 @@
-# MeetingScribe v2.2.1
+# MeetingScribe v2.3.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.2.1-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -19,12 +19,11 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🔒 v2.2.1 新功能
+### 🇹🇼 v2.3.0 新功能：台灣繁體中文支援
 
-- ✅ **WebSocket 即時進度推送**: 後端主動推送進度更新，前端即時顯示處理狀態
-- ✅ **優化排隊狀態顯示**: 移除不準確的預估時間，改為顯示「即將處理」或「排隊中」
-- ✅ **開發模式 Volume Mount**: 前端/後端程式碼變更無需重建 Docker 映像
-- ✅ **前端穩定性提升**: 所有 DOM 操作添加 null 安全檢查
+- ✅ **繁體中文轉錄**: 使用 `initial_prompt` 引導 Whisper 輸出繁體中文
+- ✅ **OpenCC 簡繁轉換**: 使用 `s2twp` 模式確保 100% 台灣繁體中文輸出
+- ✅ **台灣用語轉換**: 自動將大陸用語轉換為台灣用語（如：視頻→影片）
 
 ### 🔒 隔離保證（首要任務）
 
@@ -34,6 +33,7 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 
 ### 核心特點
 
+- 🇹🇼 **台灣繁體中文**：轉錄輸出為台灣正體中文，非簡體
 - 🔒 **本地模式**：完全離線處理，使用 Ollama + Gemma3:12B，資料不外傳，適合機敏資料
 - ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
 - 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務

@@ -5,6 +5,31 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.0] - 2025-11-30
+
+### 台灣繁體中文轉錄支援 🇹🇼
+
+此版本重點修正 Whisper 轉錄輸出簡體中文的問題，確保輸出為台灣繁體中文（正體中文）。
+
+### 新增功能 ✨
+- **OpenCC 簡繁轉換器** - 添加 `opencc-python-reimplemented` 套件
+  - 使用 `s2twp` 模式（簡體 → 台灣繁體 + 詞彙轉換）
+  - 自動將 Whisper 輸出轉換為台灣用語
+
+### 改進 🔧
+- **Whisper 轉錄參數優化**
+  - 新增 `language="zh"` 明確指定中文語言
+  - 新增 `initial_prompt` 使用繁體中文句子引導輸出
+  - 提示詞: "以下是台灣繁體中文的會議逐字稿，請使用正體中文輸出。"
+
+### 技術說明 📝
+- **問題根因**: Whisper 不區分 zh-TW/zh-CN，預設輸出傾向簡體中文
+- **解決方案**: 雙重保障
+  1. `initial_prompt` 引導 Whisper 輸出繁體
+  2. `OpenCC` 後處理確保 100% 繁體中文輸出
+
+---
+
 ## [2.2.2] - 2025-11-30
 
 ### CI/CD 修正 🔧
