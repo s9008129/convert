@@ -561,7 +561,8 @@ class TestEdgeCasesAndSecurity:
         
         for hash_value in malicious_hashes:
             result = file_manager.get_cached_transcript(hash_value)
-            assert result is None, f"Hash {hash_value} should be rejected"
+            hash_repr = repr(hash_value) if hash_value is not None else 'None'
+            assert result is None, f"Hash {hash_repr} should be rejected"
 
 
 if __name__ == "__main__":

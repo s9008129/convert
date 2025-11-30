@@ -561,18 +561,30 @@ class TestQueuePositionEndpoint:
 class TestEdgeCasesAndSecurity:
     """Tests for edge cases and security concerns."""
     
-    def test_upload_empty_filename(self, test_client, mock_services):
-        """Test upload with empty filename."""
-        mock_services['file_manager'].validate_file.return_value = (False, "檔案名稱不能為空")
-        
+    def test_upload_empty_filename_returns_error(self, test_client, mock_services):
+        """Test upload with empty filename - FastAPI validates at request level."""
+        # Note: FastAPI returns 422 for empty filename at request validation level
+        # before our custom validation can run
         files = {'file': ('', b'test content', 'audio/mpeg')}
         data = {'processing_mode': 'local'}
         
         response = test_client.post("/api/upload", files=files, data=data)
         
-        # FastAPI returns 422 for validation errors with empty filename
-        # or 400 if our validation catches it
-        assert response.status_code in [400, 422]
+        # FastAPI's request validation returns 422 for empty filename
+        assert response.status_code == 422
+    
+    def test_upload_empty_filename_custom_validation(self, test_client, mock_services):
+        """Test that our custom validation also catches empty filename."""
+        mock_services['file_manager'].validate_file.return_value = (False, "檔案名稱不能為空")
+        
+        # If a filename somehow passes FastAPI validation but is empty
+        files = {'file': ('a', b'test content', 'audio/mpeg')}  # Valid for FastAPI
+        data = {'processing_mode': 'local'}
+        
+        response = test_client.post("/api/upload", files=files, data=data)
+        
+        # Our validation should return 400
+        assert response.status_code == 400
     
     def test_upload_path_traversal_attempt(self, test_client, mock_services):
         """Test upload with path traversal in filename."""

@@ -276,8 +276,7 @@ class TestWebSocketEndpoint:
         
         with patch('backend.api.websocket.task_queue') as mock_queue, \
              patch.object(connection_manager, 'connect', new=AsyncMock()), \
-             patch.object(connection_manager, 'disconnect'), \
-             patch('asyncio.wait_for', new=AsyncMock(side_effect=[lambda: "ping", WebSocketDisconnect()])):
+             patch.object(connection_manager, 'disconnect'):
             mock_queue.get_task.return_value = sample_task
             mock_queue.get_queue_status.return_value = sample_queue_status
             
