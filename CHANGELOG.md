@@ -5,6 +5,16 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.2.2] - 2025-11-30
+
+### CI/CD 修正 🔧
+
+- **GitHub Actions 升級** - 修正 `actions/upload-artifact@v3` 已棄用導致 CI 失敗的問題
+  - 升級 `actions/upload-artifact` 從 v3 到 v4
+  - 符合 GitHub 2024-04-16 棄用公告要求
+
+---
+
 ## [2.2.1] - 2025-11-30
 
 ### 前端優化與 UX 改善 🎨

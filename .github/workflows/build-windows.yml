@@ -45,7 +45,7 @@ jobs:
         echo 系統需求: Windows 10/11 >> release\使用說明.txt
         
     - name: Upload Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: DocumentConverter-Windows
         path: release/
