@@ -38,3 +38,7 @@ ffmpeg-python==0.2.0
 # CUDA 支援（如果可用）
 # nvidia-cublas-cu12
 # nvidia-cudnn-cu12
+
+# 測試框架
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
