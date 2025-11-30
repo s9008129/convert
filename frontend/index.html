@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20241201">
+    <link rel="stylesheet" href="/static/css/style.css?v=20241201b">
 </head>
 <body>
     <div class="container">
@@ -52,11 +52,12 @@
                         <li>✓ 處理速度較快</li>
                         <li>✓ 適合非機敏資料</li>
                     </ul>
-                    <div class="mode-model">使用：Gemini API</div>
-                    <div class="mode-warning" id="cloudWarning" style="display: none;">
-                        ⚠️ 未設定 API Key
-                    </div>
+                    <div class="mode-model" id="cloudModelInfo">使用：Gemini API</div>
                 </div>
+            </div>
+            <!-- 模式鎖定提示 -->
+            <div class="mode-lock-hint" id="modeLockHint" style="display: none;">
+                🔒 處理中，模式已鎖定
             </div>
         </section>
 
@@ -166,6 +167,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=20241201"></script>
+    <script src="/static/js/app.js?v=20241201b"></script>
 </body>
 </html>

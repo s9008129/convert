@@ -232,6 +232,32 @@ body {
     filter: grayscale(1);
 }
 
+/* 模式鎖定樣式 */
+.mode-card.locked {
+    opacity: 0.6;
+    pointer-events: none;
+    position: relative;
+}
+
+.mode-card.locked::after {
+    content: '🔒';
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-size: 1.2rem;
+}
+
+.mode-lock-hint {
+    text-align: center;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-sm);
+    background: #FFF3CD;
+    border-radius: var(--radius-sm);
+    border: 1px solid #FFE69C;
+}
+
 /* Prompt Input */
 .prompt-container {
     width: 100%;

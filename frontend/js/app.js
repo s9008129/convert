@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v2.2 - 修復重新處理功能
+ * v2.3.2 - 模式鎖定與 UI 優化
  */
 
 // 全域狀態
@@ -11,7 +11,8 @@ const state = {
     config: null,
     lastFile: null,          // 保存最後上傳的檔案
     retryAttempts: 0,        // 重試計數
-    maxRetryAttempts: 3      // 最大重試次數
+    maxRetryAttempts: 3,     // 最大重試次數
+    modeLocked: false        // 模式是否已鎖定
 };
 
 // DOM 元素
@@ -63,7 +64,13 @@ const elements = {
     footerMode: document.getElementById('footerMode'),
     
     // 本地模式資訊
-    localModelInfo: document.getElementById('localModelInfo')
+    localModelInfo: document.getElementById('localModelInfo'),
+    
+    // 雲端模式資訊
+    cloudModelInfo: document.getElementById('cloudModelInfo'),
+    
+    // 模式鎖定提示
+    modeLockHint: document.getElementById('modeLockHint')
 };
 
 // ===== 初始化 =====
@@ -139,6 +146,17 @@ async function checkHealth() {
             }
         }
         
+        // 更新雲端模式資訊（檢查 Gemini API 可用性）
+        if (elements.cloudModelInfo) {
+            if (data.gemini_available) {
+                elements.cloudModelInfo.textContent = '使用：Gemini API（已就緒）';
+                elements.cloudModelInfo.style.color = '#34C759';
+            } else {
+                elements.cloudModelInfo.textContent = '使用：Gemini API（連線失敗）';
+                elements.cloudModelInfo.style.color = '#FF3B30';
+            }
+        }
+        
         // 更新本地模式可用性
         if (elements.modeLocal) {
             const localAvailable = data.ollama_available || data.lmstudio_available;
@@ -146,6 +164,15 @@ async function checkHealth() {
                 elements.modeLocal.classList.add('disabled');
             } else {
                 elements.modeLocal.classList.remove('disabled');
+            }
+        }
+        
+        // 更新雲端模式可用性
+        if (elements.modeCloud) {
+            if (!data.gemini_available) {
+                elements.modeCloud.classList.add('disabled');
+            } else {
+                elements.modeCloud.classList.remove('disabled');
             }
         }
     } catch (error) {
@@ -182,6 +209,9 @@ async function uploadFile(file, isRetry = false) {
             elements.errorSection.style.display = 'none';
         }
         
+        // 🔒 鎖定模式選擇
+        lockModeSelection(true);
+        
         const response = await fetch('/api/upload', {
             method: 'POST',
             body: formData
@@ -202,7 +232,43 @@ async function uploadFile(file, isRetry = false) {
         connectWebSocket(result.task_id);
         
     } catch (error) {
+        // 解鎖模式選擇（失敗時）
+        lockModeSelection(false);
         showError(error.message, true);
+    }
+}
+
+// 🔒 鎖定/解鎖模式選擇
+function lockModeSelection(locked) {
+    state.modeLocked = locked;
+    
+    if (elements.modeLocal) {
+        if (locked) {
+            elements.modeLocal.classList.add('locked');
+            elements.modeLocal.style.pointerEvents = 'none';
+            elements.modeLocal.style.opacity = '0.6';
+        } else {
+            elements.modeLocal.classList.remove('locked');
+            elements.modeLocal.style.pointerEvents = 'auto';
+            elements.modeLocal.style.opacity = '1';
+        }
+    }
+    
+    if (elements.modeCloud) {
+        if (locked) {
+            elements.modeCloud.classList.add('locked');
+            elements.modeCloud.style.pointerEvents = 'none';
+            elements.modeCloud.style.opacity = '0.6';
+        } else {
+            elements.modeCloud.classList.remove('locked');
+            elements.modeCloud.style.pointerEvents = 'auto';
+            elements.modeCloud.style.opacity = '1';
+        }
+    }
+    
+    // 顯示/隱藏鎖定提示
+    if (elements.modeLockHint) {
+        elements.modeLockHint.style.display = locked ? 'block' : 'none';
     }
 }
 
@@ -465,6 +531,9 @@ function resetUI() {
     if (elements.fileInput) {
         elements.fileInput.value = '';
     }
+    
+    // 🔓 解鎖模式選擇
+    lockModeSelection(false);
     
     // 更新健康狀態
     checkHealth();

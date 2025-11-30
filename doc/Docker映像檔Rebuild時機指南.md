@@ -1,0 +1,239 @@
+# 🐳 Docker 映像檔 Rebuild 時機指南
+
+> **版本**: v1.0  
+> **適用專案**: MeetingScribe  
+> **最後更新**: 2025-12-01
+
+---
+
+## 📋 概述
+
+本指南解答一個常見問題：**「我修改了程式碼，到底需不需要重建 Docker 映像檔？」**
+
+答案取決於：
+1. 你修改了**什麼類型**的檔案
+2. 你的 Docker Compose 是否設定了 **Volume Mount**
+
+---
+
+## 🎯 快速判斷表
+
+| 修改類型 | 需要 Rebuild？ | 需要 Restart？ | 說明 |
+|----------|---------------|---------------|------|
+| **Python 程式碼** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | Volume Mount 會覆蓋容器內檔案 |
+| **Python 程式碼** (無 Volume Mount) | ✅ 需要 | - | 程式碼在 build 時複製進映像 |
+| **前端 HTML/CSS/JS** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | 靜態檔案即時生效 |
+| **前端 HTML/CSS/JS** (無 Volume Mount) | ✅ 需要 | - | 需重建映像 |
+| **requirements.txt** | ✅ 需要 | - | 依賴在 build 時安裝 |
+| **Dockerfile** | ✅ 需要 | - | 定義映像建構流程 |
+| **docker-compose.yml** | ❌ 不需要 | ✅ 需要 | 只是執行配置 |
+| **.env 環境變數** | ❌ 不需要 | ✅ 需要 (`down` + `up`) | 環境變數在啟動時讀取 |
+| **config.yaml** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | 配置檔案即時生效 |
+| **Whisper 模型變更** | ✅ 需要 | - | 模型在 build 時下載 |
+
+---
+
+## 🔧 本專案的 Volume Mount 設定
+
+在 `docker/docker-compose.yml` 中：
+
+```yaml
+volumes:
+  # 開發模式：掛載本地程式碼，無需重建即可測試
+  - ../backend:/app/backend:ro
+  - ../frontend:/app/frontend:ro
+  - ../config.yaml:/app/config.yaml:ro
+```
+
+### 這代表什麼？
+
+| 目錄 | 狀態 | 效果 |
+|------|------|------|
+| `backend/` | ✅ 已掛載 | Python 程式碼變更只需 restart |
+| `frontend/` | ✅ 已掛載 | HTML/CSS/JS 變更只需 restart |
+| `config.yaml` | ✅ 已掛載 | 配置變更只需 restart |
+| `requirements.txt` | ❌ 未掛載 | 依賴變更需要 rebuild |
+
+---
+
+## 📊 詳細情境說明
+
+### 情境 1：修改 Python 程式碼
+
+```bash
+# 例如修改 backend/services/transcription.py
+
+# 因為有 Volume Mount，只需 restart
+docker compose -f docker/docker-compose.yml restart
+```
+
+### 情境 2：修改 requirements.txt
+
+```bash
+# 例如新增 opencc-python-reimplemented 套件
+
+# 必須 rebuild，因為依賴在 build 階段安裝
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### 情境 3：修改前端 CSS/JS
+
+```bash
+# 例如修改 frontend/css/style.css
+
+# 因為有 Volume Mount，只需 restart
+docker compose -f docker/docker-compose.yml restart
+
+# 💡 提示：瀏覽器可能有快取，按 Cmd+Shift+R 強制刷新
+```
+
+### 情境 4：修改 Dockerfile
+
+```bash
+# 例如新增 apt-get 安裝套件
+
+# 必須 rebuild
+docker compose -f docker/docker-compose.yml build --no-cache
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### 情境 5：修改 .env 環境變數
+
+```bash
+# 例如修改 GEMINI_API_KEY
+
+# 需要 down + up（restart 不會重新讀取 env_file）
+docker compose -f docker/docker-compose.yml down
+docker compose -f docker/docker-compose.yml up -d
+```
+
+### 情境 6：修改 docker-compose.yml
+
+```bash
+# 例如調整 ports 或新增 volumes
+
+# 需要 down + up
+docker compose -f docker/docker-compose.yml down
+docker compose -f docker/docker-compose.yml up -d
+```
+
+---
+
+## ⚡ 快速指令速查
+
+```bash
+# 只重啟（程式碼變更，有 Volume Mount）
+docker compose -f docker/docker-compose.yml restart
+
+# 重新讀取配置（.env 或 docker-compose.yml 變更）
+docker compose -f docker/docker-compose.yml down && docker compose -f docker/docker-compose.yml up -d
+
+# 重建映像（依賴、Dockerfile、模型變更）
+docker compose -f docker/docker-compose.yml build
+docker compose -f docker/docker-compose.yml up -d
+
+# 完全重建（清除快取）
+docker compose -f docker/docker-compose.yml build --no-cache
+docker compose -f docker/docker-compose.yml up -d
+
+# 查看日誌
+docker logs meetingscribe-app --tail 50
+
+# 進入容器除錯
+docker exec -it meetingscribe-app /bin/bash
+```
+
+---
+
+## 🔄 Restart vs Down+Up vs Rebuild
+
+| 指令 | 效果 | 使用時機 |
+|------|------|---------|
+| `restart` | 重啟容器，保持映像和配置 | Volume Mount 的程式碼變更 |
+| `down` + `up` | 銷毀並重建容器，重新讀取配置 | .env、docker-compose.yml 變更 |
+| `build` | 重新建構映像 | requirements.txt、Dockerfile 變更 |
+| `build --no-cache` | 完全重建，不使用快取 | 依賴問題、映像損壞 |
+
+---
+
+## 🎯 最佳實踐
+
+### 開發階段
+1. **啟用 Volume Mount**（預設已啟用）
+2. 修改程式碼後只需 `restart`
+3. 節省大量重建時間
+
+### 部署階段
+1. **移除 Volume Mount**（註解掉 volumes）
+2. 每次部署都 `build` 新映像
+3. 確保映像是自包含的
+
+### 切換方式
+
+```yaml
+# docker-compose.yml
+
+# 開發模式（啟用 Volume Mount）
+volumes:
+  - ../backend:/app/backend:ro
+  - ../frontend:/app/frontend:ro
+
+# 生產模式（註解掉，使用映像內的程式碼）
+# volumes:
+#   - ../backend:/app/backend:ro
+#   - ../frontend:/app/frontend:ro
+```
+
+---
+
+## ❓ 常見問題
+
+### Q: 為什麼我改了程式碼但沒有生效？
+
+**A:** 檢查以下幾點：
+1. Volume Mount 是否正確設定？
+2. 是否執行了 `restart`？
+3. 瀏覽器是否有快取？（Cmd+Shift+R 強制刷新）
+
+### Q: 為什麼 rebuild 要這麼久？
+
+**A:** 因為 Whisper 模型 (large-v3) 約 3GB，在 build 階段下載。
+- 使用快取可跳過（若 requirements.txt 沒變）
+- 使用 `--no-cache` 會重新下載
+
+### Q: 如何確認容器使用的是最新程式碼？
+
+```bash
+# 查看容器內的檔案
+docker exec meetingscribe-app cat /app/backend/services/transcription.py | head -10
+
+# 對比本地檔案
+head -10 backend/services/transcription.py
+```
+
+### Q: Volume Mount 有什麼限制？
+
+**A:** 
+- 只能覆蓋「已存在」的檔案路徑
+- 新增的依賴（requirements.txt）不會自動安裝
+- 效能略低於映像內建檔案
+
+---
+
+## 📝 本專案異動檢查清單
+
+在提交前，根據修改的檔案判斷是否需要 rebuild：
+
+- [ ] `backend/*.py` → restart ✅
+- [ ] `frontend/*.html/css/js` → restart ✅
+- [ ] `config.yaml` → restart ✅
+- [ ] `.env` → down + up ✅
+- [ ] `docker-compose.yml` → down + up ✅
+- [ ] `requirements.txt` → **rebuild** ⚠️
+- [ ] `Dockerfile` → **rebuild** ⚠️
+- [ ] 變更 Whisper 模型 → **rebuild** ⚠️
+
+---
+
+> 💡 **黃金法則**：如果不確定，先試 `restart`，不行再 `rebuild`。
