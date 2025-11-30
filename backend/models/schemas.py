@@ -23,8 +23,9 @@ class TaskStatus(str, Enum):
 
 class ProcessingMode(str, Enum):
     """處理模式"""
-    LOCAL = "local"    # 本地模式（Ollama）
-    CLOUD = "cloud"    # 雲端模式（Gemini API）
+    LOCAL = "local"       # 本地模式（Ollama）
+    LMSTUDIO = "lmstudio" # 本地模式（LM Studio - OpenAI 相容）
+    CLOUD = "cloud"       # 雲端模式（Gemini API）
 
 
 class TaskInfo(BaseModel):
@@ -99,6 +100,7 @@ class HealthStatus(BaseModel):
     gpu_available: bool
     gpu_name: Optional[str] = None
     ollama_available: bool
+    lmstudio_available: bool = False
     gemini_available: bool
     queue_status: QueueStatus
     device_info: dict = Field(default_factory=dict)

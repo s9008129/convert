@@ -1,6 +1,6 @@
 """
 MeetingScribe LLM 摘要服務
-支援本地模式（Ollama）和雲端模式（Gemini API）
+支援本地模式（Ollama）、LM Studio（OpenAI 相容）和雲端模式（Gemini API）
 """
 
 import httpx
@@ -15,11 +15,12 @@ from backend.models.schemas import ProcessingMode
 class SummarizationService:
     """
     LLM 摘要生成服務
-    支援本地模式（Ollama + Gemma3:12B）和雲端模式（Gemini API）
+    支援本地模式（Ollama + Gemma3:12B）、LM Studio（gpt-oss-20b）和雲端模式（Gemini API）
     """
     
     def __init__(self):
         self._ollama_client: Optional[httpx.AsyncClient] = None
+        self._lmstudio_client: Optional[OpenAI] = None
         self._gemini_client: Optional[OpenAI] = None
         
     async def _get_ollama_client(self) -> httpx.AsyncClient:
@@ -30,6 +31,15 @@ class SummarizationService:
                 timeout=300.0
             )
         return self._ollama_client
+    
+    def _get_lmstudio_client(self) -> OpenAI:
+        """取得 LM Studio 客戶端（OpenAI 相容介面）"""
+        if not self._lmstudio_client:
+            self._lmstudio_client = OpenAI(
+                base_url=settings.LMSTUDIO_BASE_URL,
+                api_key="lm-studio"  # LM Studio 不需要真實 API Key
+            )
+        return self._lmstudio_client
     
     def _get_gemini_api_key(self) -> str:
         """安全地取得 Gemini API Key"""
@@ -60,15 +70,20 @@ class SummarizationService:
         
         Args:
             transcript: 逐字稿文字
-            mode: 處理模式（local/cloud）
+            mode: 處理模式（local/lmstudio/cloud）
             user_prompt: 使用者自訂 prompt（可選）
             progress_callback: 進度回調函數
             
         Returns:
             會議摘要（Markdown 格式）
         """
+        mode_names = {
+            ProcessingMode.LOCAL: "本地 Ollama",
+            ProcessingMode.LMSTUDIO: "本地 LM Studio",
+            ProcessingMode.CLOUD: "雲端"
+        }
         if progress_callback:
-            progress_callback(65.0, f"使用{'本地' if mode == ProcessingMode.LOCAL else '雲端'}模式生成摘要...")
+            progress_callback(65.0, f"使用{mode_names.get(mode, '未知')}模式生成摘要...")
         
         # 組合 prompt
         system_prompt = settings.DEFAULT_SYSTEM_PROMPT
@@ -82,6 +97,8 @@ class SummarizationService:
         try:
             if mode == ProcessingMode.LOCAL:
                 summary = await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
+            elif mode == ProcessingMode.LMSTUDIO:
+                summary = await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
             else:
                 summary = await self._summarize_with_gemini(system_prompt, user_message, progress_callback)
             
@@ -135,6 +152,39 @@ class SummarizationService:
             log.error(f"Ollama 摘要生成失敗: {e}")
             raise
     
+    async def _summarize_with_lmstudio(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None
+    ) -> str:
+        """使用 LM Studio（OpenAI 相容）生成摘要"""
+        client = self._get_lmstudio_client()
+        
+        try:
+            response = client.chat.completions.create(
+                model=settings.LMSTUDIO_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message}
+                ],
+                temperature=0.7
+            )
+            
+            summary = response.choices[0].message.content
+            
+            # 檢查摘要是否為空
+            if not summary or not summary.strip():
+                log.warning("LM Studio 摘要生成結果為空")
+                raise RuntimeError("摘要生成失敗：結果為空")
+            
+            log.info(f"LM Studio 摘要生成成功，模型: {settings.LMSTUDIO_MODEL}")
+            return summary
+            
+        except Exception as e:
+            log.error(f"LM Studio 摘要生成失敗: {e}")
+            raise RuntimeError(f"LM Studio 服務不可用: {e}")
+    
     async def _summarize_with_gemini(
         self,
         system_prompt: str,
@@ -173,6 +223,15 @@ class SummarizationService:
             client = await self._get_ollama_client()
             response = await client.get("/api/tags")
             return response.status_code == 200
+        except Exception:
+            return False
+    
+    async def check_lmstudio_health(self) -> bool:
+        """檢查 LM Studio 服務是否可用"""
+        try:
+            client = self._get_lmstudio_client()
+            client.models.list()
+            return True
         except Exception:
             return False
     

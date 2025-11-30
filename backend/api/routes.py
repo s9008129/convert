@@ -34,6 +34,7 @@ async def health_check():
     
     # 檢查服務狀態
     ollama_available = await summarization_service.check_ollama_health()
+    lmstudio_available = await summarization_service.check_lmstudio_health()
     gemini_available = summarization_service.check_gemini_available()
     
     # 取得排隊狀態
@@ -41,10 +42,11 @@ async def health_check():
     
     return HealthStatus(
         status="healthy",
-        version="2.1.2",
+        version="2.2.0",
         gpu_available=device_info.get("gpu_available", False),
         gpu_name=device_info.get("gpu_name"),
         ollama_available=ollama_available,
+        lmstudio_available=lmstudio_available,
         gemini_available=gemini_available,
         queue_status=queue_status,
         device_info=device_info
@@ -241,5 +243,6 @@ async def get_config():
         "max_concurrent_tasks": settings.MAX_CONCURRENT_TASKS,
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
-        "gemini_available": summarization_service.check_gemini_available()
+        "gemini_available": summarization_service.check_gemini_available(),
+        "lmstudio_model": settings.LMSTUDIO_MODEL
     }

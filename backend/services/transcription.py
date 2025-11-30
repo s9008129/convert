@@ -1,6 +1,7 @@
 """
 MeetingScribe Whisper 轉錄服務
 支援 GPU/CPU 自動偵測和降級
+輸出繁體中文（台灣正體）
 """
 
 import os
@@ -9,6 +10,26 @@ from typing import Optional, Generator, Tuple
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.services.device_detector import device_detector, DeviceType
+
+# 簡繁轉換器 (簡體 → 台灣繁體)
+try:
+    from opencc import OpenCC
+    _converter = OpenCC('s2twp')  # s2twp: Simplified to Traditional (Taiwan with phrases)
+    log.info("✅ OpenCC 簡繁轉換器已載入 (s2twp 模式)")
+except ImportError:
+    _converter = None
+    log.warning("⚠️ OpenCC 未安裝，將使用 Whisper 原始輸出")
+
+
+def convert_to_traditional_chinese(text: str) -> str:
+    """將簡體中文轉換為台灣繁體中文"""
+    if _converter is None:
+        return text
+    try:
+        return _converter.convert(text)
+    except Exception as e:
+        log.warning(f"簡繁轉換失敗: {e}")
+        return text
 
 
 class TranscriptionService:
@@ -97,10 +118,15 @@ class TranscriptionService:
             if progress_callback:
                 progress_callback(10.0, "開始轉錄...")
             
-            # 執行轉錄
+            # 執行轉錄 - 使用繁體中文 initial_prompt 引導輸出
+            # Whisper 不區分 zh-TW/zh-CN，使用 initial_prompt 是業界最佳實踐
+            traditional_chinese_prompt = "以下是台灣繁體中文的會議逐字稿，請使用正體中文輸出。"
+            
             segments, info = self._model.transcribe(
                 audio_path,
+                language="zh",  # 指定中文語言
                 beam_size=5,
+                initial_prompt=traditional_chinese_prompt,  # 引導輸出繁體中文
                 vad_filter=True,  # 過濾靜音
                 vad_parameters=dict(
                     min_silence_duration_ms=500,
@@ -123,6 +149,9 @@ class TranscriptionService:
                     progress_callback(progress, f"轉錄中... {processed_duration:.0f}/{total_duration:.0f}秒")
             
             transcript = " ".join(transcript_parts)
+            
+            # 簡繁轉換：確保輸出是台灣繁體中文
+            transcript = convert_to_traditional_chinese(transcript)
             
             elapsed = time.time() - start_time
             log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒")

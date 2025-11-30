@@ -58,6 +58,12 @@ services:
       - LOCAL_LLM_MODEL=gemma3:12b
       
       # ========================================
+      # 本地模式設定（LM Studio - OpenAI 相容 API）
+      # ========================================
+      - LMSTUDIO_BASE_URL=http://host.docker.internal:1234/v1
+      - LMSTUDIO_MODEL=gpt-oss-20b
+      
+      # ========================================
       # 雲端模式設定（Gemini API）
       # ========================================
       - GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
