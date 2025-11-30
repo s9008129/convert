@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v2.3.2 - 模式鎖定與 UI 優化
+ * v2.3.4 - 移除重試功能，簡化 UX
  */
 
 // 全域狀態
@@ -9,9 +9,6 @@ const state = {
     taskId: null,
     websocket: null,
     config: null,
-    lastFile: null,          // 保存最後上傳的檔案
-    retryAttempts: 0,        // 重試計數
-    maxRetryAttempts: 3,     // 最大重試次數
     modeLocked: false        // 模式是否已鎖定
 };
 
@@ -58,7 +55,7 @@ const elements = {
     // 錯誤
     errorSection: document.getElementById('errorSection'),
     errorMessage: document.getElementById('errorMessage'),
-    retryBtn: document.getElementById('retryBtn'),
+    resetFromErrorBtn: document.getElementById('resetFromErrorBtn'),
     
     // 頁尾
     footerMode: document.getElementById('footerMode'),
@@ -184,16 +181,8 @@ async function checkHealth() {
     }
 }
 
-// 上傳檔案（支援重試）
-async function uploadFile(file, isRetry = false) {
-    // 保存檔案以便重試
-    if (!isRetry) {
-        state.lastFile = file;
-        state.retryAttempts = 0;
-    } else {
-        state.retryAttempts++;
-    }
-    
+// 上傳檔案
+async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('processing_mode', state.currentMode);
@@ -234,7 +223,7 @@ async function uploadFile(file, isRetry = false) {
     } catch (error) {
         // 解鎖模式選擇（失敗時）
         lockModeSelection(false);
-        showError(error.message, true);
+        showError(error.message);
     }
 }
 
@@ -273,7 +262,7 @@ function lockModeSelection(locked) {
 }
 
 // 顯示錯誤訊息（支援重試）
-function showError(message, allowRetry = false) {
+function showError(message) {
     if (elements.errorSection) {
         elements.errorSection.style.display = 'block';
     }
@@ -295,16 +284,6 @@ function showError(message, allowRetry = false) {
     // 隱藏上傳區域
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
-    }
-    
-    // 更新重試按鈕
-    if (elements.retryBtn) {
-        if (allowRetry && state.lastFile && state.retryAttempts < state.maxRetryAttempts) {
-            elements.retryBtn.style.display = 'block';
-            elements.retryBtn.textContent = `重試 (${state.retryAttempts}/${state.maxRetryAttempts})`;
-        } else {
-            elements.retryBtn.style.display = 'none';
-        }
     }
 }
 
@@ -475,8 +454,6 @@ async function showResult(message) {
 
 function resetUI() {
     state.taskId = null;
-    state.lastFile = null;
-    state.retryAttempts = 0;
     
     if (state.websocket) {
         state.websocket.close();
@@ -578,13 +555,10 @@ function setupEventListeners() {
     if (elements.resetBtn) {
         elements.resetBtn.addEventListener('click', resetUI);
     }
-    // 重試按鈕 - 重新上傳相同檔案
-    if (elements.retryBtn) {
-        elements.retryBtn.addEventListener('click', () => {
-            if (state.lastFile) {
-                uploadFile(state.lastFile, true);
-            }
-        });
+    
+    // 錯誤頁面的重新開始按鈕
+    if (elements.resetFromErrorBtn) {
+        elements.resetFromErrorBtn.addEventListener('click', resetUI);
     }
 }
 

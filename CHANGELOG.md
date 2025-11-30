@@ -5,6 +5,21 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.4] - 2025-12-01
+
+### 移除功能 ❌
+- **移除重試功能** - 簡化 UX，移除複雜且不穩定的重試機制
+  - 移除 `retryBtn` 按鈕
+  - 移除 `lastFile`、`retryAttempts`、`maxRetryAttempts` 狀態
+  - 錯誤頁面改為「重新開始」按鈕，直接重置 UI
+
+### 技術改進 🔧
+- `app.js`: 簡化 `uploadFile()` 函數，移除 `isRetry` 參數
+- `app.js`: 簡化 `showError()` 函數，移除 `allowRetry` 參數
+- `index.html`: 將「重試」按鈕改為「重新開始」按鈕
+
+---
+
 ## [2.3.3] - 2025-12-01
 
 ### UX 優化：雲端狀態顯示與模式鎖定 🎨
