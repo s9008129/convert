@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v2.1
+ * v2.2 - 修復重新處理功能
  */
 
 // 全域狀態
@@ -8,7 +8,10 @@ const state = {
     currentMode: 'local',
     taskId: null,
     websocket: null,
-    config: null
+    config: null,
+    lastFile: null,          // 保存最後上傳的檔案
+    retryAttempts: 0,        // 重試計數
+    maxRetryAttempts: 3      // 最大重試次數
 };
 
 // DOM 元素
@@ -98,57 +101,47 @@ async function loadConfig() {
 async function checkHealth() {
     try {
         const response = await fetch('/api/health');
-        const health = await response.json();
+        if (!response.ok) {
+            throw new Error('健康檢查失敗');
+        }
+        
+        const data = await response.json();
         
         // 更新系統狀態
         if (elements.systemStatus) {
-            elements.systemStatus.textContent = health.status === 'healthy' ? '正常' : '異常';
-            elements.systemStatus.className = `status-value ${health.status === 'healthy' ? 'online' : 'offline'}`;
+            elements.systemStatus.className = data.status === 'healthy' ? 'status-ok' : 'status-error';
+            elements.systemStatus.textContent = data.status === 'healthy' ? '系統正常' : '系統異常';
         }
         
         // 更新 GPU 狀態
         if (elements.gpuStatus) {
-            if (health.gpu_available) {
-                elements.gpuStatus.textContent = health.gpu_name || 'GPU';
-                elements.gpuStatus.className = 'status-value online';
-            } else {
-                elements.gpuStatus.textContent = 'CPU 模式';
-                elements.gpuStatus.className = 'status-value';
-            }
+            elements.gpuStatus.className = data.gpu_available ? 'status-ok' : 'status-warning';
+            elements.gpuStatus.textContent = data.gpu_name ? `GPU: ${data.gpu_name}` : 'GPU 未偵測';
         }
         
         // 更新排隊狀態
-        if (elements.queueCount) {
-            elements.queueCount.textContent = health.queue_status.total_queued;
+        if (elements.queueCount && data.queue_status) {
+            elements.queueCount.textContent = `排隊: ${data.queue_status.total_queued}`;
         }
-        
-        // 更新雲端模式可用性
-        if (!health.gemini_available) {
-            if (elements.cloudWarning) {
-                elements.cloudWarning.style.display = 'block';
-            }
-            if (elements.modeCloud) {
-                elements.modeCloud.classList.add('disabled');
-            }
-        } else {
-            if (elements.cloudWarning) {
-                elements.cloudWarning.style.display = 'none';
-            }
-            if (elements.modeCloud) {
-                elements.modeCloud.classList.remove('disabled');
-            }
-        }
-        
     } catch (error) {
         console.error('健康檢查失敗:', error);
         if (elements.systemStatus) {
+            elements.systemStatus.className = 'status-error';
             elements.systemStatus.textContent = '無法連接';
-            elements.systemStatus.className = 'status-value offline';
         }
     }
 }
 
-async function uploadFile(file) {
+// 上傳檔案（支援重試）
+async function uploadFile(file, isRetry = false) {
+    // 保存檔案以便重試
+    if (!isRetry) {
+        state.lastFile = file;
+        state.retryAttempts = 0;
+    } else {
+        state.retryAttempts++;
+    }
+    
     const formData = new FormData();
     formData.append('file', file);
     formData.append('processing_mode', state.currentMode);
@@ -159,6 +152,11 @@ async function uploadFile(file) {
     }
     
     try {
+        // 隱藏錯誤訊息
+        if (elements.errorSection) {
+            elements.errorSection.style.display = 'none';
+        }
+        
         const response = await fetch('/api/upload', {
             method: 'POST',
             body: formData
@@ -179,7 +177,43 @@ async function uploadFile(file) {
         connectWebSocket(result.task_id);
         
     } catch (error) {
-        showError(error.message);
+        showError(error.message, true);
+    }
+}
+
+// 顯示錯誤訊息（支援重試）
+function showError(message, allowRetry = false) {
+    if (elements.errorSection) {
+        elements.errorSection.style.display = 'block';
+    }
+    if (elements.errorMessage) {
+        elements.errorMessage.textContent = message;
+    }
+    
+    // 隱藏進度和排隊區塊
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
+    if (elements.resultSection) {
+        elements.resultSection.style.display = 'none';
+    }
+    
+    // 隱藏上傳區域
+    if (elements.uploadArea && elements.uploadArea.parentElement) {
+        elements.uploadArea.parentElement.style.display = 'none';
+    }
+    
+    // 更新重試按鈕
+    if (elements.retryBtn) {
+        if (allowRetry && state.lastFile && state.retryAttempts < state.maxRetryAttempts) {
+            elements.retryBtn.style.display = 'block';
+            elements.retryBtn.textContent = `重試 (${state.retryAttempts}/${state.maxRetryAttempts})`;
+        } else {
+            elements.retryBtn.style.display = 'none';
+        }
     }
 }
 
@@ -248,115 +282,13 @@ function connectWebSocket(taskId) {
         if (state.websocket && state.websocket.readyState === WebSocket.OPEN) {
             state.websocket.send('ping');
         }
-    }, 25000);
+    }, 30000);
 }
 
 function handleProgressUpdate(message) {
-    console.log('進度更新:', message);
-    
-    // 更新排隊資訊
-    if (message.queue_position) {
-        if (elements.queuePosition) {
-            elements.queuePosition.textContent = `第 ${message.queue_position} 位`;
-        }
-        if (elements.queueTotal) {
-            elements.queueTotal.textContent = message.queue_total || 0;
-        }
-        
-        // 更新狀態文字
-        if (elements.queueStatus) {
-            if (message.queue_position === 1) {
-                elements.queueStatus.textContent = '即將處理';
-            } else {
-                elements.queueStatus.textContent = '排隊中';
-            }
-        }
-    }
-    
-    // 根據狀態更新 UI
-    switch (message.status) {
-        case 'queued':
-            showQueueSection();
-            break;
-            
-        case 'pending':
-        case 'transcribing':
-        case 'summarizing':
-            hideQueueSection();
-            showProgress(message);
-            break;
-            
-        case 'completed':
-            showCompleted();
-            break;
-            
-        case 'failed':
-            showError(message.message || '處理失敗');
-            break;
-    }
-}
-
-// ===== UI 更新函數 =====
-function showQueueStatus(result) {
-    if (elements.queueSection) {
-        elements.queueSection.style.display = 'block';
-    }
-    if (elements.queuePosition) {
-        elements.queuePosition.textContent = `第 ${result.queue_position} 位`;
-    }
-    if (elements.queueTotal) {
-        elements.queueTotal.textContent = result.queue_position;
-    }
-    
-    // 更新狀態文字
-    if (elements.queueStatus) {
-        if (result.queue_position === 1) {
-            elements.queueStatus.textContent = '即將處理';
-        } else {
-            elements.queueStatus.textContent = '排隊中';
-        }
-    }
-    
-    // 隱藏其他區塊
-    if (elements.uploadArea && elements.uploadArea.parentElement) {
-        elements.uploadArea.parentElement.style.display = 'none';
-    }
-    if (elements.progressSection) {
-        elements.progressSection.style.display = 'none';
-    }
-    if (elements.resultSection) {
-        elements.resultSection.style.display = 'none';
-    }
-    if (elements.errorSection) {
-        elements.errorSection.style.display = 'none';
-    }
-}
-
-function showQueueSection() {
-    if (elements.queueSection) {
-        elements.queueSection.style.display = 'block';
-    }
-    if (elements.progressSection) {
-        elements.progressSection.style.display = 'none';
-    }
-}
-
-function hideQueueSection() {
-    if (elements.queueSection) {
-        elements.queueSection.style.display = 'none';
-    }
-}
-
-function showProgress(message) {
-    if (elements.progressSection) {
-        elements.progressSection.style.display = 'block';
-    }
-    if (elements.queueSection) {
-        elements.queueSection.style.display = 'none';
-    }
+    const progress = message.progress || 0;
     
     // 更新進度條
-    const progress = message.progress || 0;
     if (elements.progressBar) {
         elements.progressBar.style.width = `${progress}%`;
     }
@@ -364,87 +296,97 @@ function showProgress(message) {
         elements.progressPercent.textContent = `${Math.round(progress)}%`;
     }
     if (elements.progressText) {
-        elements.progressText.textContent = message.stage || message.message || '處理中...';
+        elements.progressText.textContent = message.message || '處理中...';
     }
     
-    // 更新階段指示器
-    updateStages(message.status);
-}
-
-function updateStages(status) {
-    const stages = document.querySelectorAll('.stage');
-    const statusMap = {
-        'pending': 0,
-        'uploading': 0,
-        'transcribing': 1,
-        'summarizing': 2,
-        'completed': 3
-    };
+    // 顯示進度區塊
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'block';
+    }
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'none';
+    }
     
-    const currentStage = statusMap[status] || 0;
+    // 更新階段
+    const stages = document.querySelectorAll('.stage');
+    stages.forEach(stage => {
+        stage.classList.remove('active', 'completed');
+    });
+    
+    // 根據進度決定當前階段
+    let currentStage = 0;
+    if (progress < 30) {
+        currentStage = 0;
+    } else if (progress < 70) {
+        currentStage = 1;
+    } else {
+        currentStage = 2;
+    }
     
     stages.forEach((stage, index) => {
-        stage.classList.remove('active', 'completed');
         if (index < currentStage) {
             stage.classList.add('completed');
         } else if (index === currentStage) {
             stage.classList.add('active');
         }
     });
+    
+    // 如果完成，顯示結果
+    if (message.status === 'completed') {
+        showResult(message);
+    }
+    
+    // 如果失敗，顯示錯誤
+    if (message.status === 'failed') {
+        showError(message.message || '處理失敗，請重試', true);
+    }
 }
 
-async function showCompleted() {
-    if (elements.progressSection) {
-        elements.progressSection.style.display = 'none';
+function showQueueStatus(result) {
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'block';
     }
+    
+    if (elements.uploadArea && elements.uploadArea.parentElement) {
+        elements.uploadArea.parentElement.style.display = 'none';
+    }
+    
+    if (elements.queuePosition) {
+        elements.queuePosition.textContent = result.queue_position || 'N/A';
+    }
+    
+    if (elements.queueStatus) {
+        const minutes = Math.ceil((result.estimated_wait_seconds || 0) / 60);
+        elements.queueStatus.textContent = `預計等待: ${minutes} 分鐘`;
+    }
+}
+
+async function showResult(message) {
     if (elements.resultSection) {
         elements.resultSection.style.display = 'block';
     }
-    
-    // 載入結果
-    try {
-        const response = await fetch(`/api/tasks/${state.taskId}/result`);
-        if (!response.ok) {
-            throw new Error('載入結果失敗');
-        }
-        const text = await response.text();
-        
-        // 使用 textContent 來防止 XSS
-        // 創建 pre 元素以保留格式
-        if (elements.resultPreview) {
-            const preElement = document.createElement('pre');
-            preElement.style.whiteSpace = 'pre-wrap';
-            preElement.style.wordWrap = 'break-word';
-            preElement.textContent = text;
-            elements.resultPreview.innerHTML = '';
-            elements.resultPreview.appendChild(preElement);
-        }
-        
-    } catch (error) {
-        console.error('載入結果失敗:', error);
-        if (elements.resultPreview) {
-            elements.resultPreview.textContent = '載入結果失敗';
-        }
-    }
-}
-
-function showError(message) {
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
     }
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
     }
-    if (elements.errorSection) {
-        elements.errorSection.style.display = 'block';
-    }
-    if (elements.errorMessage) {
-        elements.errorMessage.textContent = message;
+    
+    if (elements.resultPreview) {
+        // 如果有預覽內容，顯示前 1000 字
+        if (message.preview) {
+            elements.resultPreview.textContent = message.preview;
+        } else {
+            elements.resultPreview.textContent = '已完成，請下載檔案查看詳細內容。';
+        }
     }
 }
 
 function resetUI() {
     state.taskId = null;
+    state.lastFile = null;
+    state.retryAttempts = 0;
+    
     if (state.websocket) {
         state.websocket.close();
         state.websocket = null;
@@ -519,18 +461,20 @@ function setupEventListeners() {
     
     // 上傳區域
     if (elements.uploadArea) {
-        elements.uploadArea.addEventListener('click', () => {
-            if (elements.fileInput) elements.fileInput.click();
-        });
         elements.uploadArea.addEventListener('dragover', handleDragOver);
         elements.uploadArea.addEventListener('dragleave', handleDragLeave);
         elements.uploadArea.addEventListener('drop', handleDrop);
+        elements.uploadArea.addEventListener('click', () => {
+            elements.fileInput.click();
+        });
     }
+    
+    // 檔案輸入
     if (elements.fileInput) {
         elements.fileInput.addEventListener('change', handleFileSelect);
     }
     
-    // 按鈕
+    // 操作按鈕
     if (elements.copyBtn) {
         elements.copyBtn.addEventListener('click', copyResult);
     }
@@ -540,8 +484,13 @@ function setupEventListeners() {
     if (elements.resetBtn) {
         elements.resetBtn.addEventListener('click', resetUI);
     }
+    // 重試按鈕 - 重新上傳相同檔案
     if (elements.retryBtn) {
-        elements.retryBtn.addEventListener('click', resetUI);
+        elements.retryBtn.addEventListener('click', () => {
+            if (state.lastFile) {
+                uploadFile(state.lastFile, true);
+            }
+        });
     }
 }
 
@@ -599,60 +548,29 @@ function handleFile(file) {
     // 驗證檔案大小
     const maxSize = (state.config?.max_file_size_mb || 100) * 1024 * 1024;
     if (file.size > maxSize) {
-        alert(`檔案大小超過限制（最大 ${state.config?.max_file_size_mb || 100}MB）`);
+        showError(`檔案過大，上限: ${state.config?.max_file_size_mb || 100}MB`);
         return;
     }
     
     // 驗證檔案類型
-    const allowedExtensions = state.config?.allowed_extensions || ['.mp3', '.mp4', '.wav', '.m4a', '.mkv'];
-    const ext = '.' + file.name.split('.').pop().toLowerCase();
-    if (!allowedExtensions.includes(ext)) {
-        alert(`不支援的檔案格式：${ext}`);
+    const allowedExtensions = state.config?.allowed_extensions || [];
+    const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+    if (!allowedExtensions.includes(fileExt)) {
+        showError(`不支援的檔案格式: ${fileExt}`);
         return;
     }
     
+    // 上傳檔案
     uploadFile(file);
 }
 
 function copyResult() {
-    if (!elements.resultPreview) return;
-    
-    const text = elements.resultPreview.innerText;
-    navigator.clipboard.writeText(text).then(() => {
-        if (elements.copyBtn) {
-            elements.copyBtn.textContent = '✓ 已複製';
-            setTimeout(() => {
-                elements.copyBtn.textContent = '📋 複製文字';
-            }, 2000);
-        }
-    }).catch(err => {
-        console.error('複製失敗:', err);
-        alert('複製失敗');
-    });
-}
-
-// ===== 工具函數 =====
-function simpleMarkdownToHtml(markdown) {
-    return markdown
-        // 標題
-        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-        // 粗體
-        .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-        // 斜體
-        .replace(/\*(.*)\*/gim, '<em>$1</em>')
-        // 列表
-        .replace(/^\- (.*$)/gim, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-        // 換行
-        .replace(/\n/gim, '<br>')
-        // 引用區塊
-        .replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>')
-        // 分隔線
-        .replace(/^---$/gim, '<hr>')
-        // details 標籤（保留原樣）
-        .replace(/<details>/g, '<details>')
-        .replace(/<\/details>/g, '</details>')
-        .replace(/<summary>(.*)<\/summary>/g, '<summary>$1</summary>');
+    if (elements.resultPreview) {
+        const text = elements.resultPreview.textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            alert('已複製到剪貼板');
+        }).catch(err => {
+            console.error('複製失敗:', err);
+        });
+    }
 }
