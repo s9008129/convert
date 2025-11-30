@@ -87,6 +87,16 @@ yarn-error.log
 .git/
 .gitignore
 
+# 測試相關 (Testing)
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+
 # 其他
 .env.example (備份)
 *.bak
