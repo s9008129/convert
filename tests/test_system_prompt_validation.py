@@ -342,11 +342,11 @@ class TestOutputQualityFormat:
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_other_notes_section(self, source_name: str, prompt: str):
         """測試其他備註區塊存在性"""
-        notes_keywords = ["其他備註", "備註", "其他"]
+        notes_keywords = ["其他備註"]
         
         found = any(kw in prompt for kw in notes_keywords)
         assert found, \
-            f"[{source_name}] 缺少其他備註區塊"
+            f"[{source_name}] 缺少「其他備註」區塊"
     
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_completeness_constraint(self, source_name: str, prompt: str):
