@@ -494,7 +494,8 @@ class TestEdgeCases:
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_not_too_long(self, source_name: str, prompt: str):
         """測試 System Prompt 不會過長"""
-        # 避免 token 超出限制
+        # 這裡僅以字元數作為粗略估算（非實際 token 數），約 1 token ≈ 1.5 字元
+        # 若需精確 token 計算，應使用實際 tokenizer
         assert len(prompt) < 10000, \
             f"[{source_name}] System Prompt 過長，可能影響效能"
     
