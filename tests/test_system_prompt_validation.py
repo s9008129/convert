@@ -541,7 +541,6 @@ class TestEncodingAndSpecialCharacters:
         # 先將 CRLF 替換為占位符，然後檢查是否有孤立的 CR 或 LF
         temp = prompt.replace('\r\n', '')
         has_standalone_cr = '\r' in temp
-        has_standalone_lf = False  # 已經移除了 CRLF，剩下的 \n 是允許的
         
         # 如果存在孤立的 CR（不是 CRLF 的一部分），則混用了換行符號
         if has_standalone_cr:
