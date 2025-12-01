@@ -1,0 +1,26 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Tests fixtures package
+"""
+from tests.fixtures.mock_transcripts import (
+    MockTranscript,
+    STANDARD_GOVERNMENT_MEETING,
+    TECHNICAL_PROJECT_MEETING,
+    COMPLEX_MEETING_WITH_MULTIPLE_ACTIONS,
+    MEETING_WITH_AMBIGUOUS_INFO,
+    VERY_SHORT_TRANSCRIPT,
+    VERY_LONG_TRANSCRIPT,
+    ALL_MOCK_TRANSCRIPTS,
+)
+
+__all__ = [
+    'MockTranscript',
+    'STANDARD_GOVERNMENT_MEETING',
+    'TECHNICAL_PROJECT_MEETING',
+    'COMPLEX_MEETING_WITH_MULTIPLE_ACTIONS',
+    'MEETING_WITH_AMBIGUOUS_INFO',
+    'VERY_SHORT_TRANSCRIPT',
+    'VERY_LONG_TRANSCRIPT',
+    'ALL_MOCK_TRANSCRIPTS',
+]
