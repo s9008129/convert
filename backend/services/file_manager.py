@@ -7,6 +7,8 @@ import re
 import uuid
 import hashlib
 import aiofiles
+import asyncio
+from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from fastapi import UploadFile
 
@@ -20,14 +22,20 @@ SHA256_HASH_PATTERN = re.compile(r'^[0-9a-f]{64}$')
 class FileManagerService:
     """
     檔案管理服務
-    處理檔案上傳、驗證、儲存
+    處理檔案上傳、驗證、儲存與自動清理
     """
+    
+    # 檔案保留天數設定
+    UPLOADS_RETENTION_DAYS = 1      # 上傳檔案保留 1 天
+    OUTPUTS_RETENTION_DAYS = 7      # 輸出結果保留 7 天
+    CACHE_RETENTION_DAYS = 30       # 快取保留 30 天
     
     def __init__(self):
         # 確保目錄存在
         os.makedirs(settings.uploads_dir, exist_ok=True)
         os.makedirs(settings.outputs_dir, exist_ok=True)
         os.makedirs(settings.cache_dir, exist_ok=True)
+        self._cleanup_task: Optional[asyncio.Task] = None
     
     def validate_file(self, file: UploadFile) -> Tuple[bool, str]:
         """
@@ -173,6 +181,195 @@ class FileManagerService:
         except Exception as e:
             log.error(f"刪除檔案失敗: {e}")
         return False
+    
+    def cleanup_old_files(self, directory: str, retention_days: int) -> Tuple[int, int]:
+        """
+        清理指定目錄中超過保留天數的檔案
+        
+        Args:
+            directory: 要清理的目錄
+            retention_days: 檔案保留天數
+            
+        Returns:
+            (已刪除檔案數, 釋放的空間大小 bytes)
+        """
+        deleted_count = 0
+        freed_space = 0
+        cutoff_time = datetime.now() - timedelta(days=retention_days)
+        
+        try:
+            if not os.path.exists(directory):
+                return 0, 0
+            
+            for filename in os.listdir(directory):
+                # 跳過隱藏檔案（如 .DS_Store）
+                if filename.startswith('.'):
+                    continue
+                    
+                file_path = os.path.join(directory, filename)
+                
+                # 只處理檔案，跳過目錄
+                if not os.path.isfile(file_path):
+                    continue
+                
+                # 檢查檔案修改時間
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                
+                if file_mtime < cutoff_time:
+                    file_size = os.path.getsize(file_path)
+                    if self.delete_file(file_path):
+                        deleted_count += 1
+                        freed_space += file_size
+                        log.debug(f"已清理過期檔案: {filename}")
+        
+        except Exception as e:
+            log.error(f"清理目錄 {directory} 時發生錯誤: {e}")
+        
+        return deleted_count, freed_space
+    
+    def run_cleanup(self) -> dict:
+        """
+        執行所有目錄的清理
+        
+        Returns:
+            清理結果統計
+        """
+        log.info("開始執行檔案清理任務...")
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "uploads": {"deleted": 0, "freed_bytes": 0},
+            "outputs": {"deleted": 0, "freed_bytes": 0},
+            "cache": {"deleted": 0, "freed_bytes": 0},
+            "total_freed_mb": 0
+        }
+        
+        # 清理上傳目錄（保留 1 天）
+        deleted, freed = self.cleanup_old_files(
+            settings.uploads_dir, 
+            self.UPLOADS_RETENTION_DAYS
+        )
+        results["uploads"]["deleted"] = deleted
+        results["uploads"]["freed_bytes"] = freed
+        
+        # 清理輸出目錄（保留 7 天）
+        deleted, freed = self.cleanup_old_files(
+            settings.outputs_dir, 
+            self.OUTPUTS_RETENTION_DAYS
+        )
+        results["outputs"]["deleted"] = deleted
+        results["outputs"]["freed_bytes"] = freed
+        
+        # 清理快取目錄（保留 30 天）
+        deleted, freed = self.cleanup_old_files(
+            settings.cache_dir, 
+            self.CACHE_RETENTION_DAYS
+        )
+        results["cache"]["deleted"] = deleted
+        results["cache"]["freed_bytes"] = freed
+        
+        # 計算總共釋放空間
+        total_freed = (
+            results["uploads"]["freed_bytes"] +
+            results["outputs"]["freed_bytes"] +
+            results["cache"]["freed_bytes"]
+        )
+        results["total_freed_mb"] = round(total_freed / 1024 / 1024, 2)
+        
+        total_deleted = (
+            results["uploads"]["deleted"] +
+            results["outputs"]["deleted"] +
+            results["cache"]["deleted"]
+        )
+        
+        log.info(f"檔案清理完成: 共刪除 {total_deleted} 個檔案，釋放 {results['total_freed_mb']} MB 空間")
+        
+        return results
+    
+    async def start_cleanup_scheduler(self):
+        """
+        啟動每日清理排程器
+        每天凌晨 3:00 執行清理任務
+        """
+        async def scheduler():
+            while True:
+                try:
+                    # 計算距離下一個凌晨 3:00 的秒數
+                    now = datetime.now()
+                    next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+                    if next_run <= now:
+                        next_run += timedelta(days=1)
+                    
+                    wait_seconds = (next_run - now).total_seconds()
+                    log.info(f"下次清理任務將在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 執行（{wait_seconds/3600:.1f} 小時後）")
+                    
+                    # 等待到執行時間
+                    await asyncio.sleep(wait_seconds)
+                    
+                    # 執行清理
+                    self.run_cleanup()
+                    
+                except asyncio.CancelledError:
+                    log.info("清理排程器已取消")
+                    break
+                except Exception as e:
+                    log.error(f"清理排程器發生錯誤: {e}")
+                    # 發生錯誤時等待 1 小時後重試
+                    await asyncio.sleep(3600)
+        
+        self._cleanup_task = asyncio.create_task(scheduler())
+        log.info("檔案清理排程器已啟動（每日凌晨 3:00 執行）")
+    
+    async def stop_cleanup_scheduler(self):
+        """停止清理排程器"""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
+            log.info("檔案清理排程器已停止")
+    
+    def get_storage_stats(self) -> dict:
+        """
+        取得儲存空間使用統計
+        
+        Returns:
+            儲存空間使用統計
+        """
+        stats = {
+            "uploads": {"file_count": 0, "total_size_mb": 0},
+            "outputs": {"file_count": 0, "total_size_mb": 0},
+            "cache": {"file_count": 0, "total_size_mb": 0},
+            "total_size_mb": 0
+        }
+        
+        for dir_name, dir_path in [
+            ("uploads", settings.uploads_dir),
+            ("outputs", settings.outputs_dir),
+            ("cache", settings.cache_dir)
+        ]:
+            if os.path.exists(dir_path):
+                for filename in os.listdir(dir_path):
+                    if filename.startswith('.'):
+                        continue
+                    file_path = os.path.join(dir_path, filename)
+                    if os.path.isfile(file_path):
+                        stats[dir_name]["file_count"] += 1
+                        stats[dir_name]["total_size_mb"] += os.path.getsize(file_path) / 1024 / 1024
+        
+        # 四捨五入
+        for key in ["uploads", "outputs", "cache"]:
+            stats[key]["total_size_mb"] = round(stats[key]["total_size_mb"], 2)
+        
+        stats["total_size_mb"] = round(
+            stats["uploads"]["total_size_mb"] +
+            stats["outputs"]["total_size_mb"] +
+            stats["cache"]["total_size_mb"],
+            2
+        )
+        
+        return stats
 
 
 # 全域檔案管理服務實例

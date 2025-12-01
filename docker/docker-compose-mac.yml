@@ -27,6 +27,10 @@ services:
     hostname: meetingscribe-app
     restart: unless-stopped
     
+    # 載入 .env 檔案
+    env_file:
+      - ../.env
+    
     # ========================================
     # 資源限制 - 確保不影響其他服務
     # 注意：根據 Docker Desktop 設定自動調整
@@ -62,10 +66,10 @@ services:
       
       # ========================================
       # 雲端模式設定（Gemini API）
+      # GEMINI_API_KEY 從 .env 檔案讀取
       # ========================================
       - GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
       - GEMINI_MODEL=gemini-2.5-flash-lite
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       
       # ========================================
       # Whisper 轉錄設定

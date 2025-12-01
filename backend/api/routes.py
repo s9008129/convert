@@ -246,3 +246,29 @@ async def get_config():
         "gemini_available": summarization_service.check_gemini_available(),
         "lmstudio_model": settings.LMSTUDIO_MODEL
     }
+
+
+@router.get("/storage/stats")
+async def get_storage_stats():
+    """
+    取得儲存空間使用統計
+    """
+    stats = file_manager.get_storage_stats()
+    stats["retention_policy"] = {
+        "uploads_days": file_manager.UPLOADS_RETENTION_DAYS,
+        "outputs_days": file_manager.OUTPUTS_RETENTION_DAYS,
+        "cache_days": file_manager.CACHE_RETENTION_DAYS
+    }
+    return stats
+
+
+@router.post("/storage/cleanup")
+async def trigger_cleanup():
+    """
+    手動觸發檔案清理（僅清理過期檔案）
+    """
+    results = file_manager.run_cleanup()
+    return {
+        "message": "清理完成",
+        "results": results
+    }

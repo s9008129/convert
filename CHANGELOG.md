@@ -5,6 +5,43 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.7] - 2025-12-01
+
+### 重大修復 🔧
+
+此版本修復雲端模式連線問題並新增自動清理機制，確保系統長期穩定運行。
+
+### 修復 🐛
+- **修復雲端模式 Gemini API 連線失敗問題**
+  - Docker Compose 環境變數載入順序問題
+  - `env_file` 正確載入 `.env` 檔案中的 `GEMINI_API_KEY`
+  - 移除 `environment` 中覆蓋 `.env` 的變數設定
+
+### 新增功能 ✨
+- **自動檔案清理機制** - 避免上傳和暫存檔塞爆空間
+  - 上傳檔案保留 1 天後自動清理
+  - 輸出結果保留 7 天後自動清理
+  - 快取檔案保留 30 天後自動清理
+  - 每日凌晨 3:00 自動執行清理任務
+  - 服務啟動時執行一次清理（清理重啟前的過期檔案）
+
+- **儲存空間管理 API**
+  - `GET /api/storage/stats` - 查看儲存空間使用統計
+  - `POST /api/storage/cleanup` - 手動觸發檔案清理
+
+### 技術改進 🔧
+- `file_manager.py`: 新增 `cleanup_old_files()`、`run_cleanup()`、`start_cleanup_scheduler()` 方法
+- `main.py`: 整合檔案清理排程器到應用程式生命週期
+- `routes.py`: 新增儲存空間統計和手動清理 API 端點
+- `docker-compose-mac.yml`: 修復環境變數載入問題
+
+### 驗證測試 ✅
+- Gemini API 連線測試通過
+- 自動清理排程器正常運作
+- 儲存空間統計 API 正常回應
+
+---
+
 ## [2.3.6] - 2025-12-01
 
 ### 模型升級與簡化 🚀

@@ -13,14 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.api import router, websocket_endpoint
-from backend.services import task_processor, device_detector
+from backend.services import task_processor, device_detector, file_manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """應用程式生命週期管理"""
     log.info("=" * 50)
-    log.info("🚀 MeetingScribe v2.1 啟動中...")
+    log.info("🚀 MeetingScribe v2.3.6 啟動中...")
     log.info("=" * 50)
     
     # 初始化裝置偵測
@@ -30,6 +30,14 @@ async def lifespan(app: FastAPI):
     # 啟動任務處理器
     processor_task = asyncio.create_task(task_processor.start())
     
+    # 啟動檔案清理排程器
+    await file_manager.start_cleanup_scheduler()
+    
+    # 啟動時執行一次清理（清理重啟前的過期檔案）
+    cleanup_result = file_manager.run_cleanup()
+    if cleanup_result["total_freed_mb"] > 0:
+        log.info(f"啟動清理完成: 釋放 {cleanup_result['total_freed_mb']} MB 空間")
+    
     log.info(f"服務已就緒，監聽端口: 9527")
     log.info(f"預設處理模式: {settings.DEFAULT_MODE}")
     log.info(f"最大檔案大小: {settings.MAX_FILE_SIZE_MB}MB")
@@ -38,6 +46,9 @@ async def lifespan(app: FastAPI):
     log.info("=" * 50)
     
     yield
+    
+    # 停止清理排程器
+    await file_manager.stop_cleanup_scheduler()
     
     # 停止任務處理器
     log.info("正在關閉服務...")
@@ -56,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MeetingScribe",
     description="會議轉錄工具 - 將會議錄音轉換為結構化會議記錄",
-    version="2.1.2",
+    version="2.3.6",
     lifespan=lifespan
 )
 

@@ -1,8 +1,8 @@
-# MeetingScribe v2.3.5
+# MeetingScribe v2.3.7
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.5-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.7-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -19,11 +19,11 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🇹🇼 v2.3.6 新功能：模型升級與簡化
+### 🇹🇼 v2.3.7 新功能：雲端模式修復與自動清理
 
-- ✅ **Whisper-medium 模型**: 直接輸出台灣繁體中文，無需簡繁轉換
-- ✅ **Gemma3:27b-it-qat**: QAT 量化版本，更佳的繁體中文摘要品質
-- ✅ **簡化架構**: 移除 OpenCC 依賴，減少處理步驟
+- ✅ **修復雲端模式連線失敗問題**: Docker 環境變數正確載入 Gemini API Key
+- ✅ **自動檔案清理**: 避免上傳和暫存檔塞爆空間（每日凌晨 3:00 自動執行）
+- ✅ **儲存空間管理 API**: 查看使用統計和手動觸發清理
 
 ### 🔒 隔離保證（首要任務）
 
@@ -34,12 +34,12 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 ### 核心特點
 
 - 🇹🇼 **台灣繁體中文**：轉錄輸出為台灣正體中文，非簡體
-- 🔒 **多種本地 LLM**：支援 Ollama (Gemma3:12B)、LM Studio (gpt-oss-20b)，完全離線，資料不外傳
+- 🔒 **多種本地 LLM**：支援 Ollama (Gemma3:27b-it-qat)、LM Studio (gpt-oss-20b)，完全離線，資料不外傳
 - ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
 - 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務
 - 🖥️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
 - 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
-- ⚡ **失敗重試**：智能重試機制，支援最多 3 次重試，指數退避策略
+- 🧹 **自動清理**：上傳檔保留 1 天、輸出保留 7 天、快取保留 30 天
 - 🎨 **Apple 風格 UI**：簡約現代的使用者介面
 - 📝 **自訂 Prompt**：使用者可自訂會議記錄格式和內容
 - 🔐 **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
@@ -181,6 +181,8 @@ services:
 | `/api/tasks/{task_id}` | GET | 查詢任務狀態 | 無 |
 | `/api/tasks/{task_id}/result` | GET | 下載結果（Markdown） | 無 |
 | `/api/queue/status` | GET | 排隊狀態 | 無 |
+| `/api/storage/stats` | GET | 儲存空間使用統計 | 無 |
+| `/api/storage/cleanup` | POST | 手動觸發檔案清理 | 無 |
 
 ### WebSocket 即時推送
 
@@ -390,6 +392,6 @@ curl http://localhost:9527/api/config | findstr gemini_available
 
 ⭐ 如果本專案對您有幫助，請給予 Star 支持
 
-[⬆ 回到頂部](#meetingscribe-v235)
+[⬆ 回到頂部](#meetingscribe-v237)
 
 </div>
