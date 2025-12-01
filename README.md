@@ -1,8 +1,8 @@
-# MeetingScribe v2.3.7
+# MeetingScribe v2.3.8
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.7-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.8-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -19,11 +19,11 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🇹🇼 v2.3.7 新功能：雲端模式修復與自動清理
+### 🇹🇼 v2.3.8 新功能：提升檔案上傳限制至 200MB
 
-- ✅ **修復雲端模式連線失敗問題**: Docker 環境變數正確載入 Gemini API Key
-- ✅ **自動檔案清理**: 避免上傳和暫存檔塞爆空間（每日凌晨 3:00 自動執行）
-- ✅ **儲存空間管理 API**: 查看使用統計和手動觸發清理
+- ✅ **檔案上傳限制提升**: 從 100MB 提升至 200MB，支援更大型會議錄音
+- ✅ **環境變數可配置**: 通過 `.env` 檔案或環境變數靈活調整限制
+- ✅ **動態前端驗證**: 前端自動讀取 API 配置，無須手動維護
 
 ### 🔒 隔離保證（首要任務）
 

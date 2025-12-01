@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # ========================================
     # 檔案上傳限制（v2.1 新增）
     # ========================================
-    MAX_FILE_SIZE_MB: int = Field(default=100, description="單檔大小上限（MB）")
+    MAX_FILE_SIZE_MB: int = Field(default=200, description="單檔大小上限（MB）")
     ENABLE_BATCH_UPLOAD: bool = Field(default=False, description="是否允許批次上傳")
     ALLOWED_EXTENSIONS: str = Field(
         default=".mp3,.mp4,.wav,.m4a,.mkv,.webm,.ogg,.flac,.avi,.mov",

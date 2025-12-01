@@ -79,7 +79,7 @@ services:
       # ========================================
       # 排隊系統設定（v2.1 新增）
       # ========================================
-      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-100}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-200}
       - ENABLE_BATCH_UPLOAD=${ENABLE_BATCH_UPLOAD:-false}
       - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-1}
       - QUEUE_MAX_SIZE=${QUEUE_MAX_SIZE:-50}

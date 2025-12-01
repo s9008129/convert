@@ -5,6 +5,27 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.8] - 2025-12-01
+
+### 功能增強 ✨
+
+此版本提升檔案上傳限制至 200MB，支援更大型的會議錄音檔案。
+
+### 修改 🔄
+- **提升檔案上傳限制** - 從 100MB 提升至 200MB
+  - `backend/core/config.py`: `MAX_FILE_SIZE_MB` 預設值更新為 200
+  - `docker/docker-compose.yml`: 環境變數預設值同步更新為 200
+  - `.env`: `MAX_FILE_SIZE_MB=200`
+  - 前端動態驗證：透過 API `/api/config` 讀取最新限制值
+  - 向下相容：環境變數可覆蓋預設值
+
+### 驗證測試 ✅
+- ✓ API 端點回傳正確的 200MB 限制
+- ✓ Docker 容器環境變數正確載入
+- ✓ 前端檔案驗證邏輯正確識別上限
+
+---
+
 ## [2.3.7] - 2025-12-01
 
 ### 重大修復 🔧
