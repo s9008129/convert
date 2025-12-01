@@ -87,8 +87,8 @@ class Settings(BaseSettings):
     
     # ========================================
     # System Prompt 設定
-    # COSTAR-X 框架：融合 COSTAR-A 與 Phil Schmid Gemini 3 指南
-    # 針對 Gemma 3 12B/27B 本地模型優化
+    # COSTAR-X 框架：融合 COSTAR-A 與 Phil Schmid 的 Gemini 提示實踐指南
+    # 優化目標：本地 Gemma 3 12B/27B 模型
     # ========================================
     DEFAULT_SYSTEM_PROMPT: str = Field(
         default="""<system_instruction>
