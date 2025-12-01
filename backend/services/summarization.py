@@ -141,6 +141,10 @@ class SummarizationService:
         client = await self._get_ollama_client()
         
         try:
+            # 進度更新：開始生成摘要
+            if progress_callback:
+                progress_callback(65.0, "載入 Ollama 模型...")
+            
             response = await client.post(
                 "/api/chat",
                 json={
@@ -153,6 +157,9 @@ class SummarizationService:
                 }
             )
             response.raise_for_status()
+            
+            if progress_callback:
+                progress_callback(85.0, "處理摘要結果...")
             
             data = response.json()
             summary = data.get("message", {}).get("content", "")
@@ -182,6 +189,10 @@ class SummarizationService:
         client = self._get_lmstudio_client()
         
         try:
+            # 進度更新：開始生成摘要
+            if progress_callback:
+                progress_callback(65.0, "載入 LM Studio 模型...")
+            
             response = client.chat.completions.create(
                 model=settings.LMSTUDIO_MODEL,
                 messages=[
@@ -190,6 +201,9 @@ class SummarizationService:
                 ],
                 temperature=0.7
             )
+            
+            if progress_callback:
+                progress_callback(85.0, "處理摘要結果...")
             
             summary = response.choices[0].message.content
             
@@ -211,26 +225,42 @@ class SummarizationService:
         user_message: str,
         progress_callback: Optional[callable] = None
     ) -> str:
-        """使用 Gemini API 雲端模式生成摘要"""
+        """使用 Gemini API 雲端模式生成摘要（支援流式響應）"""
         client = self._get_gemini_client()
         
         try:
-            response = client.chat.completions.create(
+            # 使用流式響應以獲得實時進度更新
+            summary_parts = []
+            chunk_count = 0
+            
+            # 創建流式請求
+            with client.chat.completions.create(
                 model=settings.GEMINI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
-                ]
-            )
+                ],
+                stream=True  # 啟用流式響應
+            ) as response:
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        summary_parts.append(content)
+                        chunk_count += 1
+                        
+                        # 定期更新進度（每 5 個 chunk 更新一次）
+                        if progress_callback and chunk_count % 5 == 0:
+                            progress = 65.0 + (chunk_count % 30) * 0.5  # 65-80%
+                            progress_callback(progress, f"生成摘要中... ({chunk_count} chunks)")
             
-            summary = response.choices[0].message.content
+            summary = "".join(summary_parts)
             
             # 檢查摘要是否為空
             if not summary or not summary.strip():
                 log.warning("Gemini 摘要生成結果為空")
                 raise RuntimeError("摘要生成失敗：結果為空")
             
-            log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}")
+            log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}，接收 {chunk_count} 個 chunks")
             return summary
             
         except Exception as e:

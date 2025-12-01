@@ -9,9 +9,14 @@
 
 ### 重大修復 🔧
 
-此版本修復雲端模式連線問題並新增自動清理機制，確保系統長期穩定運行。
+此版本修復雲端模式功能不完整問題、修復 Gemini API 連線失敗，並新增自動清理機制，確保系統長期穩定運行。
 
 ### 修復 🐛
+- **修復雲端模式功能不完整問題** - 雲端模式現在與本地模式功能完全一致
+  - 實現 Gemini API 流式響應（stream=True），支援實時進度更新
+  - 所有 LLM 方式（Ollama、LM Studio、Gemini）統一使用 progress_callback 機制
+  - 雲端模式現可向用戶推送實時摘要生成進度
+
 - **修復雲端模式 Gemini API 連線失敗問題**
   - Docker Compose 環境變數載入順序問題
   - `env_file` 正確載入 `.env` 檔案中的 `GEMINI_API_KEY`
@@ -30,15 +35,21 @@
   - `POST /api/storage/cleanup` - 手動觸發檔案清理
 
 ### 技術改進 🔧
+- `summarization.py`:
+  - 實現 Gemini API 流式響應，支援即時進度推送
+  - 統一所有 LLM 方式的進度回調機制
+  - Ollama、LM Studio、Gemini 都支援 progress_callback
 - `file_manager.py`: 新增 `cleanup_old_files()`、`run_cleanup()`、`start_cleanup_scheduler()` 方法
 - `main.py`: 整合檔案清理排程器到應用程式生命週期
 - `routes.py`: 新增儲存空間統計和手動清理 API 端點
 - `docker-compose-mac.yml`: 修復環境變數載入問題
 
 ### 驗證測試 ✅
-- Gemini API 連線測試通過
-- 自動清理排程器正常運作
-- 儲存空間統計 API 正常回應
+- ✓ Gemini API 流式響應驗證通過
+- ✓ 雲端模式與本地模式功能一致性確認
+- ✓ 所有 LLM 方式進度回調統一
+- ✓ 自動清理排程器正常運作
+- ✓ 儲存空間統計 API 正常回應
 
 ---
 
