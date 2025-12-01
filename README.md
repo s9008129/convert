@@ -1,8 +1,8 @@
-# MeetingScribe v2.3.4
+# MeetingScribe v2.3.5
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.4-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.5-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -390,6 +390,6 @@ curl http://localhost:9527/api/config | findstr gemini_available
 
 ⭐ 如果本專案對您有幫助，請給予 Star 支持
 
-[⬆ 回到頂部](#meetingscribe-v220)
+[⬆ 回到頂部](#meetingscribe-v235)
 
 </div>
