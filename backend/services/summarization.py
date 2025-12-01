@@ -5,7 +5,7 @@ MeetingScribe LLM 摘要服務
 
 import httpx
 from typing import Optional
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 from backend.core.config import settings
 from backend.core.logger import log
@@ -22,6 +22,7 @@ class SummarizationService:
         self._ollama_client: Optional[httpx.AsyncClient] = None
         self._lmstudio_client: Optional[OpenAI] = None
         self._gemini_client: Optional[OpenAI] = None
+        self._gemini_async_client: Optional[AsyncOpenAI] = None
         
     async def _get_ollama_client(self) -> httpx.AsyncClient:
         """取得 Ollama HTTP 客戶端"""
@@ -57,6 +58,16 @@ class SummarizationService:
                 base_url=settings.GEMINI_BASE_URL
             )
         return self._gemini_client
+    
+    def _get_gemini_async_client(self) -> AsyncOpenAI:
+        """取得 Gemini API 異步客戶端（OpenAI 相容介面）"""
+        if not self._gemini_async_client:
+            api_key = self._get_gemini_api_key()
+            self._gemini_async_client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=settings.GEMINI_BASE_URL
+            )
+        return self._gemini_async_client
     
     async def summarize(
         self,
@@ -225,16 +236,16 @@ class SummarizationService:
         user_message: str,
         progress_callback: Optional[callable] = None
     ) -> str:
-        """使用 Gemini API 雲端模式生成摘要（支援流式響應）"""
-        client = self._get_gemini_client()
+        """使用 Gemini API 雲端模式生成摘要（異步流式響應）"""
+        client = self._get_gemini_async_client()
         
         try:
-            # 使用流式響應以獲得實時進度更新
+            # 使用異步流式響應以獲得實時進度更新
             summary_parts = []
             chunk_count = 0
             
-            # 創建流式請求
-            with client.chat.completions.create(
+            # 創建異步流式請求
+            async with await client.chat.completions.create(
                 model=settings.GEMINI_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -242,7 +253,7 @@ class SummarizationService:
                 ],
                 stream=True  # 啟用流式響應
             ) as response:
-                for chunk in response:
+                async for chunk in response:
                     if chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
                         summary_parts.append(content)
@@ -250,7 +261,7 @@ class SummarizationService:
                         
                         # 定期更新進度（每 5 個 chunk 更新一次）
                         if progress_callback and chunk_count % 5 == 0:
-                            progress = 65.0 + (chunk_count % 30) * 0.5  # 65-80%
+                            progress = 65.0 + min((chunk_count / 10) * 10, 30)  # 65-95%
                             progress_callback(progress, f"生成摘要中... ({chunk_count} chunks)")
             
             summary = "".join(summary_parts)

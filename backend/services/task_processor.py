@@ -141,14 +141,19 @@ class TaskProcessor:
             # 生成摘要
             await self._update_progress(task.task_id, 65.0, "生成摘要", TaskStatus.SUMMARIZING)
             
-            async def summarize_progress_cb(progress: float, message: str):
-                await self._update_progress(task.task_id, progress, message)
+            # 定義同步進度回調（不使用 asyncio.create_task）
+            def sync_progress_cb(progress: float, message: str):
+                """同步進度回調，直接使用 run_coroutine_threadsafe"""
+                asyncio.run_coroutine_threadsafe(
+                    self._update_progress(task.task_id, progress, message),
+                    asyncio.get_event_loop()
+                )
             
             summary = await summarization_service.summarize(
                 transcript,
                 mode=task.processing_mode,
                 user_prompt=task.user_prompt,
-                progress_callback=lambda p, m: asyncio.create_task(summarize_progress_cb(p, m))
+                progress_callback=sync_progress_cb
             )
             
             # 組合最終結果
