@@ -12,7 +12,7 @@
 5. 邊界情況：極短逐字稿、極長逐字稿
 """
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
 
 @dataclass
