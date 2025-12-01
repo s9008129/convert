@@ -31,7 +31,7 @@ COSTAR-X Framework System Prompt 驗證測試
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 import pytest
 
