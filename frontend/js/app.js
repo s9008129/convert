@@ -357,6 +357,27 @@ function connectWebSocket(taskId) {
 
 function handleProgressUpdate(message) {
     const progress = message.progress || 0;
+    const status = message.status;
+    
+    // 如果任務在排隊中，顯示排隊狀態
+    if (status === 'queued') {
+        if (elements.queueSection) {
+            elements.queueSection.style.display = 'block';
+        }
+        if (elements.progressSection) {
+            elements.progressSection.style.display = 'none';
+        }
+        if (elements.queuePosition) {
+            elements.queuePosition.textContent = message.queue_position || '--';
+        }
+        if (elements.queueTotal) {
+            elements.queueTotal.textContent = message.queue_total || 0;
+        }
+        if (elements.queueStatus) {
+            elements.queueStatus.textContent = message.message || '排隊中';
+        }
+        return;
+    }
     
     // 更新進度條
     if (elements.progressBar) {
@@ -408,7 +429,7 @@ function handleProgressUpdate(message) {
     
     // 如果失敗，顯示錯誤
     if (message.status === 'failed') {
-        showError(message.message || '處理失敗，請重試', true);
+        showError(message.message || '處理失敗，請重試');
     }
 }
 
