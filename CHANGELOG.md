@@ -5,6 +5,30 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.5] - 2025-12-01
+
+### 重大修復 🔧
+- **修復處理結果顯示** - 任務完成後正確顯示完整摘要和逐字稿
+  - 新增 `preview` 欄位到 `ProgressMessage` schema
+  - 修改 `task_processor.py` 在任務完成時發送結果預覽
+  - 前端限制預覽顯示長度為 2000 字元，避免效能問題
+
+- **修復雲端模式進度條和排隊顯示** - 與本地模式行為一致
+  - 修改 `handleProgressUpdate()` 正確處理排隊狀態
+  - 當狀態為 `queued` 時顯示排隊區塊而非進度條
+  - 提取 `updateQueueDisplay()` 函數減少代碼重複
+
+### 移除功能 ❌
+- **移除重新處理功能** - 將「重新處理」按鈕改為「重新開始」按鈕
+
+### 技術改進 🔧
+- `schemas.py`: 新增 `preview` 欄位到 `ProgressMessage`
+- `task_processor.py`: 修改 `_update_progress()` 支援 `preview` 參數
+- `app.js`: 提取 `updateQueueDisplay()` 函數，改善代碼可維護性
+- `index.html`: 更新 cache busting 版本號
+
+---
+
 ## [2.3.4] - 2025-12-01
 
 ### 移除功能 ❌

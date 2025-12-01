@@ -29,7 +29,7 @@ class TaskProcessor:
         self._running = False
         self._current_task: Optional[TaskInfo] = None
         
-    async def _update_progress(self, task_id: str, progress: float, stage: str, status: TaskStatus = None):
+    async def _update_progress(self, task_id: str, progress: float, stage: str, status: TaskStatus = None, preview: str = None):
         """更新進度並推送 WebSocket"""
         task_queue.update_task_progress(task_id, progress, stage, status)
         
@@ -45,7 +45,8 @@ class TaskProcessor:
                 message=stage,
                 eta_seconds=task.estimated_wait_seconds,
                 queue_position=task.queue_position,
-                queue_total=queue_status.total_queued
+                queue_total=queue_status.total_queued,
+                preview=preview
             )
             await connection_manager.send_progress(task_id, message)
         
@@ -165,8 +166,8 @@ class TaskProcessor:
             
             await task_queue.complete_task(task.task_id, success=True)
             
-            # 推送完成訊息到 WebSocket
-            await self._update_progress(task.task_id, 100.0, "完成", TaskStatus.COMPLETED)
+            # 推送完成訊息到 WebSocket（包含結果預覽）
+            await self._update_progress(task.task_id, 100.0, "完成", TaskStatus.COMPLETED, preview=result_content)
             
             log.info(f"任務 {task.task_id} 處理完成，耗時: {processing_time:.1f}秒")
             

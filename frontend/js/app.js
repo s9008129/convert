@@ -355,8 +355,34 @@ function connectWebSocket(taskId) {
     }, 30000);
 }
 
+// 更新排隊顯示狀態
+function updateQueueDisplay(position, total, statusMessage) {
+    if (elements.queueSection) {
+        elements.queueSection.style.display = 'block';
+    }
+    if (elements.progressSection) {
+        elements.progressSection.style.display = 'none';
+    }
+    if (elements.queuePosition) {
+        elements.queuePosition.textContent = position || '--';
+    }
+    if (elements.queueTotal) {
+        elements.queueTotal.textContent = total || 0;
+    }
+    if (elements.queueStatus) {
+        elements.queueStatus.textContent = statusMessage || '排隊中';
+    }
+}
+
 function handleProgressUpdate(message) {
     const progress = message.progress || 0;
+    const status = message.status;
+    
+    // 如果任務在排隊中，顯示排隊狀態
+    if (status === 'queued') {
+        updateQueueDisplay(message.queue_position, message.queue_total, message.message);
+        return;
+    }
     
     // 更新進度條
     if (elements.progressBar) {
@@ -408,27 +434,17 @@ function handleProgressUpdate(message) {
     
     // 如果失敗，顯示錯誤
     if (message.status === 'failed') {
-        showError(message.message || '處理失敗，請重試', true);
+        showError(message.message || '處理失敗，請重試');
     }
 }
 
 function showQueueStatus(result) {
-    if (elements.queueSection) {
-        elements.queueSection.style.display = 'block';
-    }
-    
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
     }
     
-    if (elements.queuePosition) {
-        elements.queuePosition.textContent = result.queue_position || 'N/A';
-    }
-    
-    if (elements.queueStatus) {
-        const minutes = Math.ceil((result.estimated_wait_seconds || 0) / 60);
-        elements.queueStatus.textContent = `預計等待: ${minutes} 分鐘`;
-    }
+    const minutes = Math.ceil((result.estimated_wait_seconds || 0) / 60);
+    updateQueueDisplay(result.queue_position, null, `預計等待: ${minutes} 分鐘`);
 }
 
 async function showResult(message) {
@@ -443,9 +459,13 @@ async function showResult(message) {
     }
     
     if (elements.resultPreview) {
-        // 如果有預覽內容，顯示前 1000 字
+        // 如果有預覽內容，顯示前 2000 字
         if (message.preview) {
-            elements.resultPreview.textContent = message.preview;
+            const maxLength = 2000;
+            const preview = message.preview.length > maxLength 
+                ? message.preview.substring(0, maxLength) + '...\n\n（更多內容請下載完整檔案）'
+                : message.preview;
+            elements.resultPreview.textContent = preview;
         } else {
             elements.resultPreview.textContent = '已完成，請下載檔案查看詳細內容。';
         }

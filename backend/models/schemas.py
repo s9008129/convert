@@ -71,6 +71,7 @@ class ProgressMessage(BaseModel):
     eta_seconds: Optional[int] = None
     queue_position: Optional[int] = None
     queue_total: Optional[int] = None
+    preview: Optional[str] = None  # 任務完成時的結果預覽
 
 
 class QueueStatus(BaseModel):
