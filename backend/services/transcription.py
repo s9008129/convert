@@ -1,7 +1,7 @@
 """
 MeetingScribe Whisper 轉錄服務
 支援 GPU/CPU 自動偵測和降級
-輸出繁體中文（台灣正體）
+使用 whisper-medium 模型直接輸出台灣繁體中文
 """
 
 import os
@@ -10,26 +10,6 @@ from typing import Optional, Generator, Tuple
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.services.device_detector import device_detector, DeviceType
-
-# 簡繁轉換器 (簡體 → 台灣繁體)
-try:
-    from opencc import OpenCC
-    _converter = OpenCC('s2twp')  # s2twp: Simplified to Traditional (Taiwan with phrases)
-    log.info("✅ OpenCC 簡繁轉換器已載入 (s2twp 模式)")
-except ImportError:
-    _converter = None
-    log.warning("⚠️ OpenCC 未安裝，將使用 Whisper 原始輸出")
-
-
-def convert_to_traditional_chinese(text: str) -> str:
-    """將簡體中文轉換為台灣繁體中文"""
-    if _converter is None:
-        return text
-    try:
-        return _converter.convert(text)
-    except Exception as e:
-        log.warning(f"簡繁轉換失敗: {e}")
-        return text
 
 
 class TranscriptionService:
@@ -150,8 +130,7 @@ class TranscriptionService:
             
             transcript = " ".join(transcript_parts)
             
-            # 簡繁轉換：確保輸出是台灣繁體中文
-            transcript = convert_to_traditional_chinese(transcript)
+            # whisper-medium 模型直接輸出繁體中文，無需額外轉換
             
             elapsed = time.time() - start_time
             log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒")

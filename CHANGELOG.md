@@ -5,6 +5,43 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [2.3.6] - 2025-12-01
+
+### 模型升級與簡化 🚀
+
+此版本升級 Whisper 模型並簡化系統架構，移除不必要的簡繁轉換步驟。
+
+### 變更 🔄
+- **Whisper 模型從 large-v3 改為 medium** 
+  - medium 模型直接輸出台灣繁體中文，無需後處理
+  - 模型大小從約 3GB 降至約 1.5GB，更節省資源
+  - 轉錄速度提升，品質依然優秀
+
+- **本地 LLM 模型從 gemma3:12b 改為 gemma3:27b-it-qat**
+  - 使用 QAT (Quantization Aware Training) 量化版本
+  - 更佳的繁體中文摘要品質
+  - 更好的台灣用語理解
+
+### 移除功能 ❌
+- **移除 OpenCC 簡繁轉換模組** 
+  - whisper-medium 已直接輸出繁體中文，無需額外轉換
+  - 減少依賴項目，簡化系統架構
+  - 移除 `opencc-python-reimplemented` 套件
+
+### 技術改進 🔧
+- `transcription.py`: 移除 OpenCC 相關程式碼
+- `requirements.txt`: 移除 OpenCC 依賴
+- `config.yaml`: 更新模型建議說明
+- `docker-compose*.yml`: 更新環境變數設定
+- `Dockerfile*`: 預載 medium 模型
+
+### 驗證測試 ✅
+- 模擬政府會議音檔測試通過
+- 繁體中文逐字稿輸出正確
+- Ollama 摘要生成正常
+
+---
+
 ## [2.3.5] - 2025-12-01
 
 ### 重大修復 🔧

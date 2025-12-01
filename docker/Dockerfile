@@ -64,7 +64,8 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser . .
 
 # 預載 Whisper 模型（建構時下載，打包進映像）
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', compute_type='int8')" || true
+# 使用 medium 模型：輸出直接為台灣繁體中文，無需簡繁轉換
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('medium', device='cpu', compute_type='int8')" || true
 
 # 建立資料目錄
 RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/cache /app/models && \

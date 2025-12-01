@@ -52,7 +52,7 @@ services:
       # 本地模式設定（Ollama - 連接主機）
       # ========================================
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LOCAL_LLM_MODEL=gemma3:12b
+      - LOCAL_LLM_MODEL=gemma3:27b-it-qat
       
       # ========================================
       # 本地模式設定（LM Studio - OpenAI 相容 API）
@@ -71,7 +71,7 @@ services:
       # Whisper 轉錄設定
       # macOS Docker 不支援 MPS，使用 CPU 模式
       # ========================================
-      - WHISPER_MODEL=large-v3
+      - WHISPER_MODEL=medium
       - WHISPER_DEVICE=cpu
       
       # ========================================

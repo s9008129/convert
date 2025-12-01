@@ -19,11 +19,11 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🇹🇼 v2.3.0 新功能：台灣繁體中文支援
+### 🇹🇼 v2.3.6 新功能：模型升級與簡化
 
-- ✅ **繁體中文轉錄**: 使用 `initial_prompt` 引導 Whisper 輸出繁體中文
-- ✅ **OpenCC 簡繁轉換**: 使用 `s2twp` 模式確保 100% 台灣繁體中文輸出
-- ✅ **台灣用語轉換**: 自動將大陸用語轉換為台灣用語（如：視頻→影片）
+- ✅ **Whisper-medium 模型**: 直接輸出台灣繁體中文，無需簡繁轉換
+- ✅ **Gemma3:27b-it-qat**: QAT 量化版本，更佳的繁體中文摘要品質
+- ✅ **簡化架構**: 移除 OpenCC 依賴，減少處理步驟
 
 ### 🔒 隔離保證（首要任務）
 
@@ -63,7 +63,7 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
    ```bash
-   ollama pull gemma3:12b
+   ollama pull gemma3:27b-it-qat
    ```
 3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
 
@@ -148,8 +148,8 @@ services:
 | `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
 | `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
 | `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
-| `WHISPER_MODEL` | Whisper 模型 | large-v3 | tiny/base/small/medium/large-v3 |
-| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:12b | ollama 支援的任何模型 |
+| `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
+| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b-it-qat | ollama 支援的任何模型 |
 
 ### 服務管理腳本（Windows PowerShell）
 

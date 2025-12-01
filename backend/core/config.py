@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:11434",
         description="Ollama 服務端點"
     )
-    LOCAL_LLM_MODEL: str = Field(default="gemma3:12b", description="本地 LLM 模型名稱")
+    LOCAL_LLM_MODEL: str = Field(default="gemma3:27b-it-qat", description="本地 LLM 模型名稱")
     
     # LM Studio 設定（OpenAI 相容 API）
     LMSTUDIO_BASE_URL: str = Field(
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # ========================================
     # Whisper 設定
     # ========================================
-    WHISPER_MODEL: str = Field(default="large-v3", description="Whisper 模型名稱")
+    WHISPER_MODEL: str = Field(default="medium", description="Whisper 模型名稱")
     WHISPER_DEVICE: str = Field(default="auto", description="Whisper 運算裝置 (auto/cuda/cpu)")
     WHISPER_COMPUTE_TYPE: str = Field(default="float16", description="Whisper 計算精度")
     

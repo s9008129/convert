@@ -35,8 +35,8 @@ loguru==0.7.2
 # 音訊處理
 ffmpeg-python==0.2.0
 
-# 簡繁中文轉換 (確保輸出繁體中文)
-opencc-python-reimplemented==0.1.7
+# 簡繁中文轉換 (已移除 - whisper-medium 直接輸出繁體中文)
+# opencc-python-reimplemented==0.1.7
 
 # CUDA 支援（如果可用）
 # nvidia-cublas-cu12
