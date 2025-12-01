@@ -369,37 +369,31 @@ class TestSystemPromptConsistency:
         """測試主要 System Prompt 在不同檔案中是否一致"""
         sources = SystemPromptSource.get_main_prompts()
         
-        # 取得所有主要 prompt
-        prompts = {name: prompt.strip() for name, prompt in sources}
+        # 取得所有主要 prompt，並預先正規化
+        normalized_prompts = {
+            name: ' '.join(prompt.strip().split())
+            for name, prompt in sources
+        }
         
         # 比較內容是否一致
-        prompt_values = list(prompts.values())
-        for i, prompt1 in enumerate(prompt_values):
-            for j, prompt2 in enumerate(prompt_values[i+1:], i+1):
-                # 正規化空白後比較
-                normalized1 = ' '.join(prompt1.split())
-                normalized2 = ' '.join(prompt2.split())
-                
-                # 計算相似度（簡單的字元比較）
-                similarity = self._calculate_similarity(normalized1, normalized2)
+        prompt_items = list(normalized_prompts.items())
+        for i, (name1, prompt1) in enumerate(prompt_items):
+            for name2, prompt2 in prompt_items[i+1:]:
+                # 使用序列匹配器計算相似度
+                similarity = self._calculate_similarity(prompt1, prompt2)
                 
                 # 主要 prompt 應該高度相似（允許些微格式差異）
                 assert similarity > 0.95, \
-                    f"System Prompt 在不同檔案中不一致，相似度僅 {similarity:.2%}"
+                    f"System Prompt 在 {name1} 與 {name2} 中不一致，相似度僅 {similarity:.2%}"
     
     def _calculate_similarity(self, s1: str, s2: str) -> float:
-        """計算兩個字串的相似度"""
+        """計算兩個字串的相似度（使用序列匹配）"""
         if not s1 or not s2:
             return 0.0
         
-        # 使用簡單的 Jaccard 相似度
-        set1 = set(s1.split())
-        set2 = set(s2.split())
-        
-        intersection = len(set1 & set2)
-        union = len(set1 | set2)
-        
-        return intersection / union if union > 0 else 0.0
+        # 使用 difflib.SequenceMatcher 進行更精確的相似度計算
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, s1, s2).ratio()
 
 
 # =============================================================================
@@ -470,19 +464,25 @@ class TestEdgeCases:
     
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_all_sources())
     def test_no_nested_same_tags(self, source_name: str, prompt: str):
-        """測試沒有相同標籤巢狀"""
-        # 找出所有開始標籤
-        opening_tags = re.findall(r'<(\w+)>', prompt)
+        """測試沒有相同標籤巢狀（簡化版：檢查基本的標籤配對）"""
+        # 使用堆疊方式檢查標籤配對
+        tag_pattern = re.compile(r'<(/?)(\w+)>')
+        stack = []
         
-        # 檢查沒有連續相同的開始標籤
-        for i in range(len(opening_tags) - 1):
-            if opening_tags[i] == opening_tags[i + 1]:
-                # 確認中間有結束標籤
-                pattern = f"<{opening_tags[i]}>.*?<{opening_tags[i]}>"
-                matches = re.findall(pattern, prompt, re.DOTALL)
-                for match in matches:
-                    if f"</{opening_tags[i]}>" not in match:
-                        pytest.fail(f"[{source_name}] 發現相同標籤巢狀：<{opening_tags[i]}>")
+        for match in tag_pattern.finditer(prompt):
+            is_closing = match.group(1) == '/'
+            tag_name = match.group(2)
+            
+            if is_closing:
+                # 結束標籤應該與堆疊頂部的開始標籤配對
+                if stack and stack[-1] == tag_name:
+                    stack.pop()
+                # 如果不配對，可能是格式問題，但不一定是巢狀
+            else:
+                # 開始標籤
+                if stack and stack[-1] == tag_name:
+                    # 連續兩個相同的開始標籤，表示可能有巢狀問題
+                    pytest.fail(f"[{source_name}] 發現相同標籤巢狀：<{tag_name}>")
     
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_not_too_short(self, source_name: str, prompt: str):
@@ -537,15 +537,16 @@ class TestEncodingAndSpecialCharacters:
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_all_sources())
     def test_consistent_line_endings(self, source_name: str, prompt: str):
         """測試換行符號一致"""
-        # 不應混用不同的換行符號
-        has_crlf = '\r\n' in prompt
-        has_cr = '\r' in prompt and '\n' not in prompt
-        has_lf = '\n' in prompt and '\r' not in prompt
+        # 檢查是否混用不同的換行符號
+        # 先將 CRLF 替換為占位符，然後檢查是否有孤立的 CR 或 LF
+        temp = prompt.replace('\r\n', '')
+        has_standalone_cr = '\r' in temp
+        has_standalone_lf = False  # 已經移除了 CRLF，剩下的 \n 是允許的
         
-        # 應該只有一種換行方式
-        endings = [has_crlf, has_cr, has_lf]
-        assert sum(endings) <= 1, \
-            f"[{source_name}] 換行符號不一致"
+        # 如果存在孤立的 CR（不是 CRLF 的一部分），則混用了換行符號
+        if has_standalone_cr:
+            assert False, \
+                f"[{source_name}] 換行符號不一致（混用 CR 和 LF）"
 
 
 # =============================================================================
