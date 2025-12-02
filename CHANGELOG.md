@@ -5,6 +5,24 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.3.2] - 2025-12-02
+
+### 緊急修正 🔥
+
+- **修復重啟後預覽缺失問題（v3.3.1 修復未生效）**
+  - 問題：即使更新了 v3.3.1 的後端代碼，重啟服務後仍無效
+  - 根本原因分析：
+    1. 後端代碼已修改（backend/api/websocket.py） ✅
+    2. 但 frontend/index.html 的版本號未更新（v=20241201d）
+    3. 瀏覽器快取導致舊的 JavaScript 繼續執行
+    4. 前端代碼未更新，導致無法正確顯示預覽
+  - 修復方案：
+    1. 更新 `frontend/index.html` 中 CSS 和 JavaScript 的版本號（20241202）
+    2. 強制瀏覽器重新加載前端靜態資源
+    3. 確保用戶重啟服務後能立即看到修復效果
+  - 修改文件：`frontend/index.html`
+  - **部署建議**：用戶需清除瀏覽器快取或使用 Ctrl+Shift+R 強制重新載入
+
 ## [3.3.1] - 2025-12-02
 
 ### 錯誤修正 🐛
