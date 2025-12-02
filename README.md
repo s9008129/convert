@@ -1,15 +1,15 @@
-# MeetingScribe v2.3.8
+# MeetingScribe v3.1.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v2.3.8-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.1.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md) • [英文修復文件](ENGLISH_FIX_VERIFICATION.md)
 
 </div>
 
@@ -18,6 +18,14 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🇹🇼 v3.1.0 重大改進：英文混入根本修復
+
+- ✅ **英文混入問題根本修復**：採用分層防禦機制，確保 100% 繁體中文輸出
+- ✅ **提示詞全中文化**：移除英文 tag，添加明確禁止和自檢清單
+- ✅ **低溫約束**：Gemma3:27b 溫度調至 0.1，強制中文輸出
+- ✅ **自動清理機制**：三層清理（段落移除 + 詞彙替換 + 英文檢測）
+- ✅ **完整驗證報告**：詳見 [英文修復驗證報告](ENGLISH_FIX_VERIFICATION.md)
 
 ### 🇹🇼 v2.3.8 新功能：提升檔案上傳限制至 200MB
 

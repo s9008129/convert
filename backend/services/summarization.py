@@ -156,6 +156,9 @@ class SummarizationService:
             if progress_callback:
                 progress_callback(65.0, "載入 Ollama 模型...")
             
+            # 強制設定低溫以確保中文輸出（Gemma3:27b 最佳實踐）
+            effective_temperature = 0.1
+            
             response = await client.post(
                 "/api/chat",
                 json={
@@ -164,7 +167,10 @@ class SummarizationService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "stream": False
+                    "stream": False,
+                    "options": {
+                        "temperature": effective_temperature
+                    }
                 }
             )
             response.raise_for_status()
@@ -204,13 +210,16 @@ class SummarizationService:
             if progress_callback:
                 progress_callback(65.0, "載入 LM Studio 模型...")
             
+            # 強制設定低溫以確保中文輸出
+            effective_temperature = 0.1
+            
             response = client.chat.completions.create(
                 model=settings.LMSTUDIO_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=0.7
+                temperature=effective_temperature
             )
             
             if progress_callback:

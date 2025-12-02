@@ -202,13 +202,24 @@ class OllamaClient:
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
         
+        # 對於多語言模型（如 Gemma3），強制使用極低溫度以確保語言一致性
+        # 若 temperature > 0.15，自動降低至 0.1
+        effective_temperature = min(temperature, 0.15) if temperature > 0.15 else temperature
+        
+        if effective_temperature != temperature:
+            logger.info(
+                "[Ollama] 溫度自動調整: %.2f → %.2f (多語言約束)",
+                temperature,
+                effective_temperature
+            )
+        
         payload = {
             "model": self.model,
             "prompt": full_prompt,
             "stream": stream,
             "options": {
                 "num_ctx": self.num_ctx,
-                "temperature": temperature,
+                "temperature": effective_temperature,
                 "num_predict": max_tokens
             }
         }

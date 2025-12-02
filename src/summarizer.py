@@ -39,65 +39,100 @@ class SummaryResult:
         return 0
 
 
-# 預設系統提示詞 (COSTAR-X 框架)
-# 融合 COSTAR-A 與 Phil Schmid 的 Gemini 提示實踐指南
-# 優化目標：本地 Gemma 3 12B/27B 模型
-DEFAULT_SYSTEM_PROMPT = """<system_instruction>
-<role>
-你是一位專業的政府機關資深承辦人員與專案經理。你擅長從雜亂的會議逐字稿中提取關鍵資訊，並轉化為結構清晰、符合台灣政府機關公文風格的繁體中文會議記錄。你的風格是客觀、精準且簡練。
-</role>
+# 預設系統提示詞 (COSTAR-X 框架優化版)
+# 針對 Gemma3:27b 多語言傾向進行深度調整
+# 關鍵策略：
+# 1. 完全中文化提示詞結構，消除英文 token 誘導
+# 2. 明確「禁止英文」的強制約束
+# 3. 提供標準中文輸出範例
+# 4. 增加語言檢查指令層
+DEFAULT_SYSTEM_PROMPT = """【系統角色與任務】
 
-<instructions>
-請依照以下步驟處理會議逐字稿：
+你是一位專業的政府機關資深承辦人員與專案經理。你的核心職責是：
+從雜亂的會議逐字稿中提取關鍵資訊，轉化為結構清晰、符合台灣政府機關公文風格的繁體中文會議記錄。
+你的風格必須是：客觀、精準、簡練。
 
-1. **Analyze (分析)**：閱讀全文，識別會議的「主要議題」、「關鍵決策」與「待辦事項」。
-2. **Filter (過濾)**：忽略寒暄、冗言贅字或無關的閒聊。
-3. **Structure (結構化)**：將資訊填入指定的輸出格式中。
-4. **Refine (修飾)**：確保所有內容皆為流暢的繁體中文 (Traditional Chinese)，並檢查是否有遺漏的人名或期限。
-</instructions>
+【處理步驟】
 
-<constraints>
-- **Language**：輸出必須是 100% 繁體中文（台灣用語）。
-- **Tone**：台灣政府機關公文書寫風格，正式、客觀、不帶情緒色彩。
-- **Accuracy**：若逐字稿中有模糊不清的數據，請標註「(待確認)」，不可瞎編。
-- **Formatting**：嚴格遵守指定格式，不要輸出多餘的引導語或解釋。
-- **Completeness**：每個區塊都必須填寫，若該區塊無相關內容則標註「無」。
-</constraints>
+第一步 - 分析：逐行閱讀完整逐字稿，識別以下三個要素
+  • 主要議題（會議討論的核心話題）
+  • 關鍵決策（明確的結論或決議）
+  • 待辦事項（需要後續執行的任務）
 
-<output_format>
-請依序輸出以下區塊（使用 Markdown）：
+第二步 - 過濾：移除以下內容
+  • 寒暄與問候詞
+  • 冗言贅字與口頭禪
+  • 與議題無關的閒聊
+
+第三步 - 結構化：按照下方格式組織資訊
+
+第四步 - 修飾與檢查
+  • 確保所有輸出內容為正體中文（不允許任何英文詞彙，包括人名、專有名詞）
+  • 檢查是否遺漏人名、日期、期限
+  • 驗證文句流暢性和邏輯連貫
+
+【強制約束 - 必須遵守】
+
+⚠️ 【語言要求】必須 100% 使用正體中文，不允許出現任何英文字母
+  ❌ 禁止：CEO, AI, RPA, POC, KPI, Edge, Ollama, CPU 等英文詞彙
+  ✅ 正確：如遇上述詞彙，須轉換為「首席執行官、人工智慧、流程自動化、概念驗證、關鍵績效指標、邊緣計算、本地模型、中央處理器」
+
+⚠️ 【內容準確性】
+  • 若逐字稿中有模糊不清的數據，請標註「(待確認)」，禁止推測或虛構
+
+⚠️ 【格式遵守】
+  • 嚴格按照下方格式輸出，不要添加多餘的引導語或解釋
+  • 每個區塊都必須填寫
+  • 若某區塊無相關內容，標註「無」，不留空白
+
+⚠️ 【文書風格】
+  • 台灣政府機關公文書寫風格
+  • 正式、客觀、不帶情緒色彩
+  • 使用「已決議」「決定」「應」等公文用語
+
+【標準輸出格式 - 必須完全按照此格式】
 
 # 會議記錄摘要
 
 ## 1. 會議概況
-- **日期**：[YYYY/MM/DD]（如有提及）
-- **參與者**：[列出人名]（如有提及）
-- **會議主題**：[根據內容推斷]
+- **會議日期**：2024 年 X 月 X 日（若無提及則標註「無」）
+- **與會人員**：張三、李四、王五（若無提及則標註「無」）
+- **會議主題**：專案進度檢討會
 
-## 2. 執行摘要 (Executive Summary)
-[用 100 字以內總結會議核心結論]
+## 2. 執行摘要
+會議就三個主要議題進行討論，已達成兩項重要決議，訂定一項待辦事項。核心結論為...（100字以內）
 
-## 3. 詳細議題與決議 (Discussion & Decisions)
-- **議題 1**：[標題]
-  - *討論重點*：...
-  - *最終決議*：...
-- **議題 2**：...
-（依此類推）
+## 3. 詳細議題與決議
+- **議題一：會議標題**
+  - 討論重點：說明討論的背景與主要觀點
+  - 最終決議：明確的結論或決定
 
-## 4. 待辦事項 (Action Items) - 必填
-| 待辦事項 | 負責人 | 期限 |
+- **議題二：另一會議標題**
+  - 討論重點：...
+  - 最終決議：...
+
+## 4. 待辦事項
+| 事項說明 | 負責人 | 期限 |
 | :--- | :--- | :--- |
-| [具體事項] | [人名] | [時間] |
+| 完成報告初稿 | 張三 | 2024 年 X 月 X 日 |
+| 提交預算申請 | 李四 | 本月底 |
+
+若無待辦事項，寫：「無」
 
 ## 5. 其他備註
-- 其他重要但不屬於上述分類的內容
-- 特殊情況說明
-</output_format>
-</system_instruction>
+- 下次會議訂於 X 月 X 日召開
+- 特別說明事項
 
-<final_instruction>
-請深呼吸，一步步執行上述分析步驟，確保沒有遺漏任何輸出格式中的欄位。現在開始：
-</final_instruction>"""
+【最終檢查清單 - 輸出前必做】
+
+在完成輸出前，請檢查以下項目（必須全部打勾）：
+☑️ 輸出內容 100% 使用正體中文，沒有任何英文字母或英文詞彙
+☑️ 所有格式都按照上方範例完整輸出
+☑️ 沒有任何多餘的解釋性文字（例如「以下是會議摘要」）
+☑️ 人名、日期、數字準確無誤
+☑️ 文句流暢，邏輯清晰
+
+現在開始處理會議逐字稿。請深呼吸，按步驟執行。"""
 
 
 # 簡潔版系統提示詞 (COSTAR-X 簡化版)
@@ -412,7 +447,29 @@ class MeetingSummarizer:
         error_indicators = ['error', 'exception', 'traceback', 'failed']
         has_error = any(indicator in summary.lower() for indicator in error_indicators)
         
+        # 檢查語言合規性：計算英文詞的比例
+        english_words = self._count_english_words(summary)
+        total_words = len(summary.split())
+        english_ratio = english_words / total_words if total_words > 0 else 0
+        
+        # 如果英文比例 > 10%，則警告（Critical）
+        if english_ratio > 0.1:
+            logger.error(
+                "[品質警告] 英文混入比例過高：%.1f%%（檢測到 %d 個英文詞）",
+                english_ratio * 100,
+                english_words
+            )
+            return False
+        
         return has_structure and not has_error
+    
+    def _count_english_words(self, text: str) -> int:
+        """計算文本中的英文單詞數量"""
+        import re
+        # 匹配英文單詞（連續的英文字母）
+        english_pattern = r'\b[a-zA-Z]+\b'
+        matches = re.findall(english_pattern, text)
+        return len(matches)
     
     def quick_summary(
         self,
@@ -444,6 +501,102 @@ class MeetingSummarizer:
 class MarkdownFormatter:
     """Markdown 格式化工具"""
     
+    # 常見英文詞彙黑名單（如果在正體中文會議記錄中出現，應視為錯誤）
+    ENGLISH_BLACKLIST = {
+        'Okay', 'okay', 'Let', 'let', 'Recap', 'recap', 'action', 'Action',
+        'items', 'Items', 'discussion', 'Discussion', 'core', 'Core',
+        'challenges', 'Challenges', 'talking', 'Talking', 'points', 'Points',
+        'preparation', 'Preparation', 'Director', 'director', 'Meeting', 'meeting',
+        'AI', 'Human', 'Control', 'Intervention', 'Problem', 'Explanation',
+        'Blame', 'Focus', 'Preparation', 'Example', 'Scenarios', 'Case',
+        'Document', 'Collection', 'Retraining', 'Strategy', 'Demonstration',
+        'Performance', 'Report', 'Contextual', 'Analysis', 'Message', 'Key',
+        'Message', 'Automatic', 'Manual', 'Routing', 'Context', 'Nuances',
+        'Language', 'Categorization', 'Tend', 'Miscategorize', 'Documents',
+        'Approach', 'Oversight', 'Correction', 'Prevent', 'Errors', 'Frame',
+        'Dynamic', 'Nature', 'Model', 'Monitor', 'Refinement', 'Accuracy',
+        'Reliability', 'Committed', 'Ensure', 'Proactive', 'System', 'Require'
+    }
+    
+    @staticmethod
+    def _remove_english_segments(text: str) -> str:
+        """
+        移除或修復包含過多英文的段落
+        
+        策略：
+        1. 檢測以英文字母開頭的段落
+        2. 如果段落中英文詞比例 > 50%，則移除
+        3. 如果混合中英，則提取中文部分
+        """
+        import re
+        
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            # 檢查行的第一個非空字符
+            stripped = line.lstrip()
+            
+            if stripped and stripped[0].isascii() and stripped[0].isalpha():
+                # 如果行以英文字母開頭，檢查是否應該保留
+                # 保留 Markdown 標題和特殊符號開頭的行
+                if stripped.startswith('#') or stripped.startswith('*') or \
+                   stripped.startswith('|') or stripped.startswith('-') or \
+                   stripped.startswith('>'):
+                    cleaned_lines.append(line)
+                else:
+                    # 檢查英文詞的比例
+                    english_words = len(re.findall(r'\b[a-zA-Z]+\b', line))
+                    total_words = len(line.split())
+                    
+                    if total_words > 0 and english_words / total_words > 0.5:
+                        # 英文比例過高，跳過此行
+                        logger.warning("[清理] 移除高英文比例行: %s...", line[:50])
+                        continue
+            
+            cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines)
+    
+    @staticmethod
+    def _sanitize_text_language(text: str) -> str:
+        """
+        淨化文本中的英文詞彙
+        
+        用中文替代常見英文詞彙，用於應急修正
+        """
+        import re
+        
+        replacements = {
+            r'\bOkay\b': '好',
+            r'\bokay\b': '好',
+            r'\bLet\b': '讓',
+            r'\blet\b': '讓',
+            r'\bRecap\b': '總結',
+            r'\brecap\b': '總結',
+            r'\bAI\b': '人工智慧',
+            r'\bRPA\b': '流程自動化',
+            r'\bPOC\b': '概念驗證',
+            r'\bKPI\b': '關鍵績效指標',
+            r'\bCEO\b': '首席執行官',
+            r'\bEdge\b': '邊緣',
+            r'\bOllama\b': '本地模型系統',
+            r'\bCPU\b': '中央處理器',
+            r'\bGPU\b': '圖形處理器',
+            r'\bAPI\b': '應用介面',
+            r'\bJSON\b': '資料格式',
+            r'\bSQL\b': '結構化查詢',
+            r'\bURL\b': '網址',
+            r'\bID\b': '識別碼',
+            r'\bDI\b': '數位身份',
+        }
+        
+        result = text
+        for pattern, replacement in replacements.items():
+            result = re.sub(pattern, replacement, result)
+        
+        return result
+    
     @staticmethod
     def format_meeting_record(
         summary: str,
@@ -464,6 +617,14 @@ class MarkdownFormatter:
             格式化的 Markdown
         """
         from pathlib import Path
+        
+        # 步驟 1：淨化英文
+        cleaned_summary = MarkdownFormatter._remove_english_segments(summary)
+        
+        # 步驟 2：應急修正英文詞彙
+        if MarkdownFormatter._has_excessive_english(cleaned_summary):
+            logger.warning("[修正] 偵測到英文混入，執行詞彙替換...")
+            cleaned_summary = MarkdownFormatter._sanitize_text_language(cleaned_summary)
         
         source_name = Path(source_file).stem
         now = datetime.now()
@@ -504,11 +665,37 @@ class MarkdownFormatter:
             whisper_model=metadata.get('whisper_model', 'N/A'),
             llm_model=metadata.get('llm_model', 'N/A'),
             total_time=metadata.get('total_time', 'N/A'),
-            summary=summary,
+            summary=cleaned_summary,
             transcript_len=len(transcript),
             transcript=transcript
         )
         return md
+    
+    @staticmethod
+    def _has_excessive_english(text: str) -> bool:
+        """檢查文本中是否有過多英文"""
+        import re
+        
+        # 計算英文詞比例
+        english_words = len(re.findall(r'\b[a-zA-Z]+\b', text))
+        total_words = len(text.split())
+        
+        if total_words == 0:
+            return False
+        
+        english_ratio = english_words / total_words
+        
+        # 如果英文比例 > 15%，判定為過多
+        if english_ratio > 0.15:
+            logger.warning(
+                "[品質] 檢測到高英文比例: %.1f%% (%d/%d 詞)",
+                english_ratio * 100, 
+                english_words, 
+                total_words
+            )
+            return True
+        
+        return False
     
     @staticmethod
     def clean_summary(summary: str) -> str:

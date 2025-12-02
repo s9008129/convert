@@ -6,6 +6,7 @@ MeetingScribe 任務處理器
 import asyncio
 import os
 import time
+import re
 from typing import Optional, Callable
 
 from backend.core.config import settings
@@ -190,9 +191,101 @@ class TaskProcessor:
             )
             await connection_manager.send_progress(task.task_id, message)
     
+    @staticmethod
+    def _remove_english_segments(text: str) -> str:
+        """移除或修復包含過多英文的段落"""
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            stripped = line.lstrip()
+            
+            if stripped and stripped[0].isascii() and stripped[0].isalpha():
+                # 保留 Markdown 標題和特殊符號開頭的行
+                if stripped.startswith('#') or stripped.startswith('*') or \
+                   stripped.startswith('|') or stripped.startswith('-') or \
+                   stripped.startswith('>'):
+                    cleaned_lines.append(line)
+                else:
+                    # 檢查英文詞的比例
+                    english_words = len(re.findall(r'\b[a-zA-Z]+\b', line))
+                    total_words = len(line.split())
+                    
+                    if total_words > 0 and english_words / total_words > 0.5:
+                        # 英文比例過高，跳過此行
+                        log.warning("[清理] 移除高英文比例行: %s...", line[:50])
+                        continue
+            
+            cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines)
+    
+    @staticmethod
+    def _sanitize_text_language(text: str) -> str:
+        """淨化文本中的英文詞彙"""
+        replacements = {
+            r'\bOkay\b': '好',
+            r'\bokay\b': '好',
+            r'\bLet\b': '讓',
+            r'\blet\b': '讓',
+            r'\bRecap\b': '總結',
+            r'\brecap\b': '總結',
+            r'\bAI\b': '人工智慧',
+            r'\bRPA\b': '流程自動化',
+            r'\bPOC\b': '概念驗證',
+            r'\bKPI\b': '關鍵績效指標',
+            r'\bCEO\b': '首席執行官',
+            r'\bEdge\b': '邊緣',
+            r'\bOllama\b': '本地模型系統',
+            r'\bCPU\b': '中央處理器',
+            r'\bGPU\b': '圖形處理器',
+            r'\bAPI\b': '應用介面',
+            r'\bJSON\b': '資料格式',
+            r'\bSQL\b': '結構化查詢',
+            r'\bURL\b': '網址',
+            r'\bID\b': '識別碼',
+            r'\bDI\b': '數位身份',
+        }
+        
+        result = text
+        for pattern, replacement in replacements.items():
+            result = re.sub(pattern, replacement, result)
+        
+        return result
+    
+    @staticmethod
+    def _has_excessive_english(text: str) -> bool:
+        """檢查文本中是否有過多英文"""
+        english_words = len(re.findall(r'\b[a-zA-Z]+\b', text))
+        total_words = len(text.split())
+        
+        if total_words == 0:
+            return False
+        
+        english_ratio = english_words / total_words
+        
+        if english_ratio > 0.15:
+            log.warning(
+                "[品質] 檢測到高英文比例: %.1f%% (%d/%d 詞)",
+                english_ratio * 100, 
+                english_words, 
+                total_words
+            )
+            return True
+        
+        return False
+
     def _format_result(self, task: TaskInfo, transcript: str, summary: str) -> str:
-        """格式化最終結果"""
+        """格式化最終結果（含英文清理機制）"""
         device_info = device_detector.get_device_info()
+        
+        # 步驟 1：移除高英文比例的段落
+        cleaned_summary = self._remove_english_segments(summary)
+        
+        # 步驟 2：如果仍有過多英文，執行詞彙替換
+        if self._has_excessive_english(cleaned_summary):
+            log.warning("[修正] 偵測到英文混入，執行詞彙替換...")
+            cleaned_summary = self._sanitize_text_language(cleaned_summary)
         
         result = f"""# 會議記錄
 
@@ -203,7 +296,7 @@ class TaskProcessor:
 
 ---
 
-{summary}
+{cleaned_summary}
 
 ---
 
