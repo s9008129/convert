@@ -1,0 +1,160 @@
+# ============================================================
+# docker-compose-windows-gpu.yml
+# MeetingScribe v2.3.6 - Windows + RTX 4090 專用最佳實踐版
+# ============================================================
+# 
+# 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
+# 
+# 使用方式：
+#   cd docker
+#   docker compose -f docker-compose-windows-gpu.yml up -d
+# 
+# ============================================================
+
+name: meetingscribe-win-gpu
+
+services:
+  # ========================================
+  # 主應用服務（Windows CUDA 優化版）
+  # ========================================
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: meetingscribe:windows-gpu
+    container_name: meetingscribe-app
+    hostname: meetingscribe-app
+    restart: unless-stopped
+    
+    # 載入環境變數檔案
+    env_file:
+      - ../.env
+    
+    # ========================================
+    # RTX 4090 資源配置（可選）
+    # 取消註解以限制資源使用
+    # ========================================
+    deploy:
+      resources:
+        limits:
+          # RTX 4090 有 24GB VRAM，可安全分配 16GB 給容器
+          memory: 16G
+          cpus: '8'
+        reservations:
+          # 預留資源確保容器永遠有足夠資源
+          cpus: '2'
+          memory: 4G
+          # 啟用 GPU 支援（需要 NVIDIA Container Toolkit）
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    ports:
+      - "9527:9527"
+    
+    environment:
+      # ========================================
+      # GPU 運算設定（RTX 4090 優化）
+      # ========================================
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      
+      # ========================================
+      # 本地模式設定（Ollama - 連接主機）
+      # ========================================
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - LOCAL_LLM_MODEL=gemma3:27b-it-qat
+      
+      # ========================================
+      # Whisper 轉錄設定（GPU 加速）
+      # ========================================
+      - WHISPER_MODEL=medium
+      - WHISPER_DEVICE=auto
+      
+      # ========================================
+      # 檔案上傳限制（RTX 4090 可處理更大檔案）
+      # ========================================
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-500}
+      - ENABLE_BATCH_UPLOAD=${ENABLE_BATCH_UPLOAD:-true}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-2}
+      - QUEUE_MAX_SIZE=${QUEUE_MAX_SIZE:-100}
+      
+      # ========================================
+      # 系統設定
+      # ========================================
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEFAULT_MODE=${DEFAULT_MODE:-local}
+      - PYTHONUNBUFFERED=1
+    
+    volumes:
+      - ../data/uploads:/app/data/uploads
+      - ../data/outputs:/app/data/outputs
+      - ../data/cache:/app/data/cache
+      - meetingscribe-whisper-models:/app/models
+      # 開發模式：前端檔案即時同步
+      - ../frontend:/app/frontend
+    
+    # 允許連接主機網路（存取 Ollama）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
+    # 獨立網路 - 完全隔離
+    networks:
+      - meetingscribe-network
+    
+    # 標籤：方便識別
+    labels:
+      - "com.meetingscribe.project=meetingscribe"
+      - "com.meetingscribe.version=2.3.6"
+      - "com.meetingscribe.platform=windows-gpu"
+      - "com.meetingscribe.gpu=rtx4090"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+# ========================================
+# 網路配置 - 完全獨立隔離
+# ========================================
+networks:
+  meetingscribe-network:
+    driver: bridge
+    name: meetingscribe-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.0.0/16
+          gateway: 172.30.0.1
+    labels:
+      - "com.meetingscribe.project=meetingscribe"
+
+# ========================================
+# 持久化存儲
+# ========================================
+volumes:
+  meetingscribe-whisper-models:
+    driver: local
+    name: meetingscribe-whisper-models
+    labels:
+      - "com.meetingscribe.project=meetingscribe"
+
+# ============================================================
+# Windows RTX 4090 部署檢查清單：
+# 
+# ✅ Docker Desktop GPU 支援已啟用
+# ✅ NVIDIA Container Toolkit 已安裝
+# ✅ NVIDIA 驅動版本 >= 520
+# ✅ nvidia-smi 正常工作
+# ✅ Ollama 服務運行中
+# 
+# 部署命令：
+#   cd docker
+#   docker compose -f docker-compose-windows-gpu.yml up -d
+# 
+# 監控 GPU 使用：
+#   nvidia-smi -l 1
+# ============================================================
