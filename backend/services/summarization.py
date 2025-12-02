@@ -6,6 +6,7 @@ MeetingScribe LLM 摘要服務
 import httpx
 from typing import Optional
 from openai import OpenAI, AsyncOpenAI
+from datetime import datetime, timedelta
 
 from backend.core.config import settings
 from backend.core.logger import log
@@ -23,6 +24,13 @@ class SummarizationService:
         self._lmstudio_client: Optional[OpenAI] = None
         self._gemini_client: Optional[OpenAI] = None
         self._gemini_async_client: Optional[AsyncOpenAI] = None
+        
+        # 分層智能檢查快取（減少API調用成本）
+        self._gemini_health_check_cache = {
+            "last_check_time": None,
+            "status": None,
+            "ttl_seconds": 86400  # 24 小時快取
+        }
         
     async def _get_ollama_client(self) -> httpx.AsyncClient:
         """取得 Ollama HTTP 客戶端"""
@@ -312,6 +320,70 @@ class SummarizationService:
             return True
         except ValueError:
             return False
+    
+    async def check_gemini_health(self, force_refresh: bool = False) -> bool:
+        """
+        層級2：每日 Gemini API 健康檢查（輕量級，1次API調用/天）
+        
+        特點：
+        - 自動快取24小時，避免重複調用
+        - 使用最輕量的API端點（models.list()）
+        - 多用戶共用快取結果（節省成本）
+        - force_refresh=True 強制重新檢查
+        
+        Args:
+            force_refresh: 是否強制刷新快取
+            
+        Returns:
+            bool: API 是否可用
+        """
+        now = datetime.now()
+        cache = self._gemini_health_check_cache
+        
+        # 檢查快取是否仍有效
+        if not force_refresh and cache["last_check_time"]:
+            age_seconds = (now - cache["last_check_time"]).total_seconds()
+            if age_seconds < cache["ttl_seconds"] and cache["status"] is not None:
+                log.debug(f"使用快取 Gemini 健康檢查結果（緩存年齡: {age_seconds:.0f}秒）")
+                return cache["status"]
+        
+        # 執行實際的 API 檢查
+        log.info("執行 Gemini API 健康檢查...")
+        try:
+            if not self.check_gemini_available():
+                cache["status"] = False
+                cache["last_check_time"] = now
+                return False
+            
+            # 使用最輕量的 API 呼叫：列出可用模型
+            client = self._get_gemini_client()
+            response = client.models.list()
+            
+            # 驗證是否能取得模型列表
+            result = len(list(response.models)) > 0
+            
+            cache["status"] = result
+            cache["last_check_time"] = now
+            log.info(f"Gemini 健康檢查完成：{'✓ 可用' if result else '✗ 不可用'}")
+            return result
+            
+        except Exception as e:
+            log.warning(f"Gemini 健康檢查失敗: {str(e)}")
+            cache["status"] = False
+            cache["last_check_time"] = now
+            return False
+    
+    def reset_gemini_health_cache(self):
+        """
+        重置 Gemini 健康檢查快取
+        用於環境變數更新或配置變更時
+        """
+        self._gemini_health_check_cache = {
+            "last_check_time": None,
+            "status": None,
+            "ttl_seconds": 86400
+        }
+        log.info("已重置 Gemini 健康檢查快取")
     
     async def close(self):
         """關閉客戶端連接"""

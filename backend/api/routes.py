@@ -5,6 +5,7 @@ v2.1 - 包含排隊系統和 User Prompt 支援
 
 import os
 from typing import Optional
+from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
@@ -271,4 +272,39 @@ async def trigger_cleanup():
     return {
         "message": "清理完成",
         "results": results
+    }
+
+
+@router.get("/gemini/health")
+async def check_gemini_health(force_refresh: bool = False):
+    """
+    檢查 Gemini API 連線狀態（層級2：每日健康檢查）
+    
+    - 自動快取24小時結果，節省API配額
+    - force_refresh=true 強制重新檢查
+    - 供定時任務調用（推薦每日早上 7:00）
+    
+    Query Parameters:
+        force_refresh: bool - 是否強制刷新快取
+        
+    Returns:
+        {
+            "available": bool - Gemini API 是否可用,
+            "cached": bool - 是否使用快取結果,
+            "timestamp": str - 檢查時間,
+            "message": str - 狀態信息
+        }
+    """
+    start_time = datetime.now()
+    health_status = await summarization_service.check_gemini_health(force_refresh)
+    
+    cache_info = summarization_service._gemini_health_check_cache
+    is_cached = not force_refresh and cache_info["last_check_time"] is not None and \
+                (start_time - cache_info["last_check_time"]).total_seconds() < cache_info["ttl_seconds"]
+    
+    return {
+        "available": health_status,
+        "cached": is_cached,
+        "timestamp": start_time.isoformat(),
+        "message": "✓ Gemini API 可用" if health_status else "✗ Gemini API 不可用或未配置"
     }

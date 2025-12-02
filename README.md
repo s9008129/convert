@@ -1,8 +1,8 @@
-# MeetingScribe v3.1.0
+# MeetingScribe v3.2.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.1.0-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.2.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -18,6 +18,14 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.2.0 新增：Gemini API 分層智能連線測試方案
+
+- ✅ **分層智能檢查**：三層檢查機制（本地檢查 + 每日健康檢查 + 用戶發起驗證）
+- ✅ **最小成本設計**：每日僅 1 次 API 調用，100+ 用戶無須超出 1000 次/天配額
+- ✅ **自動快取機制**：24 小時快取健康檢查結果，多用戶共享快取
+- ✅ **新增 API 端點**：`GET /api/gemini/health` 供定時任務調用
+- ✅ **完整文檔**：詳見 [Gemini API 連線測試方案](doc/系統開發及實作規劃.md)
 
 ### 🇹🇼 v3.1.0 重大改進：英文混入根本修復
 
