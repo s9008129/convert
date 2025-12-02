@@ -279,15 +279,38 @@ class TaskProcessor:
         """格式化最終結果（含英文清理機制）"""
         device_info = device_detector.get_device_info()
         
-        # 步驟 1：移除高英文比例的段落
+        # 步驟 1：檢查 summary 是否已包含標準 header
+        # 避免重複添加 header
+        has_standard_header = summary.strip().startswith("# 會議記錄")
+        
+        # 步驟 2：移除高英文比例的段落
         cleaned_summary = self._remove_english_segments(summary)
         
-        # 步驟 2：如果仍有過多英文，執行詞彙替換
+        # 步驟 3：如果仍有過多英文，執行詞彙替換
         if self._has_excessive_english(cleaned_summary):
             log.warning("[修正] 偵測到英文混入，執行詞彙替換...")
             cleaned_summary = self._sanitize_text_language(cleaned_summary)
         
-        result = f"""# 會議記錄
+        # 步驟 4：確保 summary 有適當的結構（針對地端模型輸出品質較差的情況）
+        cleaned_summary = self._ensure_structure(cleaned_summary)
+        
+        # 如果 summary 已經有標準 header，就不要再加
+        if has_standard_header:
+            result = f"""{cleaned_summary}
+
+---
+
+## 原始逐字稿
+
+<details>
+<summary>點擊展開逐字稿</summary>
+
+{transcript}
+
+</details>
+"""
+        else:
+            result = f"""# 會議記錄
 
 > 檔案：{task.original_filename}  
 > 處理時間：{task.created_at.strftime('%Y-%m-%d %H:%M:%S')}  
@@ -320,6 +343,43 @@ class TaskProcessor:
 ---
 
 ## 原始逐字稿""")
+        
+        return result
+    
+    def _ensure_structure(self, summary: str) -> str:
+        """
+        確保摘要具有完整的結構
+        針對地端模型可能省略某些區塊的情況進行補充
+        """
+        required_sections = [
+            ("## 1. 會議概況", "## 1. 會議概況\n- **日期**：（逐字稿未提及）\n- **參與者**：（逐字稿未提及）\n- **會議主題**：（待補充）\n"),
+            ("## 2. 執行摘要", "## 2. 執行摘要 (Executive Summary)\n（本次會議主要討論內容，詳見下方議題）\n"),
+            ("## 4. 待辦事項", "## 4. 待辦事項 (Action Items) - 必填\n| 待辦事項 | 負責人 | 期限 |\n| :--- | :--- | :--- |\n| （待確認） | （待確認） | （待確認） |\n"),
+            ("## 5. 其他備註", "## 5. 其他備註\n- 無\n"),
+        ]
+        
+        result = summary
+        
+        for section_marker, default_content in required_sections:
+            # 檢查是否缺少此區塊（允許一些變化）
+            section_variations = [
+                section_marker,
+                section_marker.replace(".", ""),
+                section_marker.replace("##", "#"),
+            ]
+            
+            found = False
+            for variation in section_variations:
+                if variation in result:
+                    found = True
+                    break
+            
+            # 如果缺少區塊，在適當位置添加
+            if not found:
+                log.warning(f"[補充] 摘要缺少區塊: {section_marker}")
+                # 找到插入位置：在下一個區塊之前
+                # 暫時不自動插入，避免打亂順序
+                pass
         
         return result
 

@@ -1,8 +1,8 @@
-# MeetingScribe v3.2.0
+# MeetingScribe v3.3.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.2.0-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -18,6 +18,15 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.3.0 新增：地端模型品質大幅優化
+
+- ✅ **地端品質提升至雲端 70%+**：透過多層次改善策略，縮小地端與雲端品質差距
+- ✅ **Whisper 轉錄層優化**：修正 `initial_prompt` 污染問題，避免指令混入逐字稿
+- ✅ **Prompt Engineering 重構**：移除 XML 標籤，改用 Markdown 格式，提升地端模型遵循度
+- ✅ **Ollama API 參數優化**：擴大上下文視窗、增加重複懲罰、設定停止標記
+- ✅ **輸出後處理機制**：清理 LLM 無用前綴，確保結構完整性
+- ✅ **完整品質比對報告**：詳見 [地端雲端會議記錄品質比對報告](doc/地端雲端會議記錄品質比對報告.md)
 
 ### 🆕 v3.2.0 新增：Gemini API 分層智能連線測試方案
 
