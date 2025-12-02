@@ -3,12 +3,35 @@ MeetingScribe WebSocket 進度推送
 """
 
 import asyncio
-from typing import Dict, Set
+import os
+from typing import Dict, Set, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.core.logger import log
+from backend.core.config import settings
 from backend.models.schemas import ProgressMessage, TaskStatus
 from backend.services import task_queue
+
+
+def _get_result_preview(task_id: str, original_filename: str) -> Optional[str]:
+    """
+    從結果檔案讀取預覽內容
+    """
+    try:
+        base_name = os.path.splitext(os.path.basename(original_filename))[0]
+        safe_base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-', ' ', '.') or '\u4e00' <= c <= '\u9fff')
+        result_filename = f"{safe_base_name}_{task_id}.md"
+        result_path = os.path.join(settings.outputs_dir, result_filename)
+        
+        if os.path.exists(result_path):
+            with open(result_path, 'r', encoding='utf-8') as f:
+                result_content = f.read()
+                maxLength = 2000
+                return result_content[:maxLength] if len(result_content) > maxLength else result_content
+    except Exception as e:
+        log.warning(f"無法讀取結果預覽: {e}")
+    
+    return None
 
 
 class ConnectionManager:
@@ -91,6 +114,12 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         task = task_queue.get_task(task_id)
         if task:
             queue_status = task_queue.get_queue_status()
+            
+            # 如果任務已完成，取得結果預覽
+            preview = None
+            if task.status == TaskStatus.COMPLETED:
+                preview = _get_result_preview(task_id, task.original_filename)
+            
             message = ProgressMessage(
                 task_id=task_id,
                 status=task.status,
@@ -99,7 +128,8 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 message=f"目前狀態: {task.status.value}",
                 eta_seconds=task.estimated_wait_seconds,
                 queue_position=task.queue_position,
-                queue_total=queue_status.total_queued
+                queue_total=queue_status.total_queued,
+                preview=preview
             )
             await websocket.send_json(message.model_dump())
         
@@ -121,6 +151,12 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 task = task_queue.get_task(task_id)
                 if task:
                     queue_status = task_queue.get_queue_status()
+                    
+                    # 如果任務已完成，取得結果預覽
+                    preview = None
+                    if task.status == TaskStatus.COMPLETED:
+                        preview = _get_result_preview(task_id, task.original_filename)
+                    
                     message = ProgressMessage(
                         task_id=task_id,
                         status=task.status,
@@ -129,7 +165,8 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                         message=task.stage,
                         eta_seconds=task.estimated_wait_seconds,
                         queue_position=task.queue_position,
-                        queue_total=queue_status.total_queued
+                        queue_total=queue_status.total_queued,
+                        preview=preview
                     )
                     await websocket.send_json(message.model_dump())
                     
@@ -141,3 +178,4 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         log.debug(f"WebSocket 客戶端斷開: {task_id}")
     finally:
         connection_manager.disconnect(websocket, task_id)
+

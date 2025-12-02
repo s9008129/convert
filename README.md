@@ -1,8 +1,8 @@
-# MeetingScribe v3.3.0
+# MeetingScribe v3.3.1
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.0-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.1-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -18,6 +18,12 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.3.1 修復：地端模式結果預覽一致性
+
+- ✅ **修復地端模式結果預覽缺失**：地端和雲端模式現在提供一致的結果預覽顯示
+- ✅ **WebSocket 連接時序問題解決**：無論任務何時完成，都能確保預覽內容傳遞
+- ✅ **用戶體驗一致性**：兩種模式都能在完成時顯示詳細結果預覽
 
 ### 🆕 v3.3.0 新增：地端模型品質大幅優化
 

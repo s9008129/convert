@@ -5,6 +5,20 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.3.1] - 2025-12-02
+
+### 錯誤修正 🐛
+
+- **修復地端模式結果預覽缺失問題** 
+  - 問題：地端模式完成時顯示"已完成，請下載..."，雲端模式顯示詳細預覽（UX 不一致）
+  - 根本原因：WebSocket 連接時序問題導致 `ProgressMessage` 缺少 `preview` 欄位
+  - 修復方案：
+    1. 新增 `_get_result_preview()` 輔助函數讀取已完成的結果文件
+    2. 初始連接時檢查 COMPLETED 狀態並包含預覽
+    3. 心跳超時時也包含預覽
+  - 影響：地端和雲端模式現在提供一致的用戶體驗
+  - 修改文件：`backend/api/websocket.py`
+
 ## [3.3.0] - 2025-12-02
 
 ### 重大改善 🚀
