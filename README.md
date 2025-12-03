@@ -1,194 +1,194 @@
-# MeetingScribe v3.3.4
+﻿# MeetingScribe v3.3.5
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.4-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.5-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![NVIDIA GPU](https://img.shields.io/badge/GPU-NVIDIA-green?style=flat-square&logo=nvidia)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
-**將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
+**撠?霅圈??唾??蝯???霅啗???頝典像??Docker ??**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [批次檔部署指南](doc/Windows批次檔部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md)
+[敹恍?憪(#-敹恍?憪? ??[??寡](#-??寡) ??[?函蔡??](#-?函蔡??) ??[API ?辣](#-api-?辣) ??[敹恍蝵脫??(doc/敹恍蝵脫???md) ??[MAC ?函蔡??](doc/MAC_Docker?函蔡??.md) ??[?寞活瑼蝵脫??(doc/Windows?寞活瑼蝵脫???md) ??[Docker Rebuild ??](doc/Docker??瑼ebuild????.md)
 
 </div>
 
 ---
 
-## 🎯 簡介
+## ? 蝪∩?
 
-MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+MeetingScribe ?臭???璆剔??降頧?撌亙嚗??Docker 摰孵?蝵莎?撖衣???葆韏堆??湔?函蔡???格???渲楊 Windows?acOS?inux 撟喳?∠葦?函蔡嚗?*摰??瑁??啣?嚗?撠?敶梢銝餅??嗡? Docker ??**??
 
-### 🆕 v3.3.4 修復：Docker GPU 支援問題
+### ?? v3.3.5 靽桀儔嚗ocker GPU ?舀??
 
-- ✅ **修復 GPU 未偵測問題**：啟用 docker-compose.yml 中的 NVIDIA GPU 配置
-- ✅ **自動 GPU 偵測**：deploy.bat 啟動時自動檢測並顯示 GPU 型號
-- ✅ **完整 GPU 環境變數**：添加 `NVIDIA_VISIBLE_DEVICES` 和 `NVIDIA_DRIVER_CAPABILITIES`
-- ✅ **資源限制優化**：設定 16GB 記憶體、8 CPU 核心限制
-- ✅ **自動降級**：無 GPU 時自動使用 CPU 模式（Whisper int8 量化）
+- ??**靽桀儔 GPU ?芸皜砍?憿?*嚗???docker-compose.yml 銝剔? NVIDIA GPU ?蔭
+- ??**?芸? GPU ?菜葫**嚗eploy.bat ????炎皜砌蒂憿舐內 GPU ??
+- ??**摰 GPU ?啣?霈**嚗溶??`NVIDIA_VISIBLE_DEVICES` ??`NVIDIA_DRIVER_CAPABILITIES`
+- ??**鞈???芸?**嚗身摰?16GB 閮擃? CPU ?詨??
+- ??**?芸???**嚗 GPU ??蝙??CPU 璅∪?嚗hisper int8 ??嚗?
 
-### 🆕 v3.3.3 解決 Windows PowerShell 執行政策問題
+### ?? v3.3.3 閫?捱 Windows PowerShell ?瑁??輻???
 
-- ✅ **完全規避 PowerShell 執行政策限制**：用純批次檔替代 PowerShell 腳本
-- ✅ **無需修改系統設定**：無需管理員權限，無需更改執行政策
-- ✅ **企業環境相容**：即使在受 GPO 限制的企業環境也能正常運作
-- ✅ **完整部署指南**：新增 [Windows 批次檔部署指南](doc/Windows批次檔部署指南.md)
+- ??**摰閬 PowerShell ?瑁??輻??**嚗蝝甈⊥??蹂誨 PowerShell ?單
+- ??**?⊿?靽格蝟餌絞閮剖?**嚗?蝞∠??⊥????⊿??湔?瑁??輻?
+- ??**隡平?啣??詨捆**嚗雿踹??GPO ???璆剔憓??賣迤撣賊?雿?
+- ??**摰?函蔡??**嚗憓?[Windows ?寞活瑼蝵脫??(doc/Windows?寞活瑼蝵脫???md)
 
-### 🆕 v3.3.1 修復：地端模式結果預覽一致性
+### ?? v3.3.1 靽桀儔嚗蝡舀芋撘???閬賭??湔?
 
-- ✅ **修復地端模式結果預覽缺失**：地端和雲端模式現在提供一致的結果預覽顯示
-- ✅ **WebSocket 連接時序問題解決**：無論任務何時完成，都能確保預覽內容傳遞
-- ✅ **用戶體驗一致性**：兩種模式都能在完成時顯示詳細結果預覽
+- ??**靽桀儔?啁垢璅∪?蝯??汗蝻箏仃**嚗蝡臬??脩垢璅∪??曉??銝?渡?蝯??汗憿舐內
+- ??**WebSocket ??????閫?捱**嚗隢遙???????質蝣箔??汗?批捆?喲?
+- ??**?冽擃?銝?湔?*嚗蝔格芋撘?賢摰??＊蝷箄底蝝啁???閬?
 
-### 🆕 v3.3.0 新增：地端模型品質大幅優化
+### ?? v3.3.0 ?啣?嚗蝡舀芋??鞈芸之撟??
 
-- ✅ **地端品質提升至雲端 70%+**：透過多層次改善策略，縮小地端與雲端品質差距
-- ✅ **Whisper 轉錄層優化**：修正 `initial_prompt` 污染問題，避免指令混入逐字稿
-- ✅ **Prompt Engineering 重構**：移除 XML 標籤，改用 Markdown 格式，提升地端模型遵循度
-- ✅ **Ollama API 參數優化**：擴大上下文視窗、增加重複懲罰、設定停止標記
-- ✅ **輸出後處理機制**：清理 LLM 無用前綴，確保結構完整性
-- ✅ **完整品質比對報告**：詳見 [地端雲端會議記錄品質比對報告](doc/地端雲端會議記錄品質比對報告.md)
+- ??**?啁垢?釭???喲蝡?70%+**嚗?憭惜甈⊥???伐?蝮桀??啁垢?蝡臬?鞈芸榆頝?
+- ??**Whisper 頧?撅文??*嚗耨甇?`initial_prompt` 瘙⊥???嚗??隞斗毽?仿?蝔?
+- ??**Prompt Engineering ??**嚗宏??XML 璅惜嚗??Markdown ?澆?嚗??蝡舀芋?敺芸漲
+- ??**Ollama API ??芸?**嚗憭找?銝?閬?????銴蝵啜身摰?甇Ｘ?閮?
+- ??**頛詨敺?????*嚗???LLM ?∠?韌嚗Ⅱ靽?瑽??湔?
+- ??**摰?釭瘥??勗?**嚗底閬?[?啁垢?脩垢?降閮??釭瘥??勗?](doc/?啁垢?脩垢?降閮??釭瘥??勗?.md)
 
-### 🆕 v3.2.0 新增：Gemini API 分層智能連線測試方案
+### ?? v3.2.0 ?啣?嚗emini API ?惜?箄???皜祈岫?寞?
 
-- ✅ **分層智能檢查**：三層檢查機制（本地檢查 + 每日健康檢查 + 用戶發起驗證）
-- ✅ **最小成本設計**：每日僅 1 次 API 調用，100+ 用戶無須超出 1000 次/天配額
-- ✅ **自動快取機制**：24 小時快取健康檢查結果，多用戶共享快取
-- ✅ **新增 API 端點**：`GET /api/gemini/health` 供定時任務調用
-- ✅ **完整文檔**：詳見 [Gemini API 連線測試方案](doc/系統開發及實作規劃.md)
+- ??**?惜?箄瑼Ｘ**嚗?撅斗炎?交??塚??砍瑼Ｘ + 瘥?亙熒瑼Ｘ + ?冽?潸絲撽?嚗?
+- ??**?撠??祈身閮?*嚗??亙? 1 甈?API 隤輻嚗?00+ ?冽?⊿?頞 1000 甈?憭拚?憿?
+- ??**?芸?敹怠?璈**嚗?4 撠?敹怠??亙熒瑼Ｘ蝯?嚗??冽?曹澈敹怠?
+- ??**?啣? API 蝡舫?**嚗GET /api/gemini/health` 靘??遙?矽??
+- ??**摰??**嚗底閬?[Gemini API ???皜祈岫?寞?](doc/蝟餌絞??祕雿???md)
 
-### 🇹🇼 v3.1.0 重大改進：英文混入根本修復
+### ?? v3.1.0 ?之?寥莎??望?瘛瑕?寞靽桀儔
 
-- ✅ **英文混入問題根本修復**：採用分層防禦機制，確保 100% 繁體中文輸出
-- ✅ **提示詞全中文化**：移除英文 tag，添加明確禁止和自檢清單
-- ✅ **低溫約束**：Gemma3:27b 溫度調至 0.1，強制中文輸出
-- ✅ **自動清理機制**：三層清理（段落移除 + 詞彙替換 + 英文檢測）
-- ✅ **完整驗證報告**：詳見 [英文修復驗證報告](ENGLISH_FIX_VERIFICATION.md)
+- ??**?望?瘛瑕???寞靽桀儔**嚗?典?撅日蝳行??塚?蝣箔? 100% 蝜?銝剜?頛詨
+- ??**?內閰銝剜???*嚗宏?方??tag嚗溶??蝣箇?甇Ｗ??芣炎皜
+- ??**雿澈蝝?**嚗emma3:27b 皞怠漲隤輯 0.1嚗撥?嗡葉?撓??
+- ??**?芸?皜?璈**嚗?撅斗???畾菔蝘駁 + 閰??踵? + ?望?瑼Ｘ葫嚗?
+- ??**摰撽??勗?**嚗底閬?[?望?靽桀儔撽??勗?](ENGLISH_FIX_VERIFICATION.md)
 
-### 🇹🇼 v2.3.8 新功能：提升檔案上傳限制至 200MB
+### ?? v2.3.8 ?啣??踝???瑼?銝???200MB
 
-- ✅ **檔案上傳限制提升**: 從 100MB 提升至 200MB，支援更大型會議錄音
-- ✅ **環境變數可配置**: 通過 `.env` 檔案或環境變數靈活調整限制
-- ✅ **動態前端驗證**: 前端自動讀取 API 配置，無須手動維護
+- ??**瑼?銝???**: 敺?100MB ????200MB嚗?湔憭批??降?
+- ??**?啣?霈?舫?蝵?*: ?? `.env` 瑼??憓??賊?瘣餉矽?湧???
+- ??**???垢撽?**: ?垢?芸?霈??API ?蔭嚗???雁霅?
 
-### 🔒 隔離保證（首要任務）
+### ?? ?靽?嚗?閬遙??
 
-- ✅ **獨立網路**: 使用專屬 Docker 網路 `meetingscribe-network` (172.30.0.0/16)
-- ✅ **獨立命名**: 所有容器、Volume、網路都使用 `meetingscribe-` 前綴
-- ✅ **完全隔離**: 不與其他 Docker 專案共用任何資源
+- ??**?函?蝬脰楝**: 雿輻撠惇 Docker 蝬脰楝 `meetingscribe-network` (172.30.0.0/16)
+- ??**?函??賢?**: ??捆?具olume?雯頝舫雿輻 `meetingscribe-` ?韌
+- ??**摰?**: 銝??嗡? Docker 撠??梁隞颱?鞈?
 
-### 核心特點
+### ?詨??寥?
 
-- 🇹🇼 **台灣繁體中文**：轉錄輸出為台灣正體中文，非簡體
-- 🔒 **多種本地 LLM**：支援 Ollama (Gemma3:27b-it-qat)、LM Studio (gpt-oss-20b)，完全離線，資料不外傳
-- ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
-- 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務
-- 🖥️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
-- 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
-- 🧹 **自動清理**：上傳檔保留 1 天、輸出保留 7 天、快取保留 30 天
-- 🎨 **Apple 風格 UI**：簡約現代的使用者介面
-- 📝 **自訂 Prompt**：使用者可自訂會議記錄格式和內容
-- 🔐 **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
+- ?? **?啁蝜?銝剜?**嚗??撓?箇?啁甇??銝剜?嚗?蝪⊿?
+- ?? **憭車?砍 LLM**嚗??Ollama (Gemma3:27b-it-qat)?M Studio (gpt-oss-20b)嚗??券蝺?鞈?銝???
+- ?? **?脩垢璅∪?**嚗蝙??Gemini API嚗??釭??頛詨嚗???祆?霅?
+- ?儭?**摰?**嚗蝡雯頝臬??賢?蝛粹?嚗?撠?敶梢?嗡? Docker ??
+- ?儭?**?箄?菜葫**嚗?皜?CUDA GPU?pple MPS?PU嚗?皞?頞單??芸???
+- ?? **??蝟餌絞**嚗?游??冽??雿輻嚗IFO ?砍像??嚗?蝡臬?＊蝷粹脣漲
+- ?完 **?芸?皜?**嚗??單?靽? 1 憭押撓?箔???7 憭押翰????30 憭?
+- ? **Apple 憸冽 UI**嚗陛蝝隞??雿輻????
+- ?? **?芾? Prompt**嚗蝙?刻?芾??降閮??澆??摰?
+- ?? **隡平蝝???*嚗PI Key 摰摮嚗楝敺?甇琿霅瘀?XSS ?脰?
 
 ---
 
-## 🚀 快速開始
+## ?? 敹恍?憪?
 
-### 系統需求
+### 蝟餌絞?瘙?
 
-| 項目 | 最低需求 | 建議配置 |
+| ? | ?雿?瘙?| 撱箄降?蔭 |
 |------|----------|----------|
-| 作業系統 | Windows 10/11, macOS 10.15+, Linux | Windows 11 / Ubuntu 20.04+ |
-| Docker | Docker Desktop 4.0+ | 最新版本 |
-| GPU | 無（CPU 模式）| NVIDIA RTX 4090 |
-| 記憶體 | 8GB | 32GB |
-| 磁碟空間 | 20GB | 50GB |
+| 雿平蝟餌絞 | Windows 10/11, macOS 10.15+, Linux | Windows 11 / Ubuntu 20.04+ |
+| Docker | Docker Desktop 4.0+ | ??啁???|
+| GPU | ?∴?CPU 璅∪?嚗 NVIDIA RTX 4090 |
+| 閮擃?| 8GB | 32GB |
+| 蝤?蝛粹? | 20GB | 50GB |
 
-### 前置準備
+### ?蔭皞?
 
-1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
+1. 摰? [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+2. 摰? [Ollama](https://ollama.ai/) 銝虫?頛芋??
    ```bash
    ollama pull gemma3:27b-it-qat
    ```
-3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
+3. 嚗?賂??? [Gemini API Key](https://ai.google.dev/) ?冽?脩垢璅∪?
 
-### 三步驟部署
+### 銝郊撽蝵?
 
-#### Windows 系統（推薦 ✅ v3.3.3+）
+#### Windows 蝟餌絞嚗????v3.3.3+嚗?
 
 ```batch
-# 1. 建構映像（首次約 10-30 分鐘）
+# 1. 撱箸???嚗?甈∠? 10-30 ??嚗?
 cd scripts
 deploy.bat build
 
-# 2. 啟動服務
+# 2. ????
 deploy.bat up
 
-# 3. 開啟瀏覽器
-# 訪問 http://localhost:9527
+# 3. ???汗??
+# 閮芸? http://localhost:9527
 ```
 
-> ⚠️ **Windows PowerShell 執行策略問題**？
+> ?? **Windows PowerShell ?瑁?蝑??**嚗?
 > 
-> 如果遇到 "Cannot be loaded because running scripts is disabled on this system" 錯誤，請使用 `deploy.bat` 批次檔替代 `deploy.ps1`。
+> 憒?? "Cannot be loaded because running scripts is disabled on this system" ?航炊嚗?雿輻 `deploy.bat` ?寞活瑼隞?`deploy.ps1`??
 > 
-> **原因**：系統 PowerShell 執行策略設定為 `Restricted`，無法執行本地腳本。`deploy.bat` 不受 PowerShell 策略限制，可直接執行。
+> **??**嚗頂蝯?PowerShell ?瑁?蝑閮剖???`Restricted`嚗瘜銵?啗?研deploy.bat` 銝? PowerShell 蝑?嚗?湔?瑁???
 > 
-> 詳見：[Windows 批次檔部署指南](./doc/Windows批次檔部署指南.md)
+> 閰唾?嚗Windows ?寞活瑼蝵脫??(./doc/Windows?寞活瑼蝵脫???md)
 
-#### 其他系統（macOS / Linux）
+#### ?嗡?蝟餌絞嚗acOS / Linux嚗?
 
 ```bash
-# 1. 建構映像（首次約 10-30 分鐘）
+# 1. 撱箸???嚗?甈∠? 10-30 ??嚗?
 cd scripts
 ./deploy.ps1 build
 
-# 2. 啟動服務
+# 2. ????
 ./deploy.ps1 up
 
-# 3. 開啟瀏覽器
-# 訪問 http://localhost:9527
+# 3. ???汗??
+# 閮芸? http://localhost:9527
 ```
 
 ---
 
-## ✨ 功能特色
+## ????寡
 
-### 🔄 雙模式處理
+### ?? ?芋撘???
 
-| 模式 | 說明 | 適用場景 | 優點 | 缺點 |
+| 璅∪? | 隤芣? | ?拍?湔 | ?芷? | 蝻粹? |
 |------|------|----------|------|------|
-| 🔒 本地模式 | Ollama + Gemma3:12B | 政府、醫療、商業機密 | 資料安全、無延遲 | 品質一般 |
-| ☁️ 雲端模式 | Gemini API | 一般會議、非機敏 | 品質優良 | 需網路、隱私 |
+| ?? ?砍璅∪? | Ollama + Gemma3:12B | ?踹????璆剜?撖?| 鞈?摰?撱園 | ?釭銝??|
+| ?? ?脩垢璅∪? | Gemini API | 銝?祆?霅啜?璈? | ?釭?芾 | ?蝬脰楝?蝘?|
 
-### 📝 自訂 Prompt
+### ?? ?芾? Prompt
 
-使用者可自訂會議記錄格式：
-- 指定輸出項目（決議事項、待辦清單、參與者等）
-- 調整摘要長度和風格
-- 新增特殊要求或專業術語
+雿輻??芾??降閮??澆?嚗?
+- ??頛詨?嚗捱霅唬???颲行??柴???嚗?
+- 隤踵???瑕漲?◢??
+- ?啣??寞?閬???璆剛?隤?
 
-### 📊 智能排隊系統
+### ?? ?箄??蝟餌絞
 
-- **FIFO 公平排隊**：先進先出，保證公平性
-- **即時顯示**：前端實時顯示排隊位置和預估時間
-- **併發控制**：可配置同時處理任務數（預設 1）
+- **FIFO ?砍像??**嚗??脣??綽?靽??砍像??
+- **?單?憿舐內**嚗?蝡臬祕?＊蝷箸???蝵桀??摯??
+- **雿萇?批**嚗?蔭????隞餃??賂??身 1嚗?
 
-### 🎛️ 自動裝置偵測
+### ??儭??芸?鋆蔭?菜葫
 
 ```
-優先順序：CUDA GPU → Apple MPS → CPU
-自動降級：若 GPU 記憶體 < 4GB → 切換到 CPU 模式
-逾時保護：若 GPU 超時 30 秒 → 降級到 CPU 模式
+?芸???嚗UDA GPU ??Apple MPS ??CPU
+?芸???嚗 GPU 閮擃?< 4GB ??????CPU 璅∪?
+?暹?靽風嚗 GPU 頞? 30 蝘???????CPU 璅∪?
 ```
 
 ---
 
-## 📦 部署指南
+## ? ?函蔡??
 
-### Docker Compose 部署
+### Docker Compose ?函蔡
 
 ```yaml
 services:
@@ -208,112 +208,112 @@ services:
       - app-network
 ```
 
-### 環境變數配置
+### ?啣?霈?蔭
 
-複製 `.env.example` 為 `.env`，設定以下參數：
+銴ˊ `.env.example` ??`.env`嚗身摰誑銝??賂?
 
-| 變數 | 說明 | 預設值 | 範圍 |
+| 霈 | 隤芣? | ?身??| 蝭? |
 |------|------|--------|------|
-| `MAX_FILE_SIZE_MB` | 單檔大小上限 | 100 | 1-1024 |
-| `ENABLE_BATCH_UPLOAD` | 批次上傳 | false | true/false |
-| `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
-| `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
-| `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
-| `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
-| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b-it-qat | ollama 支援的任何模型 |
+| `MAX_FILE_SIZE_MB` | ?格?憭批?銝? | 100 | 1-1024 |
+| `ENABLE_BATCH_UPLOAD` | ?寞活銝 | false | true/false |
+| `MAX_CONCURRENT_TASKS` | ??????| 1 | 1-10 |
+| `QUEUE_MAX_SIZE` | ??銝? | 50 | 1-1000 |
+| `GEMINI_API_KEY` | Gemini API ? | - | 敹?嚗蝡舀芋撘? |
+| `WHISPER_MODEL` | Whisper 璅∪? | medium | tiny/base/small/medium/large-v3 |
+| `LOCAL_LLM_MODEL` | ?砍 LLM 璅∪? | gemma3:27b-it-qat | ollama ?舀?遙雿芋??|
 
-### 服務管理腳本
+### ??蝞∠??單
 
-#### Windows （批次檔 - 推薦 ✅ v3.3.3+）
+#### Windows 嚗甈⊥? - ?刻 ??v3.3.3+嚗?
 
 ```batch
-# 設定 API Key（雲端模式）
+# 閮剖? API Key嚗蝡舀芋撘?
 scripts\setup-api-key.ps1
 
-# 重啟服務（不影響其他 Docker 服務）
+# ????嚗?敶梢?嗡? Docker ??嚗?
 scripts\restart-service.ps1
 
-# 健康檢查
+# ?亙熒瑼Ｘ
 scripts\health-check.bat
 
-# 部署工具
+# ?函蔡撌亙
 scripts\deploy.bat [build|up|down|restart|status|logs]
 ```
 
-#### Windows （PowerShell - 舊版本）
+#### Windows 嚗owerShell - ???穿?
 
 ```powershell
-# 設定 API Key（雲端模式）
+# 閮剖? API Key嚗蝡舀芋撘?
 .\scripts\setup-api-key.ps1
 
-# 重啟服務（不影響其他 Docker 服務）
+# ????嚗?敶梢?嗡? Docker ??嚗?
 .\scripts\restart-service.ps1
 
-# 健康檢查
+# ?亙熒瑼Ｘ
 .\scripts\health-check.ps1
 
-# 部署工具
+# ?函蔡撌亙
 .\scripts\deploy.ps1 [build|up|down|restart|status|logs]
 ```
 
-> ℹ️ v3.3.3 版本新增 `deploy.bat` 批次檔，解決 Windows PowerShell 執行策略問題。優先使用批次檔。
+> ?對? v3.3.3 ??啣? `deploy.bat` ?寞活瑼?閫?捱 Windows PowerShell ?瑁?蝑????蝙?冽甈⊥???
 
 #### macOS / Linux
 
 ```bash
-# 重啟服務
+# ????
 ./scripts/restart-mac.sh
 
-# 健康檢查
+# ?亙熒瑼Ｘ
 bash ./scripts/health-check.sh
 
-# 部署工具
+# ?函蔡撌亙
 bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 ```
 
 ---
 
-## 📚 API 文件
+## ?? API ?辣
 
-### REST API 端點
+### REST API 蝡舫?
 
-| 端點 | 方法 | 說明 | 身份驗證 |
+| 蝡舫? | ?寞? | 隤芣? | 頨思遢撽? |
 |------|------|------|--------|
-| `/api/health` | GET | 健康檢查 | 無 |
-| `/api/config` | GET | 取得系統配置 | 無 |
-| `/api/upload` | POST | 上傳音訊/視訊檔案 | 無 |
-| `/api/tasks/{task_id}` | GET | 查詢任務狀態 | 無 |
-| `/api/tasks/{task_id}/result` | GET | 下載結果（Markdown） | 無 |
-| `/api/queue/status` | GET | 排隊狀態 | 無 |
-| `/api/storage/stats` | GET | 儲存空間使用統計 | 無 |
-| `/api/storage/cleanup` | POST | 手動觸發檔案清理 | 無 |
+| `/api/health` | GET | ?亙熒瑼Ｘ | ??|
+| `/api/config` | GET | ??蝟餌絞?蔭 | ??|
+| `/api/upload` | POST | 銝?唾?/閬?瑼? | ??|
+| `/api/tasks/{task_id}` | GET | ?亥岷隞餃????| ??|
+| `/api/tasks/{task_id}/result` | GET | 銝?蝯?嚗arkdown嚗?| ??|
+| `/api/queue/status` | GET | ?????| ??|
+| `/api/storage/stats` | GET | ?脣?蝛粹?雿輻蝯梯? | ??|
+| `/api/storage/cleanup` | POST | ??閫貊瑼?皜? | ??|
 
-### WebSocket 即時推送
+### WebSocket ?單??券?
 
 ```
 ws://localhost:9527/ws/tasks/{task_id}
 ```
 
-接收實時進度更新：
+?交撖行??脣漲?湔嚗?
 ```json
 {
   "status": "processing",
   "progress": 45,
   "stage": "summarizing",
-  "message": "正在產製摘要..."
+  "message": "甇??Ｚˊ??..."
 }
 ```
 
-### 上傳檔案範例
+### 銝瑼?蝭?
 
 ```bash
 curl -X POST http://localhost:9527/api/upload \
   -F "file=@meeting.mp3" \
   -F "processing_mode=local" \
-  -F "user_prompt=請列出所有決議事項和負責人"
+  -F "user_prompt=隢??箸??捱霅唬???鞎痊鈭?
 ```
 
-### 回應範例
+### ??蝭?
 
 ```json
 {
@@ -327,175 +327,176 @@ curl -X POST http://localhost:9527/api/upload \
 
 ---
 
-## 🏗️ 專案結構
+## ??儭?撠?蝯?
 
 ```
 convert/
-├── backend/                         # 後端服務（FastAPI）
-│   ├── api/                         # API 路由
-│   │   ├── routes.py               # REST API 端點
-│   │   └── websocket.py            # WebSocket 進度推送
-│   ├── core/                        # 核心模組
-│   │   ├── config.py               # 參數化配置
-│   │   └── logger.py               # 日誌系統
-│   ├── models/                      # 資料模型
-│   │   └── schemas.py              # Pydantic 資料模型
-│   ├── services/                    # 業務邏輯
-│   │   ├── device_detector.py      # 裝置偵測和降級
-│   │   ├── queue_manager.py        # 排隊系統
-│   │   ├── transcription.py        # Whisper 轉錄
-│   │   ├── summarization.py        # LLM 摘要（本地/雲端）
-│   │   ├── file_manager.py         # 檔案管理和安全驗證
-│   │   └── task_processor.py       # 任務處理流程
-│   └── main.py                      # FastAPI 主應用
-│
-├── frontend/                        # 前端介面
-│   ├── css/
-│   │   └── style.css               # Apple 風格 CSS
-│   ├── js/
-│   │   └── app.js                  # 前端邏輯（Vue-like）
-│   └── index.html                  # 主頁面
-│
-├── docker/                          # Docker 配置
-│   ├── Dockerfile                  # 映像定義
-│   └── docker-compose.yml          # 容器編排
-│
-├── scripts/                         # 管理腳本
-│   ├── deploy.ps1                  # 部署工具
-│   ├── setup-api-key.ps1           # API Key 設定
-│   ├── restart-service.ps1         # 安全重啟
-│   └── health-check.ps1            # 健康檢查
-│
-├── data/                            # 資料目錄
-│   ├── uploads/                    # 上傳檔案
-│   ├── outputs/                    # 處理結果
-│   └── cache/                      # 快取檔案
-│
-├── doc/                             # 文件
-│   ├── 規劃和實作計劃.md            # 完整規劃
-│   ├── 系統開發及實作規劃.md        # 詳細開發規劃
-│   ├── 快速部署指南.md              # Windows 快速部署（非技術人員友善）
-│   ├── 快速入門指南.md              # 快速入門
-│   ├── DESIGN.md                   # 架構設計
-│   └── Docker部署經驗指南.md       # Docker 經驗
-│
-└── requirements.txt                 # Python 依賴
+??? backend/                         # 敺垢??嚗astAPI嚗?
+??  ??? api/                         # API 頝舐
+??  ??  ??? routes.py               # REST API 蝡舫?
+??  ??  ??? websocket.py            # WebSocket ?脣漲?券?
+??  ??? core/                        # ?詨?璅∠?
+??  ??  ??? config.py               # ???蝵?
+??  ??  ??? logger.py               # ?亥?蝟餌絞
+??  ??? models/                      # 鞈?璅∪?
+??  ??  ??? schemas.py              # Pydantic 鞈?璅∪?
+??  ??? services/                    # 璆剖??摩
+??  ??  ??? device_detector.py      # 鋆蔭?菜葫??蝝?
+??  ??  ??? queue_manager.py        # ??蝟餌絞
+??  ??  ??? transcription.py        # Whisper 頧?
+??  ??  ??? summarization.py        # LLM ??嚗???脩垢嚗?
+??  ??  ??? file_manager.py         # 瑼?蝞∠????券?霅?
+??  ??  ??? task_processor.py       # 隞餃???瘚?
+??  ??? main.py                      # FastAPI 銝餅???
+??
+??? frontend/                        # ?垢隞
+??  ??? css/
+??  ??  ??? style.css               # Apple 憸冽 CSS
+??  ??? js/
+??  ??  ??? app.js                  # ?垢?摩嚗ue-like嚗?
+??  ??? index.html                  # 銝駁???
+??
+??? docker/                          # Docker ?蔭
+??  ??? Dockerfile                  # ??摰儔
+??  ??? docker-compose.yml          # 摰孵蝺冽?
+??
+??? scripts/                         # 蝞∠??單
+??  ??? deploy.ps1                  # ?函蔡撌亙
+??  ??? setup-api-key.ps1           # API Key 閮剖?
+??  ??? restart-service.ps1         # 摰??
+??  ??? health-check.ps1            # ?亙熒瑼Ｘ
+??
+??? data/                            # 鞈??桅?
+??  ??? uploads/                    # 銝瑼?
+??  ??? outputs/                    # ??蝯?
+??  ??? cache/                      # 敹怠?瑼?
+??
+??? doc/                             # ?辣
+??  ??? 閬??祕雿???md            # 摰閬?
+??  ??? 蝟餌絞??祕雿???md        # 閰喟敦?閬?
+??  ??? 敹恍蝵脫???md              # Windows 敹恍蝵莎???銵犖?∪???
+??  ??? 敹恍???.md              # 敹恍?
+??  ??? DESIGN.md                   # ?嗆?閮剛?
+??  ??? Docker?函蔡蝬???.md       # Docker 蝬?
+??
+??? requirements.txt                 # Python 靘陷
 ```
 
 ---
 
-## 🔧 故障排除
+## ? ???
 
-### 常見問題
+### 撣貉???
 
-**Q: 服務無法啟動？**
+**Q: ???⊥???嚗?*
 
 ```powershell
-# 查看詳細日誌
+# ?亦?閰喟敦?亥?
 docker compose logs -f
 
-# 執行健康檢查
+# ?瑁??亙熒瑼Ｘ
 .\scripts\health-check.ps1
 
-# 確認 Docker Desktop 運行
+# 蝣箄? Docker Desktop ??
 docker ps
 ```
 
-**Q: GPU 沒有被使用？**
+**Q: GPU 瘝?鋡思蝙?剁?**
 
-- 確認 NVIDIA 驅動版本 >= 520
-- 確認 Docker Desktop 設定中啟用 GPU 支援（Settings → Resources → GPU）
-- 查看日誌確認 CUDA 初始化
-- 系統會自動降級到 CPU 模式，檔案轉錄仍可正常運行
+- 蝣箄? NVIDIA 撽?? >= 520
+- 蝣箄? Docker Desktop 閮剖?銝剖???GPU ?舀嚗ettings ??Resources ??GPU嚗?
+- ?亦??亥?蝣箄? CUDA ????
+- 蝟餌絞???蝝 CPU 璅∪?嚗?獢????舀迤撣賊?銵?
 
-**Q: 雲端模式不可用？**
+**Q: ?脩垢璅∪?銝?剁?**
 
 ```powershell
-# 設定 API Key
+# 閮剖? API Key
 .\scripts\setup-api-key.ps1
 
-# 驗證配置
+# 撽??蔭
 curl http://localhost:9527/api/config | findstr gemini_available
 ```
 
-**Q: 處理速度很慢？**
+**Q: ???漲敺嚗?*
 
-- 建議使用 GPU 模式（確認 NVIDIA 驅動已安裝）
-- 嘗試減少 `MAX_CONCURRENT_TASKS` 以節省記憶體
-- 考慮使用較小的 Whisper 模型（修改環境變數 `WHISPER_MODEL=base`）
-- 檢查磁碟 I/O 是否為瓶頸
+- 撱箄降雿輻 GPU 璅∪?嚗Ⅱ隤?NVIDIA 撽?撌脣?鋆?
+- ?岫皜? `MAX_CONCURRENT_TASKS` 隞亦????園?
+- ?雿輻頛???Whisper 璅∪?嚗耨?寧憓???`WHISPER_MODEL=base`嚗?
+- 瑼Ｘ蝤? I/O ?臬?箇??
 
-**Q: 檔案上傳失敗「檔案名稱包含無效字符」？**
+**Q: 瑼?銝憭望???獢?蝔勗??怎??蝚艾?**
 
-檔案名稱不能包含 `..`、`/` 或 `\` 字符。重新命名檔案後重試。
-
----
-
-## 🔐 安全性考量
-
-### 已實施的安全措施
-
-- ✅ API Key 使用 Pydantic `SecretStr` 保護，避免日誌暴露
-- ✅ 檔案上傳路徑遍歷防護，防止目錄脫逃攻擊
-- ✅ XSS 防衛，前端使用 `textContent` 而非 `innerHTML`
-- ✅ 檔案大小驗證，預設 100MB 上限（可配置）
-- ✅ 副檔名白名單驗證
-- ✅ SHA256 檔案 hash 確保完整性
-
-### 建議的部署安全做法
-
-1. **生產環境**：設定 `DEBUG=false`
-2. **API Key**：使用環境變數而非硬碼
-3. **網路**：在防火牆後運行，限制 API 訪問
-4. **監控**：啟用容器日誌監控和告警
-5. **備份**：定期備份 `/data` 目錄
+瑼??迂銝? `..`?/` ??`\` 摮泵???啣??獢??岫??
 
 ---
 
-## 📊 效能指標
+## ?? 摰?扯?
 
-### 典型效能表現（Windows 11 RTX 4090）
+### 撌脣祕?賜?摰?芣
 
-| 音訊長度 | GPU 模式 | CPU 模式 | 品質 |
+- ??API Key 雿輻 Pydantic `SecretStr` 靽風嚗?隤??
+- ??瑼?銝頝臬??風?脰風嚗甇Ｙ????
+- ??XSS ?脰?嚗?蝡臭蝙??`textContent` ?? `innerHTML`
+- ??瑼?憭批?撽?嚗?閮?100MB 銝?嚗?蔭嚗?
+- ???舀???撽?
+- ??SHA256 瑼? hash 蝣箔?摰??
+
+### 撱箄降?蝵脣??典?瘜?
+
+1. **??啣?**嚗身摰?`DEBUG=false`
+2. **API Key**嚗蝙?函憓??貉?蝖祉Ⅳ
+3. **蝬脰楝**嚗?脩????嚗???API 閮芸?
+4. **??**嚗??典捆?冽隤?批??郎
+5. **?遢**嚗???隞?`/data` ?桅?
+
+---
+
+## ?? ???
+
+### ?詨??銵函嚗indows 11 RTX 4090嚗?
+
+| ?唾??瑕漲 | GPU 璅∪? | CPU 璅∪? | ?釭 |
 |---------|---------|---------|------|
-| 30 分鐘 | ~3 分鐘 | ~15 分鐘 | 高 |
-| 60 分鐘 | ~6 分鐘 | ~30 分鐘 | 高 |
-| 120 分鐘 | ~12 分鐘 | ~60 分鐘 | 高 |
+| 30 ?? | ~3 ?? | ~15 ?? | 擃?|
+| 60 ?? | ~6 ?? | ~30 ?? | 擃?|
+| 120 ?? | ~12 ?? | ~60 ?? | 擃?|
 
-*實際時間因檔案品質、背景雜音、模型配置而異*
-
----
-
-## 📄 授權條款
-
-本專案採用 MIT 授權條款。詳見 [LICENSE](LICENSE) 檔案。
+*撖阡?????獢?鞈芥??舫??喋芋??蝵株*
 
 ---
 
-## 🙏 致謝
+## ?? ??璇狡
 
-感謝以下開源專案的支援：
-
-- [OpenAI Whisper](https://github.com/openai/whisper) - 語音轉文字引擎
-- [Ollama](https://ollama.ai/) - 本地 LLM 推理框架
-- [FastAPI](https://fastapi.tiangolo.com/) - 現代化 Python Web 框架
-- [Google Gemini](https://ai.google.dev/) - 雲端 AI 模型
-- [Docker](https://www.docker.com/) - 容器化部署平台
+?砍?獢??MIT ??璇狡?底閬?[LICENSE](LICENSE) 瑼???
 
 ---
 
-## 📞 聯絡和反饋
+## ?? ?渲?
 
-有任何問題或建議，請提出 Issue 或 Pull Request。
+??隞乩???撠???湛?
+
+- [OpenAI Whisper](https://github.com/openai/whisper) - 隤頧?摮???
+- [Ollama](https://ollama.ai/) - ?砍 LLM ?函?獢
+- [FastAPI](https://fastapi.tiangolo.com/) - ?曆誨??Python Web 獢
+- [Google Gemini](https://ai.google.dev/) - ?脩垢 AI 璅∪?
+- [Docker](https://www.docker.com/) - 摰孵?蝵脣像??
+
+---
+
+## ?? ?舐窗??擖?
+
+?遙雿?憿?撱箄降嚗?? Issue ??Pull Request??
 
 ---
 
 <div align="center">
 
-**Made with ❤️ for better meetings**
+**Made with ?歹? for better meetings**
 
-⭐ 如果本專案對您有幫助，請給予 Star 支持
+潃?憒??砍?獢??冽?撟怠嚗?蝯虫? Star ?舀?
 
-[⬆ 回到頂部](#meetingscribe-v237)
+[漎???](#meetingscribe-v237)
 
 </div>
+
