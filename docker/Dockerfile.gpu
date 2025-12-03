@@ -1,10 +1,14 @@
 # ============================================
 # MeetingScribe - 會議轉錄工具 Docker 映像
-# v3.4 - GPU CUDA 加速版本
+# v3.5 - GPU CUDA 加速版本 (修正 cuDNN 版本問題)
 # ============================================
-# 根據 faster-whisper 官方文檔，GPU 執行需要：
-# - cuBLAS for CUDA 12
-# - cuDNN 9 for CUDA 12
+# 關鍵版本對應關係：
+# - ctranslate2 < 4.5.0 需要 cuDNN 8
+# - ctranslate2 >= 4.5.0 需要 cuDNN 9 (本版本使用)
+# 
+# 參考：https://github.com/OpenNMT/CTranslate2/blob/master/CHANGELOG.md
+# "v4.5.0: The Ctranslate2 Python package now supports CUDNN 9"
+#
 # 使用官方 NVIDIA CUDA 映像作為基礎
 
 # ========== 建置階段 ==========

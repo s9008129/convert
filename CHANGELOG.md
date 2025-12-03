@@ -5,6 +5,83 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.3.6] - 2025-12-03
+
+### 重大修復 🔥🔥🔥
+
+- **徹底修復 GPU 加速問題 - cuDNN 版本不相容**
+
+  #### 問題現象
+  - 即使使用 NVIDIA CUDA 映像，GPU 使用率仍然只有 5%
+  - 錯誤訊息：`Could not load library libcudnn_ops_infer.so.8`
+  - GPU 記憶體只使用 1.0-1.1 GB（應使用 ~3 GB）
+
+  #### 根本原因（第一性原理分析）
+  
+  **關鍵發現**：ctranslate2 版本與 cuDNN 版本不相容
+  
+  | ctranslate2 版本 | 需要 cuDNN 版本 | 說明 |
+  |-----------------|----------------|------|
+  | < 4.5.0 | cuDNN 8 | 需要 libcudnn_ops_infer.so.**8** |
+  | >= 4.5.0 | cuDNN 9 | 支援 libcudnn.so.**9** |
+  
+  根據 [CTranslate2 CHANGELOG v4.5.0](https://github.com/OpenNMT/CTranslate2/blob/master/CHANGELOG.md)：
+  > "The Ctranslate2 Python package now supports CUDNN 9 and is no longer compatible with CUDNN 8."
+  
+  **原配置問題**：
+  - Dockerfile.gpu 使用 `nvidia/cuda:12.3.2-cudnn9-*` (cuDNN 9)
+  - requirements.txt 指定 `ctranslate2==4.0.0` (需要 cuDNN 8)
+  - → 版本不相容導致 GPU 加速失敗
+
+  #### 修復方案
+  
+  **升級 ctranslate2 到 4.5.0+** 以支援 cuDNN 9：
+  ```
+  # requirements.txt
+  faster-whisper==1.1.0
+  ctranslate2>=4.5.0  # 支援 cuDNN 9
+  ```
+  
+  **新增必要依賴**：
+  ```
+  requests>=2.31.0  # faster-whisper 1.1.0 需要
+  ```
+
+  #### 驗證結果（令人信服的證據）
+  
+  ```
+  ============================================================
+          GPU 轉錄完整驗證測試
+  ============================================================
+  
+  [1] ctranslate2 版本與 CUDA 狀態
+      ctranslate2 版本: 4.6.1  ← 升級成功
+      CUDA 支援: True
+      CUDA 設備數量: 1
+  
+  [2] Whisper 模型載入測試
+      載入時間: 1.21s
+      設備: cuda
+  
+  [3] GPU 轉錄測試 (30 秒音訊)
+      轉錄耗時: 0.32s
+      即時倍率: 93.7x  ← 比實時快 93 倍！
+  
+  [4] GPU 記憶體使用
+      轉錄期間: 2.9 GB / 24.0 GB  ← 正確載入到 GPU
+      GPU 使用率: 35-41%  ← GPU 實際運算中
+  
+  ✅ GPU 加速驗證成功!
+  ============================================================
+  ```
+
+### 變更內容
+
+- **requirements.txt**: 升級 ctranslate2 到 4.5.0+ 並新增 requests
+- **Dockerfile.gpu**: 更新版本號至 v3.5，新增版本相容說明
+
+---
+
 ## [3.3.5] - 2025-12-03
 
 ### 重大修復 🔥🔥🔥
