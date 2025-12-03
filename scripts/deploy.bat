@@ -48,8 +48,8 @@ if errorlevel 1 (
     set "GPU_AVAILABLE=0"
 ) else (
     echo [OK] NVIDIA GPU detected
-    for /f "tokens=*" %%a in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
-        echo [OK] GPU: %%a
+    for /f "tokens=*" %%a in ('nvidia-smi -L 2^>nul') do (
+        echo [OK] %%a
     )
     set "GPU_AVAILABLE=1"
 )
@@ -83,7 +83,13 @@ if errorlevel 1 (
     echo [ERROR] Cannot change to Docker directory: !DOCKER_DIR!
     exit /b 1
 )
-docker compose --progress=plain build
+REM Use GPU compose file if GPU is available
+if "!GPU_AVAILABLE!"=="1" (
+    echo [INFO] Using GPU-enabled configuration
+    docker compose -f docker-compose-windows-gpu.yml --progress=plain build
+) else (
+    docker compose --progress=plain build
+)
 if errorlevel 1 (
     echo [ERROR] Docker image build failed
     exit /b 1
@@ -101,7 +107,13 @@ if errorlevel 1 (
     echo [ERROR] Cannot change to Docker directory
     exit /b 1
 )
-docker compose up -d
+REM Use GPU compose file if GPU is available
+if "!GPU_AVAILABLE!"=="1" (
+    echo [INFO] Starting with GPU support...
+    docker compose -f docker-compose-windows-gpu.yml up -d
+) else (
+    docker compose up -d
+)
 if errorlevel 1 (
     echo [ERROR] Failed to start services
     exit /b 1
@@ -143,7 +155,11 @@ REM ==============================================
 :cmd_down
 echo [INFO] Stopping services...
 cd /d "!DOCKER_DIR!"
-docker compose down
+if "!GPU_AVAILABLE!"=="1" (
+    docker compose -f docker-compose-windows-gpu.yml down
+) else (
+    docker compose down
+)
 echo [OK] Services stopped
 exit /b 0
 
@@ -162,7 +178,11 @@ REM ==============================================
 :cmd_status
 echo [INFO] Service status:
 cd /d "!DOCKER_DIR!"
-docker compose ps
+if "!GPU_AVAILABLE!"=="1" (
+    docker compose -f docker-compose-windows-gpu.yml ps
+) else (
+    docker compose ps
+)
 exit /b %ERRORLEVEL%
 
 REM ==============================================
@@ -170,7 +190,11 @@ REM LOGS COMMAND
 REM ==============================================
 :cmd_logs
 cd /d "!DOCKER_DIR!"
-docker compose logs -f --tail 100
+if "!GPU_AVAILABLE!"=="1" (
+    docker compose -f docker-compose-windows-gpu.yml logs -f --tail 100
+) else (
+    docker compose logs -f --tail 100
+)
 exit /b %ERRORLEVEL%
 
 REM ==============================================
