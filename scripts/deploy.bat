@@ -1,6 +1,7 @@
 @echo off
 REM ============================================
 REM MeetingScribe - Windows Deployment Tool
+REM v3.3.4 - 新增 GPU 自動偵測
 REM ============================================
 REM Pure batch script - no PowerShell execution policy restrictions
 
@@ -34,6 +35,24 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [OK] Docker is running
+
+REM ==============================================
+REM CHECK NVIDIA GPU SUPPORT (v3.3.4)
+REM ==============================================
+echo.
+echo [INFO] Checking NVIDIA GPU support...
+nvidia-smi >nul 2>&1
+if errorlevel 1 (
+    echo [WARN] NVIDIA GPU not detected or driver not installed
+    echo [WARN] Service will run in CPU mode
+    set "GPU_AVAILABLE=0"
+) else (
+    echo [OK] NVIDIA GPU detected
+    for /f "tokens=*" %%a in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
+        echo [OK] GPU: %%a
+    )
+    set "GPU_AVAILABLE=1"
+)
 echo.
 
 REM ==============================================
@@ -159,18 +178,23 @@ REM HELP COMMAND
 REM ==============================================
 :cmd_help
 echo.
-echo MeetingScribe Docker Deployment Tool
+echo MeetingScribe Docker Deployment Tool v3.3.4
 echo.
 echo Usage: deploy.bat [command]
 echo.
 echo Available Commands:
 echo   build   - Build Docker image (use on first deployment)
-echo   up      - Start services
+echo   up      - Start services (with GPU support if available)
 echo   down    - Stop services
 echo   restart - Restart services
 echo   status  - View service status
 echo   logs    - View service logs
 echo   help    - Show this help message
+echo.
+echo GPU Support:
+echo   - Automatically detects NVIDIA GPU
+echo   - Falls back to CPU mode if GPU not available
+echo   - Requires Docker Desktop with WSL2 backend
 echo.
 echo Quick Start:
 echo   1. deploy.bat build    ^# First time only

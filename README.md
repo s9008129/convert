@@ -1,10 +1,11 @@
-# MeetingScribe v3.3.3
+# MeetingScribe v3.3.4
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.3-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.4-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
+![NVIDIA GPU](https://img.shields.io/badge/GPU-NVIDIA-green?style=flat-square&logo=nvidia)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
@@ -18,6 +19,14 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.3.4 修復：Docker GPU 支援問題
+
+- ✅ **修復 GPU 未偵測問題**：啟用 docker-compose.yml 中的 NVIDIA GPU 配置
+- ✅ **自動 GPU 偵測**：deploy.bat 啟動時自動檢測並顯示 GPU 型號
+- ✅ **完整 GPU 環境變數**：添加 `NVIDIA_VISIBLE_DEVICES` 和 `NVIDIA_DRIVER_CAPABILITIES`
+- ✅ **資源限制優化**：設定 16GB 記憶體、8 CPU 核心限制
+- ✅ **自動降級**：無 GPU 時自動使用 CPU 模式（Whisper int8 量化）
 
 ### 🆕 v3.3.3 解決 Windows PowerShell 執行政策問題
 

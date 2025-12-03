@@ -5,6 +5,57 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.3.4] - 2025-12-03
+
+### 重大修復 🔥
+
+- **修復 Docker GPU 支援問題**
+  - 問題分析（第一性原理）：
+    1. `docker-compose.yml` 中的 GPU 配置區塊被完全註解掉
+    2. 缺少 `NVIDIA_VISIBLE_DEVICES` 和 `NVIDIA_DRIVER_CAPABILITIES` 環境變數
+    3. 容器啟動時沒有請求 GPU 資源，導致 Whisper 只能使用 CPU 模式
+  - 根本原因：
+    - `deploy.resources.reservations.devices` 區塊被註解
+    - 這是 Docker Compose V2 啟用 GPU 的必要配置
+  - 修復內容：
+    1. 啟用 `docker-compose.yml` 中的 GPU 配置（預設開啟）
+    2. 添加 NVIDIA GPU 環境變數：
+       - `NVIDIA_VISIBLE_DEVICES=all`
+       - `NVIDIA_DRIVER_CAPABILITIES=compute,utility`
+    3. 配置 `deploy.resources.reservations.devices` 以請求 GPU
+    4. 設定資源限制：16GB 記憶體、8 CPU 核心
+  - 修改文件：
+    - `docker/docker-compose.yml`（啟用 GPU 配置）
+    - `scripts/deploy.bat`（新增 GPU 偵測功能）
+
+### 功能改進 ✨
+
+- **deploy.bat 新增 GPU 偵測功能**
+  - 啟動時自動檢測 NVIDIA GPU
+  - 顯示 GPU 型號（如 RTX 4090）
+  - 無 GPU 時顯示警告並提示將使用 CPU 模式
+  - 改進 help 訊息，說明 GPU 支援要求
+
+### 部署需求 📋
+
+- **Windows GPU 支援先決條件**：
+  1. Docker Desktop 需啟用 WSL2 後端
+  2. 安裝最新版 NVIDIA 驅動程式
+  3. Docker Desktop Settings → Resources → GPU → 勾選 Enable GPU
+  
+- **驗證 GPU 支援**：
+  ```bash
+  docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+  ```
+
+### 文件更新 📝
+
+- 更新 `docker/docker-compose.yml` 版本標籤至 v3.3.4
+- 添加完整的 GPU 配置說明註解
+- 添加 Windows/Linux GPU 支援先決條件說明
+
+---
+
 ## [3.3.3] - 2025-12-03
 
 ### 功能改進 ✨
