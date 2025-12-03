@@ -1,6 +1,6 @@
 # 🎯 MeetingScribe Windows 部署完整指南
 
-**版本**: v2.3.6  
+**版本**: v3.3.3 ✅ 新增批次檔支援  
 **更新日期**: 2025年12月  
 **適用環境**: Windows 11/10 + RTX 4090 + Docker Desktop
 
@@ -11,8 +11,8 @@
 1. [先決條件檢查清單](#先決條件檢查清單)
 2. [安裝步驟](#安裝步驟)
 3. [配置系統](#配置系統)
-4. [啟動服務](#啟動服務)
-5. [常見問題排查](#常見問題排查)
+4. [啟動服務](#啟動服務) - **✨ v3.3.3 新增批次檔支援**
+5. [常見問題排查](#常見問題排查) - **✨ 解決 PowerShell 執行策略問題**
 6. [使用方法](#使用方法)
 7. [性能優化](#性能優化)
 8. [系統管理](#系統管理)
@@ -233,10 +233,18 @@ WHISPER_DEVICE=auto
 
 Docker 映像是應用的「藍圖」。首次需要建構映像（耗時 10-30 分鐘）。
 
-**執行命令：**
+#### 方案 A：使用批次檔（推薦 ✅ v3.3.3+）
+
+```batch
+cd scripts
+deploy.bat build
+```
+
+#### 方案 B：使用 PowerShell（如遇到執行策略問題，改用方案 A）
 
 ```powershell
-.\scripts\deploy.ps1 build
+cd scripts
+.\deploy.ps1 build
 ```
 
 **預期輸出：**
@@ -252,14 +260,31 @@ Docker 映像是應用的「藍圖」。首次需要建構映像（耗時 10-30 
 > - 安裝 Python 依賴（約 1-2GB）
 > - 下載 Whisper 語音轉錄模型（約 1.5GB）
 
+> ⚠️ **PowerShell 執行策略問題？**
+> 
+> 若看到錯誤：`Cannot be loaded because running scripts is disabled on this system`
+> 
+> 解決方案：使用 `deploy.bat` 批次檔（v3.3.3 新增）
+> - 批次檔不受 PowerShell 執行策略限制
+> - 完全相同的功能和效果
+> - 詳見：[Windows 批次檔部署指南](./Windows批次檔部署指南.md)
+
 **若建構失敗？** 見 [常見問題排查](#常見問題排查)
 
 ### 步驟 5️⃣：啟動服務
 
 建構完成後，啟動應用：
 
+#### 方案 A：使用批次檔（推薦 ✅ v3.3.3+）
+
+```batch
+deploy.bat up
+```
+
+#### 方案 B：使用 PowerShell
+
 ```powershell
-.\scripts\deploy.ps1 up
+.\deploy.ps1 up
 ```
 
 **預期輸出：**
@@ -304,6 +329,42 @@ Docker 映像是應用的「藍圖」。首次需要建構映像（耗時 10-30 
 ---
 
 ## 常見問題排查
+
+### 問題 0️⃣：PowerShell 執行策略錯誤（v3.3.3 已解決 ✅）
+
+**症狀：**
+```
+不能載入檔案 C:\...\deploy.ps1，因為這個系統上已停用指令碼執行。
+Cannot be loaded because running scripts is disabled on this system.
+```
+
+**原因：**
+- Windows 系統 PowerShell 執行策略設定為 `Restricted`
+- 此設定由系統管理員或 GPO（Group Policy Object）強制設定
+- `-ExecutionPolicy Bypass` 參數無法覆蓋
+
+**✅ 解決方案（v3.3.3）：改用批次檔**
+
+```batch
+# 改用批次檔（不受 PowerShell 策略限制）
+cd scripts
+deploy.bat build
+deploy.bat up
+deploy.bat down
+deploy.bat restart
+deploy.bat status
+deploy.bat logs
+```
+
+**為什麼批次檔可以？**
+- 批次檔由 `cmd.exe`（Windows 命令解釋器）執行
+- 完全獨立於 PowerShell 政策系統
+- 無需管理員權限或政策修改
+- 功能完全相同
+
+**詳細信息：** 見 [Windows 批次檔部署指南](./Windows批次檔部署指南.md)
+
+---
 
 ### 問題 1️⃣：Docker 顯示「未啟動」或「未連接」
 

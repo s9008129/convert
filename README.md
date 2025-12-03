@@ -1,15 +1,15 @@
-# MeetingScribe v3.3.1
+# MeetingScribe v3.3.3
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.1-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.3-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md) • [英文修復文件](ENGLISH_FIX_VERIFICATION.md)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [批次檔部署指南](doc/Windows批次檔部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md)
 
 </div>
 
@@ -18,6 +18,13 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.3.3 解決 Windows PowerShell 執行政策問題
+
+- ✅ **完全規避 PowerShell 執行政策限制**：用純批次檔替代 PowerShell 腳本
+- ✅ **無需修改系統設定**：無需管理員權限，無需更改執行政策
+- ✅ **企業環境相容**：即使在受 GPO 限制的企業環境也能正常運作
+- ✅ **完整部署指南**：新增 [Windows 批次檔部署指南](doc/Windows批次檔部署指南.md)
 
 ### 🆕 v3.3.1 修復：地端模式結果預覽一致性
 
@@ -100,13 +107,37 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 
 ### 三步驟部署
 
-```powershell
+#### Windows 系統（推薦 ✅ v3.3.3+）
+
+```batch
 # 1. 建構映像（首次約 10-30 分鐘）
 cd scripts
-.\deploy.ps1 build
+deploy.bat build
 
 # 2. 啟動服務
-.\deploy.ps1 up
+deploy.bat up
+
+# 3. 開啟瀏覽器
+# 訪問 http://localhost:9527
+```
+
+> ⚠️ **Windows PowerShell 執行策略問題**？
+> 
+> 如果遇到 "Cannot be loaded because running scripts is disabled on this system" 錯誤，請使用 `deploy.bat` 批次檔替代 `deploy.ps1`。
+> 
+> **原因**：系統 PowerShell 執行策略設定為 `Restricted`，無法執行本地腳本。`deploy.bat` 不受 PowerShell 策略限制，可直接執行。
+> 
+> 詳見：[Windows 批次檔部署指南](./doc/Windows批次檔部署指南.md)
+
+#### 其他系統（macOS / Linux）
+
+```bash
+# 1. 建構映像（首次約 10-30 分鐘）
+cd scripts
+./deploy.ps1 build
+
+# 2. 啟動服務
+./deploy.ps1 up
 
 # 3. 開啟瀏覽器
 # 訪問 http://localhost:9527
@@ -182,7 +213,25 @@ services:
 | `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
 | `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b-it-qat | ollama 支援的任何模型 |
 
-### 服務管理腳本（Windows PowerShell）
+### 服務管理腳本
+
+#### Windows （批次檔 - 推薦 ✅ v3.3.3+）
+
+```batch
+# 設定 API Key（雲端模式）
+scripts\setup-api-key.ps1
+
+# 重啟服務（不影響其他 Docker 服務）
+scripts\restart-service.ps1
+
+# 健康檢查
+scripts\health-check.bat
+
+# 部署工具
+scripts\deploy.bat [build|up|down|restart|status|logs]
+```
+
+#### Windows （PowerShell - 舊版本）
 
 ```powershell
 # 設定 API Key（雲端模式）
@@ -196,6 +245,21 @@ services:
 
 # 部署工具
 .\scripts\deploy.ps1 [build|up|down|restart|status|logs]
+```
+
+> ℹ️ v3.3.3 版本新增 `deploy.bat` 批次檔，解決 Windows PowerShell 執行策略問題。優先使用批次檔。
+
+#### macOS / Linux
+
+```bash
+# 重啟服務
+./scripts/restart-mac.sh
+
+# 健康檢查
+bash ./scripts/health-check.sh
+
+# 部署工具
+bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 ```
 
 ---

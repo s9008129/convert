@@ -1,26 +1,33 @@
 # 🚀 MeetingScribe 快速開始（Windows 10 分鐘安裝）
 
+**版本**: v3.3.3 ✅ 新增批次檔支援  
+**更新日期**: 2025年12月
+
 ## ⚡ 超快速安裝（已有環境）
 
 如果您已有 Docker 和 NVIDIA 驅動，直接執行：
 
-```powershell
+```batch
 cd C:\path\to\convert
-.\scripts\deploy.ps1 build
-.\scripts\deploy.ps1 up
+cd scripts
+deploy.bat build
+deploy.bat up
 ```
 
 然後打開 http://localhost:9527 ✅
+
+> ✨ **v3.3.3 新功能**：使用 `deploy.bat` 替代 `deploy.ps1`  
+> Windows PowerShell 執行策略問題已解決！無需管理員權限或政策修改。
 
 ---
 
 ## 📋 前置檢查（1 分鐘）
 
-打開 PowerShell，執行以下命令逐一檢查：
+打開 PowerShell 或命令提示字元，執行以下命令逐一檢查：
 
 ### 1. 檢查 Docker
 
-```powershell
+```batch
 docker --version
 docker run hello-world
 ```
@@ -31,7 +38,7 @@ docker run hello-world
 
 ### 2. 檢查 NVIDIA 驅動
 
-```powershell
+```batch
 nvidia-smi
 ```
 
@@ -51,7 +58,7 @@ nvidia-smi
 
 ### 步驟 1：下載專案
 
-```powershell
+```batch
 # 選擇位置（例如 C:\Users\YourName\Documents）
 cd C:\Users\YourName\Documents
 
@@ -67,9 +74,9 @@ cd convert
 
 ### 步驟 2：配置環境（可選）
 
-```powershell
+```batch
 # 複製環境變數範本
-Copy-Item .env.example .env
+copy .env.example .env
 
 # 編輯 .env（用記事本或 VS Code）
 notepad .env
@@ -85,12 +92,15 @@ DEFAULT_MODE=local
 
 ### 步驟 3：啟動服務
 
-```powershell
+```batch
+# 進入 scripts 目錄
+cd scripts
+
 # 建構（首次，耗時 10-30 分鐘）
-.\scripts\deploy.ps1 build
+deploy.bat build
 
 # 啟動
-.\scripts\deploy.ps1 up
+deploy.bat up
 ```
 
 ✅ **看到這個訊息表示成功：**
@@ -108,10 +118,10 @@ DEFAULT_MODE=local
 
 | 用途 | 命令 |
 |------|------|
-| **停止服務** | `.\scripts\deploy.ps1 down` |
-| **重啟服務** | `.\scripts\deploy.ps1 restart` |
-| **查看狀態** | `.\scripts\health-check.ps1` |
-| **查看日誌** | `.\scripts\deploy.ps1 logs` |
+| **停止服務** | `deploy.bat down` |
+| **重啟服務** | `deploy.bat restart` |
+| **查看狀態** | `health-check.bat` |
+| **查看日誌** | `deploy.bat logs` |
 
 ---
 
@@ -119,9 +129,10 @@ DEFAULT_MODE=local
 
 | 問題 | 解決 |
 |------|------|
+| **PowerShell 執行策略錯誤** | ✅ 使用 `deploy.bat` 替代 `deploy.ps1`（v3.3.3 已解決） |
 | Docker 未啟動 | 開啟 Docker Desktop |
 | GPU 未被使用 | 確認 Docker GPU 已啟用，見上文 |
-| 服務無法連接 | `.\scripts\deploy.ps1 restart` |
+| 服務無法連接 | `deploy.bat restart` |
 | 檔案無法上傳 | 檢查檔案大小和格式（MP3/WAV/M4A） |
 
 更多問題見 [完整指南](./Windows部署完整指南.md)
@@ -132,8 +143,9 @@ DEFAULT_MODE=local
 
 1. ✅ 上傳音訊檔案測試
 2. 📖 閱讀 [完整部署指南](./Windows部署完整指南.md)
-3. 📊 查看 [API 文件](./README.md)
+3. 📊 查看 [API 文件](../README.md)
 4. 🚀 進階配置和最佳實踐
+5. 📚 了解 [Windows 批次檔部署指南](./Windows批次檔部署指南.md)（用於其他專案）
 
 ---
 

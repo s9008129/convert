@@ -1,6 +1,11 @@
 # ============================================
 # MeetingScribe - Windows 部署腳本
 # ============================================
+# 執行政策說明：
+# - 此腳本需要透過 deploy.bat 執行，或使用以下命令：
+#   powershell -ExecutionPolicy Bypass -File .\deploy.ps1 build
+# - 不建議更改系統全域執行政策（安全風險）
+# ============================================
 
 param(
     [Parameter(Position=0)]
@@ -18,12 +23,12 @@ function Write-Err { Write-Host "[ERROR] $args" -ForegroundColor Red }
 
 # 檢查 Docker
 function Test-Docker {
+    Write-Host "正在檢查 Docker..." -ForegroundColor Yellow
+    
     try {
-        docker info 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err "Docker 未啟動，請先啟動 Docker Desktop"
-            exit 1
-        }
+        $output = docker info 2>&1
+        Write-Host "Docker info 執行成功" -ForegroundColor Gray
+        return $true
     } catch {
         Write-Err "未安裝 Docker 或 Docker 未啟動"
         exit 1
@@ -32,17 +37,19 @@ function Test-Docker {
 
 # 建構映像
 function Invoke-Build {
-    Set-Location $DockerDir
-    Write-Info "建構 Docker 映像..."
+    Write-Info "開始建構 Docker 映像..."
     Write-Info "這可能需要 10-30 分鐘（首次建構需下載模型）"
     Write-Host ""
+    
+    Set-Location $DockerDir
+    Write-Host "執行位置: $(Get-Location)" -ForegroundColor Gray
     
     docker compose build --progress=plain
     
     if ($LASTEXITCODE -eq 0) {
         Write-Success "映像建構完成"
     } else {
-        Write-Err "映像建構失敗"
+        Write-Err "映像建構失敗，錯誤代碼: $LASTEXITCODE"
         exit 1
     }
 }
@@ -66,11 +73,11 @@ function Invoke-Up {
             Write-Host ""
             Write-Success "服務已啟動！"
             Write-Host ""
-            Write-Host "═══════════════════════════════════════════" -ForegroundColor Green
-            Write-Host "  🎉 MeetingScribe 已就緒！" -ForegroundColor Green
-            Write-Host "═══════════════════════════════════════════" -ForegroundColor Green
-            Write-Host "  📍 網址: http://localhost:9527" -ForegroundColor Cyan
-            Write-Host "═══════════════════════════════════════════" -ForegroundColor Green
+            Write-Host "=====================================" -ForegroundColor Green
+            Write-Host "  MeetingScribe 已就緒！" -ForegroundColor Green
+            Write-Host "=====================================" -ForegroundColor Green
+            Write-Host "  網址: http://localhost:9527" -ForegroundColor Cyan
+            Write-Host "=====================================" -ForegroundColor Green
             return
         }
         
@@ -102,6 +109,9 @@ function Invoke-Logs {
 }
 
 # 主程式
+Write-Host "MeetingScribe 部署工具啟動" -ForegroundColor Green
+Write-Host "命令: $Command" -ForegroundColor Gray
+
 Test-Docker
 
 switch ($Command.ToLower()) {
@@ -115,7 +125,7 @@ switch ($Command.ToLower()) {
         Write-Host ""
         Write-Host "MeetingScribe Docker 部署工具" -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "使用方式: .\deploy.ps1 [command]"
+        Write-Host "使用方式: .\deploy.bat [command]"
         Write-Host ""
         Write-Host "可用命令:"
         Write-Host "  build   - 建構 Docker 映像（首次使用）"
@@ -126,8 +136,8 @@ switch ($Command.ToLower()) {
         Write-Host "  logs    - 查看日誌"
         Write-Host ""
         Write-Host "快速開始:"
-        Write-Host "  1. .\deploy.ps1 build    # 首次建構映像"
-        Write-Host "  2. .\deploy.ps1 up       # 啟動服務"
+        Write-Host "  1. .\deploy.bat build    # 首次建構映像"
+        Write-Host "  2. .\deploy.bat up       # 啟動服務"
         Write-Host "  3. 開啟 http://localhost:9527"
         Write-Host ""
     }

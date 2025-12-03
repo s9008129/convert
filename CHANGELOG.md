@@ -5,6 +5,33 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.3.3] - 2025-12-03
+
+### 功能改進 ✨
+
+- **解決Windows PowerShell執行政策問題**
+  - 問題分析（第一性原理）：
+    1. Windows系統預設執行政策為 `Restricted`，完全禁止本地指令碼執行
+    2. PowerShell的 `-ExecutionPolicy Bypass` 參數無法在極端限制的系統上生效
+    3. 修改全局執行政策會帶來安全風險，且需要管理員權限
+  - 官方推薦解決方案：使用批次檔（`.bat`）包裝，完全規避PowerShell限制
+  - 修復內容：
+    1. 將 `deploy.ps1` 轉換為純批次檔 `deploy.bat`
+    2. 支援所有原有功能：build、up、down、restart、status、logs
+    3. 優化路徑處理，確保在任何環境下都能正確定位Docker目錄
+    4. 添加詳細的error handling和debug輸出
+  - 新增文件：`WINDOWS_DEPLOYMENT_SOLUTION.md`（完整部署指南及故障排除）
+  - 修改文件：`scripts/deploy.bat`（重寫為純批次檔）
+  - 刪除文件：`scripts/deploy.ps1`（已被deploy.bat替代）
+  - 使用方式：`.\scripts\deploy.bat [command]`（無需修改執行政策）
+
+### 文件更新 📝
+
+- 添加 `WINDOWS_DEPLOYMENT_SOLUTION.md` - Windows部署完整指南
+  - 包含執行政策的深入分析
+  - 提供多個使用示例
+  - 包含故障排除部分
+
 ## [3.3.2] - 2025-12-02
 
 ### 緊急修正 🔥

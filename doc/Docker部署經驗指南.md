@@ -1,13 +1,14 @@
 # Docker 部署經驗指南
 
-> 本指南基於 PromptCraft 專案的成功 Docker 部署經驗，提供可複製的最佳實踐，適用於跨平台部署（macOS、Linux、Windows）。
+> **版本**: v3.3.3 ✅ 新增 Windows 批次檔支援  
+> 本指南基於 MeetingScribe 專案的成功 Docker 部署經驗，提供可複製的最佳實踐，適用於跨平台部署（macOS、Linux、Windows）。
 
 ## 📚 目錄
 
 1. [第一性原理分析](#第一性原理分析)
 2. [核心設計理念](#核心設計理念)
 3. [完整檔案範本](#完整檔案範本)
-4. [Windows 部署詳細步驟](#windows-部署詳細步驟)
+4. [Windows 部署詳細步驟](#windows-部署詳細步驟) - **✨ v3.3.3 新增批次檔支援**
 5. [常見問題排解](#常見問題排解)
 6. [測試驗證清單](#測試驗證清單)
 
@@ -26,7 +27,7 @@
   ├── 如何排除不需要的檔案？ → .dockerignore
   ├── 如何傳遞設定？ → 環境變數
   ├── 如何確保安全？ → 非 root 用戶、獨立網路
-  └── 如何簡化操作？ → 部署腳本
+  └── 如何簡化操作？ → 部署腳本（v3.3.3 支援批次檔）
 ```
 
 ### 2. 跨平台部署的關鍵考量
@@ -930,43 +931,56 @@ export default nextConfig;
 ### 部署步驟
 
 1. **取得專案程式碼**
-   ```powershell
+   ```batch
    # 使用 Git 複製專案
    git clone https://github.com/your-org/your-project.git
    cd your-project
    ```
 
 2. **設定環境變數**
-   ```powershell
+   ```batch
    # 複製範本
-   Copy-Item .env.example .env
+   copy .env.example .env
    
    # 編輯 .env 檔案，填入實際值
    notepad .env
    ```
 
-3. **建構並啟動**
+3. **建構並啟動** - **✨ v3.3.3 新增批次檔支援**
+
+   **✅ 推薦方式：使用批次檔（v3.3.3+，無需管理員權限，無執行策略限制）**
+   ```batch
+   cd scripts
+   deploy.bat build
+   deploy.bat up
+   ```
+
+   **或使用 PowerShell（如遇執行策略問題改用批次檔）**
    ```powershell
-   # 方法一：使用部署腳本（推薦）
-   .\deploy-docker.ps1 build
-   .\deploy-docker.ps1 up
-   
-   # 方法二：直接使用 docker compose
+   .\scripts\deploy.ps1 build
+   .\scripts\deploy.ps1 up
+   ```
+
+   **或直接使用 docker compose**
+   ```batch
    docker compose build --no-cache
    docker compose up -d
    ```
 
 4. **驗證部署**
-   ```powershell
-   .\deploy-docker.ps1 test
-   .\deploy-docker.ps1 status
+   ```batch
+   # 使用批次檔
+   cd scripts
+   deploy.bat status
    ```
 
 ### 常見 Windows 問題
 
 | 問題 | 解決方案 |
 |------|----------|
-| PowerShell 執行策略限制 | `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` |
+| **PowerShell 執行策略限制** | ✅ v3.3.3 已解決：改用 `deploy.bat` 批次檔（無限制） |
+| WSL 2  未安裝 | 執行 `wsl --install` 然後重新啟動 |
+| Docker 未啟動 | 開啟 Docker Desktop 應用程式，等待啟動完成 |
 | Docker Desktop 未啟動 | 從開始選單啟動 Docker Desktop |
 | WSL 2 未安裝 | `wsl --install` 並重新啟動 |
 | Port 被佔用 | 修改 `docker-compose.yml` 中的 port 映射 |

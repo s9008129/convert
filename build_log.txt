@@ -1,0 +1,45 @@
+[DEBUG] Script directory: d:\dev\convert\scripts
+[DEBUG] Project root: d:\dev\convert
+[DEBUG] Docker directory: d:\dev\convert\docker
+
+[INFO] Checking Docker installation...
+[OK] Docker is running
+
+[INFO] Building Docker image...
+[INFO] This may take 10-30 minutes (model download required on first build)
+
+#1 [internal] load local bake definitions
+#1 reading from stdin 344B 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.62kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.11-slim-bookworm
+#3 DONE 0.8s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [builder 1/6] FROM docker.io/library/python:3.11-slim-bookworm@sha256:2c5bc243b1cc47985ee4fb768bb0bbd4490481c5d0897a62da31b7f30b7304a7
+#5 resolve docker.io/library/python:3.11-slim-bookworm@sha256:2c5bc243b1cc47985ee4fb768bb0bbd4490481c5d0897a62da31b7f30b7304a7 0.0s done
+#5 CACHED
+
+#6 [internal] load build context
+#6 transferring context: 16.13kB 0.0s done
+#6 DONE 0.0s
+
+#7 [builder 2/6] RUN apt-get update && apt-get install -y --no-install-recommends     build-essential     pkg-config     libavformat-dev     libavcodec-dev     libavdevice-dev     libavutil-dev     libswscale-dev     libswresample-dev     libavfilter-dev     && rm -rf /var/lib/apt/lists/*
+#7 0.789 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#7 0.983 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#7 1.191 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
+#7 1.370 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8791 kB]
+#7 6.378 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#7 6.473 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [289 kB]
+#7 6.957 Fetched 9342 kB in 6s (1456 kB/s)
+#7 6.957 Reading package lists...
+#7 7.235 Reading package lists...
+要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 要終止批次工作嗎 (Y/N)? 
+^C系統無法開啟指定的裝置或檔案。
