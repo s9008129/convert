@@ -1,12 +1,17 @@
 # ============================================================
 # docker-compose-windows-gpu.yml
-# MeetingScribe v2.3.6 - Windows + RTX 4090 專用最佳實踐版
+# MeetingScribe v3.4.3 - Windows + RTX 4090 專用 GPU 加速版
 # ============================================================
 # 
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
+# 使用 NVIDIA CUDA 12 + cuDNN 8/9 基底映像支援 faster-whisper GPU 加速
+#
+# 重要：需要安裝 cuDNN 8 庫以支援 Whisper 語音識別
+# 參考：https://opennmt.net/CTranslate2/installation.html
 # 
 # 使用方式：
 #   cd docker
+#   docker compose -f docker-compose-windows-gpu.yml build --no-cache
 #   docker compose -f docker-compose-windows-gpu.yml up -d
 # 
 # ============================================================
@@ -15,13 +20,13 @@ name: meetingscribe-win-gpu
 
 services:
   # ========================================
-  # 主應用服務（Windows CUDA 優化版）
+  # 主應用服務（CUDA 12 + cuDNN 9 GPU 加速版）
   # ========================================
   app:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
-    image: meetingscribe:windows-gpu
+      dockerfile: docker/Dockerfile.gpu
+    image: meetingscribe:windows-gpu-cuda12
     container_name: meetingscribe-app
     hostname: meetingscribe-app
     restart: unless-stopped
@@ -106,9 +111,10 @@ services:
     # 標籤：方便識別
     labels:
       - "com.meetingscribe.project=meetingscribe"
-      - "com.meetingscribe.version=2.3.6"
+      - "com.meetingscribe.version=3.4.2"
       - "com.meetingscribe.platform=windows-gpu"
       - "com.meetingscribe.gpu=rtx4090"
+      - "com.meetingscribe.cuda=12.3"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]
@@ -151,10 +157,14 @@ volumes:
 # ✅ nvidia-smi 正常工作
 # ✅ Ollama 服務運行中
 # 
-# 部署命令：
+# 部署命令（必須使用 --no-cache 確保使用新 Dockerfile.gpu）：
 #   cd docker
+#   docker compose -f docker-compose-windows-gpu.yml build --no-cache
 #   docker compose -f docker-compose-windows-gpu.yml up -d
 # 
 # 監控 GPU 使用：
 #   nvidia-smi -l 1
+# 
+# 驗證 CUDA 是否可用：
+#   docker exec meetingscribe-app python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 # ============================================================

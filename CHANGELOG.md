@@ -5,6 +5,70 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.4.3] - 2025-12-05
+
+### 重大修復 🔥 - GPU 加速實際生效
+
+此版本**真正修復 GPU 加速問題**，經過完整驗證確認 Whisper 轉錄現在使用 CUDA。
+
+#### 問題根因
+
+v3.4.0 宣稱修復 GPU 加速，但實際上有兩個關鍵問題：
+
+1. **Dockerfile 缺少 CUDA 運行時**
+   - `docker/Dockerfile` 使用 `python:3.11-slim-bookworm`（無 CUDA）
+   - 即使程式碼偵測到 GPU，容器內缺少 CUDA 庫無法實際使用
+
+2. **缺少 cuDNN 8 庫**
+   - `ctranslate2 4.0.0` 的語音識別功能需要 cuDNN 8
+   - 參考：https://opennmt.net/CTranslate2/installation.html
+   - 錯誤：`Could not load library libcudnn_ops_infer.so.8`
+
+#### 解決方案
+
+新增 `docker/Dockerfile.gpu` 專用於 GPU 加速：
+```dockerfile
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+
+# 安裝 cuDNN 8 以支援 Whisper 語音識別
+RUN apt-get install -y libcudnn8=8.9.7.29-1+cuda12.2
+```
+
+#### 驗證證據
+
+```
+✅ 偵測到 NVIDIA GPU: NVIDIA GeForce RTX 4090，使用 CUDA 加速
+裝置偵測完成: cuda, 精度: float16
+載入 Whisper 模型: medium, 裝置: cuda, 精度: float16
+✅ Whisper 模型載入成功 (裝置: CUDA)
+轉錄結果: 0.9 秒 (時長: 10.0 秒, 裝置: CUDA)
+✅ CUDA 快取已清空
+✅ Whisper 模型已釋放
+```
+
+### 新增功能
+
+- ✨ `docker/Dockerfile.gpu` - GPU 專用 Docker 映像
+  - 使用 NVIDIA CUDA 12.3.2 + cuDNN 9 基底
+  - 額外安裝 cuDNN 8 庫（語音識別必需）
+  - 安裝 FFmpeg 開發庫（編譯 PyAV 需要）
+
+### 修改檔案
+
+- 📝 `docker/docker-compose-windows-gpu.yml` - 更新至 v3.4.3
+- 📝 新增 `GPU_ACCELERATION_VERIFICATION_v3.4.3.md` 驗證報告
+
+### 部署指南
+
+```bash
+# Windows + NVIDIA GPU
+cd d:\dev\convert
+docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d
+```
+
+---
+
 ## [3.4.1] - 2025-01-27
 
 ### 重大異動 ⚠️
@@ -47,7 +111,6 @@
 ### 重大修復 🔥
 
 此版本修復四個關鍵問題，大幅提升系統穩定性與使用體驗。
-
 #### 1. **修復 Whisper GPU 加速失效問題**
 - **問題描述**：Whisper 轉錄原本使用 GPU 加速，但突然改用 CPU，處理速度大幅下降
 - **根本原因分析（第一性原理）**：
