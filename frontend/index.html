@@ -61,33 +61,6 @@
             </div>
         </section>
 
-        <!-- 自訂 Prompt -->
-        <section class="section prompt-section">
-            <h2 class="section-title">📝 自訂會議記錄格式（選填）</h2>
-            <div class="prompt-container">
-                <!-- 檔案上傳功能：上傳過去的會議記錄範本 -->
-                <div class="format-template-upload">
-                    <input type="file" id="formatTemplateFile" accept=".md,.txt,.doc,.docx" hidden>
-                    <button type="button" class="btn-upload-template" id="uploadTemplateBtn">
-                        📄 上傳會議記錄範本
-                    </button>
-                    <span class="template-status" id="templateStatus">
-                        <span class="template-hint">支援格式：MD, TXT, DOC, DOCX</span>
-                    </span>
-                </div>
-                <div class="template-divider">
-                    <span>或手動輸入格式要求</span>
-                </div>
-                <textarea 
-                    id="userPrompt" 
-                    class="prompt-input" 
-                    placeholder="請輸入您希望的會議記錄格式或特殊要求...&#10;&#10;範例：&#10;• 請列出所有決議事項和負責人&#10;• 請用表格呈現待辦事項&#10;• 請特別標註預算相關討論"
-                    rows="4"
-                ></textarea>
-                <p class="prompt-hint">💡 上傳範本或輸入格式要求，留空則使用預設格式。使用者自訂格式優先權最高。</p>
-            </div>
-        </section>
-
         <!-- 檔案上傳 -->
         <section class="section upload-section">
             <div class="upload-area" id="uploadArea">

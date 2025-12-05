@@ -95,38 +95,24 @@ class SummarizationService:
         
         Args:
             transcript: 逐字稿文字
-            mode: 處理模式（local/cloud）- local 會自動選擇 Ollama 或 LM Studio
-            user_prompt: 使用者自訂 prompt（可選）
+            mode: 處理模式（local/cloud）
+            user_prompt: 已淘汰（保留以相容舊版本，但無作用）
             progress_callback: 進度回調函數
             
         Returns:
             會議摘要（Markdown 格式）
             
-        v3.5.2 改進：
-        - 自訂格式優先權重構：user_prompt 完全取代系統預設格式
+        v3.4.1 改進：
+        - 完全移除自訂格式功能
+        - 統一使用系統預設格式
         - 提升本地模式輸出品質
         """
         if progress_callback:
             progress_callback(65.0, "生成摘要中...")
         
-        # v3.5.2: 自訂格式處理邏輯完全重構
-        # 如果使用者提供自訂格式，則【完全使用】使用者格式，不混合系統預設
-        if user_prompt and user_prompt.strip():
-            # 檢測是否為格式範本（包含 Markdown 結構或明確的格式指令）
-            is_format_template = self._is_format_template(user_prompt)
-            
-            if is_format_template:
-                # 使用者提供的是格式範本，完全按照使用者格式生成
-                system_prompt = self._build_custom_format_prompt(user_prompt)
-                log.info("使用自訂格式範本生成會議記錄")
-            else:
-                # 使用者提供的是額外指令，附加到系統預設格式
-                system_prompt = self._build_enhanced_system_prompt(user_prompt)
-                log.info("使用增強系統提示詞（附加使用者指令）")
-        else:
-            # 無自訂格式，使用系統預設
-            system_prompt = settings.DEFAULT_SYSTEM_PROMPT
-            log.info("使用系統預設格式")
+        # 統一使用系統預設格式（自訂格式功能已移除）
+        system_prompt = settings.DEFAULT_SYSTEM_PROMPT
+        log.info("使用系統預設格式生成會議記錄")
         
         user_message = f"以下是會議的逐字稿，請整理成會議記錄：\n\n{transcript}"
         
@@ -147,88 +133,6 @@ class SummarizationService:
             log.error(f"摘要生成失敗: {e}")
             raise
     
-    def _is_format_template(self, user_prompt: str) -> bool:
-        """
-        判斷使用者輸入是否為格式範本
-        v3.5.2: 新增智能判斷邏輯
-        """
-        # 格式範本的特徵
-        format_indicators = [
-            "範本", "範例", "格式", "template", "format",
-            "---範本", "---格式", "---範例",
-            "會議紀錄", "會議記錄",
-            "決議事項", "待辦事項", "出席人員",
-            "中華民國", "年月日",
-        ]
-        
-        # Markdown 結構特徵
-        markdown_indicators = [
-            r"^#\s", r"^\|.*\|", r"^\*\*.*\*\*", r"^-\s+\*\*"
-        ]
-        
-        lower_prompt = user_prompt.lower()
-        
-        # 檢查關鍵詞
-        for indicator in format_indicators:
-            if indicator.lower() in lower_prompt:
-                return True
-        
-        # 檢查 Markdown 結構
-        for pattern in markdown_indicators:
-            if re.search(pattern, user_prompt, re.MULTILINE):
-                return True
-        
-        # 如果包含多行且有明顯的文檔結構
-        lines = user_prompt.strip().split('\n')
-        if len(lines) > 10:
-            return True
-        
-        return False
-    
-    def _build_custom_format_prompt(self, user_format: str) -> str:
-        """
-        構建基於使用者自訂格式的系統提示詞
-        v3.5.2: 完全按照使用者格式生成，不混合系統預設
-        """
-        return f"""<system>
-<role>
-你是專業的會議記錄秘書，你的任務是【嚴格按照使用者指定的格式】將會議逐字稿轉換為會議記錄。
-</role>
-
-<critical_instruction>
-以下是使用者指定的會議記錄格式範本，你必須【100% 遵循此格式】：
-- 標題層級必須與範本完全一致
-- 表格結構必須與範本完全一致  
-- 項目符號風格必須與範本完全一致
-- 用詞風格必須與範本完全一致
-- 如果範本有特定區塊（如決議事項追蹤表），輸出必須包含相同區塊
-
-【警告】：不要使用任何其他格式，不要添加範本中沒有的區塊，不要省略範本中有的區塊。
-</critical_instruction>
-
-<user_format_template>
-{user_format}
-</user_format_template>
-
-<output_rules>
-1. 第一行直接開始會議記錄內容（按照範本格式）
-2. 不要有任何開場白或解釋
-3. 所有內容必須使用繁體中文
-4. 如果逐字稿資訊不足，標註「（待補充）」或「（逐字稿未提及）」
-5. 輸出格式必須與範本結構完全一致
-</output_rules>
-</system>"""
-    
-    def _build_enhanced_system_prompt(self, user_instructions: str) -> str:
-        """
-        構建增強版系統提示詞（系統預設 + 使用者額外指令）
-        """
-        return f"""{settings.DEFAULT_SYSTEM_PROMPT}
-
-<additional_user_instructions>
-使用者額外要求（請在生成時納入考量）：
-{user_instructions}
-</additional_user_instructions>"""
     
     async def _summarize_with_local_llm(
         self,

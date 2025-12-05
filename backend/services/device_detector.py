@@ -78,17 +78,15 @@ class DeviceDetector:
                         memory_free = int(parts[1].strip())
                         memory_total = int(parts[2].strip())
                         
-                        # faster-whisper medium 模型約需 2GB VRAM
-                        # 降低門檻以允許與 Ollama 共享 GPU 記憶體
-                        min_vram_required = 2000  # 2GB 足夠運行 medium 模型
-                        if memory_free >= min_vram_required:
+                        # 至少需要 4GB VRAM
+                        if memory_free >= 4000:
                             return True, {
                                 "name": name,
                                 "memory_free": memory_free,
                                 "memory_total": memory_total
                             }
                         else:
-                            log.warning(f"⚠️ GPU 記憶體不足: {memory_free}MB 可用，需要至少 {min_vram_required}MB")
+                            log.warning(f"⚠️ GPU 記憶體不足: {memory_free}MB 可用，需要至少 4000MB")
         except FileNotFoundError:
             log.debug("nvidia-smi 未找到，CUDA 不可用")
         except subprocess.TimeoutExpired:
