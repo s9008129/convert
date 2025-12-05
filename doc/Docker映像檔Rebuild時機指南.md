@@ -1,8 +1,8 @@
 # 🐳 Docker 映像檔 Rebuild 時機指南
 
-> **版本**: v2.0（v3.4 更新）  
+> **版本**: v2.1（v3.4.0 更新）  
 > **適用專案**: MeetingScribe  
-> **最後更新**: 2025-12-03
+> **最後更新**: 2025-01-27
 > **⚠️ 重要提示**: 自 v3.4 起，請改用 **[Docker 零重建部署指南](Docker零重建部署指南.md)** 獲得更好的開發體驗
 
 ---
@@ -11,7 +11,11 @@
 
 本指南解答一個常見問題：**「我修改了程式碼，到底需不需要重建 Docker 映像檔？」**
 
-**⚡ v3.4 更新：現在大多數修改都無需重建！**
+**⚡ v3.4.0 更新重點**：
+- 修復 GPU 加速失效問題（動態偵測）
+- 實現 VRAM 資源釋放機制
+- 重構自訂格式功能
+- **以上修改都需要 Rebuild**
 
 > 如果您正在尋求更快的開發體驗，建議直接跳轉到新的 [Docker 零重建部署指南](Docker零重建部署指南.md)，它提供了一套完整的零重建方案，可將開發效率提升 **60-180 倍**。
 
@@ -19,6 +23,25 @@
 1. **生產部署環境**（不使用 override.yml）
 2. **理解 Docker 基本原理**
 3. **Dockerfile 和系統級修改**
+
+---
+
+## 🔥 v3.4.0 需要 Rebuild
+
+本版本修改了以下後端檔案，**必須重建 Docker 映像檔**：
+
+| 修改檔案 | 修改內容 | 影響 |
+|----------|---------|------|
+| `backend/services/transcription.py` | GPU 動態偵測 + VRAM 釋放 | Whisper 轉錄行為改變 |
+| `backend/services/summarization.py` | 自訂格式重構 + Ollama VRAM 釋放 | 摘要生成邏輯改變 |
+
+```bash
+# Windows GPU 版本重建命令
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d --build
+
+# 其他版本重建命令
+docker-compose -f docker/docker-compose.yml up -d --build
+```
 
 ---
 

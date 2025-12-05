@@ -2,9 +2,11 @@
 MeetingScribe Whisper 轉錄服務
 支援 GPU/CPU 自動偵測和降級
 使用 whisper-medium 模型直接輸出台灣繁體中文
+v3.5.2: 修復 GPU 加速失效 + 實現 VRAM 資源釋放機制
 """
 
 import os
+import gc
 import time
 from typing import Optional, Generator, Tuple
 from backend.core.config import settings
@@ -16,6 +18,10 @@ class TranscriptionService:
     """
     Whisper 語音轉錄服務
     支援 CUDA/MPS/CPU 自動選擇和降級
+    
+    v3.5.2 改進：
+    - 每次轉錄後釋放模型，避免 VRAM 持續佔用
+    - 強制重新偵測 GPU 可用性，避免與 Ollama 資源競爭
     """
     
     def __init__(self):
@@ -24,14 +30,16 @@ class TranscriptionService:
         self._compute_type: str = "int8"
         
     def _load_model(self, force_cpu: bool = False):
-        """載入 Whisper 模型"""
+        """載入 Whisper 模型（每次轉錄前重新載入以確保 GPU 可用）"""
         from faster_whisper import WhisperModel
         
         if force_cpu:
             device = "cpu"
             compute_type = "int8"
         else:
-            # 使用智能偵測器
+            # v3.5.2: 強制重新偵測，確保取得最新 GPU 狀態
+            # 這是解決 GPU 加速失效的關鍵
+            device_detector.current_device = None  # 重置快取
             device_type, compute_type = device_detector.detect_best_device()
             device = device_type.value
             
@@ -52,7 +60,7 @@ class TranscriptionService:
                 device=device,
                 compute_type=compute_type
             )
-            log.info("✅ Whisper 模型載入成功")
+            log.info(f"✅ Whisper 模型載入成功 (裝置: {device.upper()})")
         except Exception as e:
             log.error(f"Whisper 模型載入失敗: {e}")
             if device != "cpu":
@@ -60,6 +68,36 @@ class TranscriptionService:
                 self._load_model(force_cpu=True)
             else:
                 raise
+    
+    def _unload_model(self):
+        """
+        釋放 Whisper 模型，清空 VRAM
+        v3.5.2: 新增此方法以解決 VRAM 資源競爭問題
+        """
+        if self._model is not None:
+            log.info("釋放 Whisper 模型，清空 VRAM...")
+            del self._model
+            self._model = None
+            
+            # 強制執行垃圾回收
+            gc.collect()
+            
+            # 如果是 CUDA，清空 GPU 快取
+            if self._device == DeviceType.CUDA:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        log.info("✅ CUDA 快取已清空")
+                except ImportError:
+                    pass
+                except Exception as e:
+                    log.warning(f"清空 CUDA 快取時發生錯誤: {e}")
+            
+            self._device = None
+            self._compute_type = "int8"
+            log.info("✅ Whisper 模型已釋放")
     
     def transcribe(
         self,
@@ -77,26 +115,30 @@ class TranscriptionService:
             
         Returns:
             (逐字稿文字, 音訊時長秒數)
+            
+        v3.5.2 改進：
+        - 轉錄完成後自動釋放模型
+        - 確保 VRAM 不會被持續佔用
         """
-        if not self._model:
-            self._load_model()
-        
-        # 安全檢查：驗證路徑不包含路徑遍歷字符
-        abs_audio_path = os.path.abspath(audio_path)
-        abs_uploads_dir = os.path.abspath(settings.uploads_dir)
-        
-        # 確保檔案在上傳目錄內
-        if not abs_audio_path.startswith(abs_uploads_dir):
-            raise ValueError(f"不允許的檔案路徑: {audio_path}")
-        
-        if not os.path.exists(abs_audio_path):
-            raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
-        
-        start_time = time.time()
-        
         try:
+            # v3.5.2: 每次轉錄前重新載入模型（確保使用最新 GPU 狀態）
+            self._load_model()
+            
+            # 安全檢查：驗證路徑不包含路徑遍歷字符
+            abs_audio_path = os.path.abspath(audio_path)
+            abs_uploads_dir = os.path.abspath(settings.uploads_dir)
+            
+            # 確保檔案在上傳目錄內
+            if not abs_audio_path.startswith(abs_uploads_dir):
+                raise ValueError(f"不允許的檔案路徑: {audio_path}")
+            
+            if not os.path.exists(abs_audio_path):
+                raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
+            
+            start_time = time.time()
+            
             if progress_callback:
-                progress_callback(10.0, "開始轉錄...")
+                progress_callback(10.0, f"開始轉錄 (裝置: {self._device.value.upper() if self._device else 'CPU'})...")
             
             # 執行轉錄 - 使用繁體中文 initial_prompt 引導輸出
             # Whisper 不區分 zh-TW/zh-CN，使用 initial_prompt 是業界最佳實踐
@@ -138,7 +180,7 @@ class TranscriptionService:
             # whisper-medium 模型直接輸出繁體中文，無需額外轉換
             
             elapsed = time.time() - start_time
-            log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒")
+            log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒，裝置: {self._device.value.upper() if self._device else 'CPU'}")
             
             if progress_callback:
                 progress_callback(60.0, "轉錄完成")
@@ -152,11 +194,15 @@ class TranscriptionService:
             if self._device != DeviceType.CPU and max_retries > 0:
                 log.info("嘗試降級到 CPU 重新轉錄...")
                 device_detector.fallback_to_cpu()
-                self._model = None
+                self._unload_model()  # v3.5.2: 降級前先釋放模型
                 self._load_model(force_cpu=True)
                 return self.transcribe(audio_path, progress_callback, max_retries - 1)
             
             raise
+        
+        finally:
+            # v3.5.2: 轉錄完成後一律釋放模型，確保 VRAM 可供 Ollama 使用
+            self._unload_model()
     
     def get_device_info(self) -> dict:
         """取得目前使用的裝置資訊"""

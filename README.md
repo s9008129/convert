@@ -1,8 +1,8 @@
-# MeetingScribe v3.3.3
+# MeetingScribe v3.4.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.3.3-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.4.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -18,6 +18,14 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.4.0 重大修復：GPU 加速 + VRAM 管理 + 自訂格式
+
+- ✅ **修復 Whisper GPU 加速失效**：每次轉錄強制重新偵測裝置，解決快取導致的 GPU 不可用問題
+- ✅ **實現 VRAM 資源釋放機制**：Whisper 轉錄後自動釋放、Ollama 使用完畢立即釋放
+- ✅ **優化本地模式品質**：num_ctx 16384 + temperature 0.05 + repeat_penalty 1.2
+- ✅ **重構自訂格式功能**：完全移除預設格式干擾，100% 遵循使用者定義格式
+- ⚠️ **需要 Docker 重建**：後端程式碼變更，請執行 `docker-compose up -d --build`
 
 ### 🆕 v3.3.3 解決 Windows PowerShell 執行政策問題
 

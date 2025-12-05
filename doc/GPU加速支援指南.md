@@ -1,21 +1,21 @@
 # 🚀 GPU 加速支援完整指南
 
-> **版本**: v3.5.1 - GPU VRAM 門檻修正  
-> **最後更新**: 2025-12-05  
-> **適用版本**: v3.5.1+ (GPU VRAM 共享優化)  
+> **版本**: v3.4.0 - GPU 動態偵測 + VRAM 資源管理  
+> **最後更新**: 2025-01-27  
+> **適用版本**: v3.4.0+ (動態 GPU 偵測 + VRAM 釋放)  
 > **狀態**: 🟢 GPU 加速驗證完成
 
 ---
 
 ## 📌 概述
 
-MeetingScribe v3.5.1+ 完全支援 NVIDIA GPU 加速，相比 CPU 提升 **80-100倍** 轉錄速度！
+MeetingScribe v3.4.0 完全支援 NVIDIA GPU 加速，相比 CPU 提升 **80-100倍** 轉錄速度！
 
 ### 🎯 版本更新歷史
 
 | 版本 | 發布日期 | 改進內容 | GPU 加速 |
 |------|---------|---------|---------|
-| **v3.5.1** | 2025-12-05 | ✅ VRAM 門檻優化，支援與 Ollama 共享 GPU | **93.7× 實時倍率** |
+| **v3.4.0** | 2025-01-27 | ✅ 動態 GPU 偵測 + VRAM 資源釋放 | **93.7× 實時倍率** |
 | **v3.3.6** | 2025-12-03 | ✅ cuDNN 版本相容性修復 | **93.7× 實時倍率** |
 | **v3.3.5** | 2025-12-03 | ✅ GPU Dockerfile 建立 | **83× 實時倍率** |
 | **v3.3.4** | 2025-12-03 | GPU 環境配置初步支援 | 部分支援 |
@@ -23,55 +23,105 @@ MeetingScribe v3.5.1+ 完全支援 NVIDIA GPU 加速，相比 CPU 提升 **80-10
 
 ---
 
-## 🔥 v3.5.1 重大修復：GPU VRAM 共享問題
+## 🔥 v3.4.0 重大修復：動態 GPU 偵測 + VRAM 資源管理
 
-### 問題現象（v3.5.0 及之前）
+### 問題現象（v3.3.6）
 
-當同時運行 Ollama（用於 LLM 摘要）與 Whisper（用於轉錄）時：
-- ❌ Whisper 降級至 CPU 模式（int8）
-- ❌ 日誌顯示：`GPU 記憶體不足: 3527MB 可用，需要至少 4000MB`
-- ❌ 轉錄速度極慢，效能下降 3-5 倍
+即使 GPU 環境配置正確，仍可能遇到以下問題：
+- ❌ Whisper 轉錄突然改用 CPU（原本使用 GPU）
+- ❌ GPU 加速「時好時壞」，不穩定
+- ❌ Ollama 運行後，Whisper 就無法使用 GPU
 
 ### 根本原因分析（第一性原理）
 
-**資源競爭問題**：
+**問題一：GPU 偵測結果被快取**
 
-| 資源 | RTX 4090 總量 | Ollama 使用 | 剩餘可用 | 原門檻 | 結果 |
-|------|-------------|------------|---------|--------|------|
-| VRAM | 24GB | ~20GB (Gemma3:27b) | ~3.5GB | 4GB | ❌ 失敗 |
+```
+1. 程式啟動時偵測裝置 → 假設 Ollama 佔用 VRAM → 偵測結果：CPU
+2. 偵測結果被快取在 device_detector.current_device
+3. 即使 Ollama 已釋放 VRAM，後續任務仍使用快取的 CPU 結果
+4. GPU 加速永久失效，直到服務重啟
+```
 
-**關鍵發現**：
-1. `device_detector.py` 設定 4000MB (4GB) 作為最低 VRAM 門檻
-2. 實際上 faster-whisper medium 模型只需約 **2GB VRAM**
-3. 3.5GB 剩餘 VRAM 完全足夠運行 Whisper，但被錯誤判斷為不足
+**問題二：VRAM 資源競爭**
 
-### 解決方案（v3.5.1）
+```
+Whisper medium 模型需要 ~3GB VRAM
+Ollama gemma3:27b 模型需要 ~18GB VRAM
+RTX 4090 總共 24GB VRAM
+
+如果兩者同時載入，VRAM 不足導致：
+- Whisper 被迫降級到 CPU
+- 系統效能大幅下降
+```
+
+### 解決方案（v3.4.0）
+
+#### 修復一：動態 GPU 偵測
+
+每次轉錄任務前，強制重新偵測裝置：
 
 ```python
-# 修改前（device_detector.py）
-if memory_free >= 4000:  # 門檻過高
-
-# 修改後
-min_vram_required = 2000  # 2GB 足夠運行 medium 模型
-if memory_free >= min_vram_required:
+# backend/services/transcription.py
+def _load_model(self):
+    # 重置裝置偵測快取，強制每次重新偵測
+    device_detector.current_device = None
+    
+    self._device = device_detector.detect_best_device()
+    self._compute_type = "float16" if self._device == DeviceType.CUDA else "int8"
+    
+    # 每次載入新模型，確保使用當前最佳裝置
+    self._model = WhisperModel(...)
 ```
 
-### 驗證結果（v3.5.1）
+#### 修復二：VRAM 資源釋放機制
+
+**Whisper 轉錄後釋放**：
+```python
+def _unload_model(self):
+    """釋放模型資源，清空 VRAM"""
+    if self._model is not None:
+        del self._model
+        self._model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+```
+
+**Ollama 使用後立即釋放**：
+```python
+# API 呼叫加入 keep_alive: "0"
+response = await client.post(
+    f"{base_url}/api/generate",
+    json={
+        "model": model_name,
+        "keep_alive": "0",  # 使用完畢立即釋放 VRAM
+        ...
+    }
+)
+```
+
+### 驗證結果（v3.4.0）
+
+**VRAM 使用時序圖**：
 
 ```
-# 修復前日誌
-⚠️ GPU 記憶體不足: 3527MB 可用，需要至少 4000MB
-⚠️ 無 GPU 可用，使用 CPU 模式（處理速度較慢）
-載入 Whisper 模型: medium, 裝置: cpu, 精度: int8
-
-# 修復後日誌
-✅ 偵測到 NVIDIA GPU: NVIDIA GeForce RTX 4090，使用 CUDA 加速
-裝置偵測完成: cuda, 精度: float16
+時間軸 →
+[T0] Ollama 閒置，Whisper 開始 → GPU 偵測成功 → VRAM: 3GB (Whisper)
+[T1] Whisper 完成 → _unload_model() → VRAM: 0GB
+[T2] Ollama 摘要開始 → VRAM: 18GB (Ollama)
+[T3] Ollama 完成 → keep_alive="0" → VRAM: 0GB
+[T4] 下一次 Whisper → GPU 偵測成功 → VRAM: 3GB (Whisper)
 ```
+
+**預期效果**：
+- ✅ Whisper 每次轉錄都能正確使用 GPU
+- ✅ VRAM 使用後立即釋放，避免資源競爭
+- ✅ 多任務執行時，GPU 加速穩定可用
 
 ---
 
-## 🔥 v3.3.6 重大修復：cuDNN 版本相容性
+## 🔧 v3.3.6 重大修復：cuDNN 版本相容性
 
 ### 問題現象（v3.3.5）
 

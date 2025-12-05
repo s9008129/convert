@@ -5,38 +5,81 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
-## [3.5.1] - 2025-12-05
+## [3.4.0] - 2025-01-27
 
-### 緊急修正 🔥
+### 重大修復 🔥
 
-- **修復 GPU 加速失效問題（嚴重）**
-  - **問題描述**：Whisper 轉錄時使用 CPU 模式（int8），而非 GPU 模式（float16），導致處理速度極慢
-  - **根本原因分析（第一性原理）**：
-    1. `device_detector.py` 設定 4000MB (4GB) 作為最低 VRAM 門檻
-    2. RTX 4090 有 24GB VRAM，但 Ollama 運行 Gemma3:27b-it-qat 模型時佔用約 20GB
-    3. 當 Whisper 需要載入時，可用 VRAM 僅剩約 3.5GB，低於 4GB 門檻
-    4. 系統判定 GPU 不可用，自動降級至 CPU 模式
-  - **修復方案**：
-    1. 將 VRAM 門檻從 4000MB 降至 2000MB
-    2. faster-whisper medium 模型實際只需約 2GB VRAM，可與 Ollama 共享 GPU
-  - **驗證結果**：
-    - 修復前：`載入 Whisper 模型: medium, 裝置: cpu, 精度: int8`
-    - 修復後：`偵測到 NVIDIA GPU: NVIDIA GeForce RTX 4090，使用 CUDA 加速` + `裝置偵測完成: cuda, 精度: float16`
-  - **修改檔案**：`backend/services/device_detector.py`
-  - **影響範圍**：所有使用 GPU 加速的 Windows/Linux 用戶
+此版本修復四個關鍵問題，大幅提升系統穩定性與使用體驗。
 
-### 技術改進 🔧
+#### 1. **修復 Whisper GPU 加速失效問題**
+- **問題描述**：Whisper 轉錄原本使用 GPU 加速，但突然改用 CPU，處理速度大幅下降
+- **根本原因分析（第一性原理）**：
+  1. 模型在程式啟動時載入，裝置偵測結果被快取
+  2. Ollama 啟動後佔用大量 VRAM，導致後續偵測認為 GPU 不可用
+  3. 快取機制阻止重新偵測，即使 VRAM 已釋放也無法切換回 GPU
+- **修復方案**：
+  1. 每次轉錄前重置 `device_detector.current_device = None`，強制重新偵測
+  2. 每次轉錄時重新載入模型，確保使用當前最佳裝置
+- **修改文件**：`backend/services/transcription.py`
 
-- **device_detector.py 改進**：
-  - 新增詳細註解說明 VRAM 需求
-  - 記憶體門檻從 4000MB 調整為 2000MB
-  - 允許 Whisper 與 Ollama 共享 GPU 記憶體
+#### 2. **實現 VRAM 資源釋放機制**
+- **問題描述**：Whisper 和 Ollama 同時佔用 VRAM，造成資源競爭
+- **根本原因分析**：
+  1. Whisper 模型載入後常駐記憶體，未主動釋放
+  2. Ollama 預設 `keep_alive=5m`，模型使用後仍佔用 VRAM 5 分鐘
+  3. RTX 4090 24GB VRAM 也不足以同時容納兩個大型模型
+- **修復方案**：
+  1. Whisper：新增 `_unload_model()` 方法，轉錄完成後執行 `gc.collect()` + `torch.cuda.empty_cache()`
+  2. Ollama：API 呼叫加入 `keep_alive: "0"`，模型使用完畢立即釋放 VRAM
+- **修改文件**：`backend/services/transcription.py`, `backend/services/summarization.py`
 
-### 效能提升 🚀
+#### 3. **優化本地模式會議記錄品質**
+- **問題描述**：逐字稿文字越多，本地模式輸出品質越差
+- **根本原因分析**：
+  1. `num_ctx: 8192` 不足以處理長逐字稿 + 系統提示詞 + 輸出
+  2. `temperature: 0.1` 對長文本仍有隨機性，導致品質不穩定
+  3. `num_predict: 4096` 限制輸出長度，長會議記錄可能被截斷
+- **修復方案**：
+  1. `num_ctx: 16384` - 擴大上下文視窗至 16K
+  2. `temperature: 0.05` - 降低隨機性，提升穩定性
+  3. `num_predict: 6144` - 允許更長輸出
+  4. `repeat_penalty: 1.2` - 加強重複懲罰，避免輸出卡住
+  5. `timeout: 600` 秒 - 延長超時，避免長文本處理中斷
+- **修改文件**：`backend/services/summarization.py`
 
-- **GPU 加速恢復後的效能改善**：
-  - 轉錄速度：約 **3-5 倍** 提升（CPU int8 → GPU float16）
-  - 預估處理時間：5 分鐘音檔從約 4 分鐘縮短至約 1 分鐘
+#### 4. **重構自訂格式功能**
+- **問題描述**：使用者設定的自訂會議記錄格式完全被忽略
+- **根本原因分析**：
+  1. 自訂格式僅作為 `user_prompt` 前綴，與預設格式混合
+  2. 系統提示詞仍包含預設格式範例，LLM 優先遵循系統提示
+  3. 格式指令分散在多處，LLM 無法判斷應遵循哪個
+- **修復方案**：
+  1. 新增 `_is_format_template()` - 偵測是否為格式模板
+  2. 新增 `_build_custom_format_prompt()` - 建構專用自訂格式提示詞
+  3. 新增 `_build_enhanced_system_prompt()` - 建構增強系統提示詞
+  4. 偵測到格式模板時，**完全移除預設格式**，僅使用使用者定義格式
+  5. 強調「必須 100% 嚴格遵守」使用者格式
+- **修改文件**：`backend/services/summarization.py`
+
+### 技術細節 🔧
+
+- **VRAM 管理策略**：採用「輪流使用」而非「同時使用」的設計
+- **GPU 偵測改進**：每次任務獨立偵測，不依賴啟動時的快取結果
+- **格式偵測邏輯**：檢測 `#`、`##`、`-`、`*`、`1.` 等 Markdown 格式標記
+
+### Docker 重建 🐳
+
+⚠️ **本版本需要重建 Docker 映像檔**
+
+```bash
+# Windows GPU 版本
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d --build
+
+# 其他版本
+docker-compose -f docker/docker-compose.yml up -d --build
+```
+
+**重建原因**：後端程式碼變更（`transcription.py`, `summarization.py`），Dockerfile 使用 `COPY . .` 複製程式碼至映像檔中。
 
 ---
 
