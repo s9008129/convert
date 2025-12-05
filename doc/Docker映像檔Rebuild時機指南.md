@@ -1,9 +1,9 @@
 # 🐳 Docker 映像檔 Rebuild 時機指南
 
-> **版本**: v2.2（v3.4.1 更新）  
+> **版本**: v2.3（v3.4.4 更新）  
 > **適用專案**: MeetingScribe  
-> **最後更新**: 2025-01-27
-> **⚠️ 重要提示**: 自 v3.4 起，請改用 **[Docker 零重建部署指南](Docker零重建部署指南.md)** 獲得更好的開發體驗
+> **最後更新**: 2025-12-05
+> **⚠️ 重要提示**: 修改 GPU 相關設定前，請先閱讀 **[INSTRUCTIONS.md](../INSTRUCTIONS.md)**
 
 ---
 
@@ -11,10 +11,10 @@
 
 本指南解答一個常見問題：**「我修改了程式碼，到底需不需要重建 Docker 映像檔？」**
 
-**⚡ v3.4.1 更新重點**：
-- 完全移除自訂會議記錄格式功能（前後端）
-- 簡化系統複雜度，提升穩定性
-- **本版本需要 Rebuild**
+**⚡ v3.4.4 更新重點**：
+- 修復會議記錄輸出英文問題（強化繁體中文 prompt）
+- 優化 Docker rebuild：模型快取使用 volume，不再每次重新下載
+- 新增 INSTRUCTIONS.md 最高指導原則
 
 > 如果您正在尋求更快的開發體驗，建議直接跳轉到新的 [Docker 零重建部署指南](Docker零重建部署指南.md)，它提供了一套完整的零重建方案，可將開發效率提升 **60-180 倍**。
 
@@ -22,6 +22,30 @@
 1. **生產部署環境**（不使用 override.yml）
 2. **理解 Docker 基本原理**
 3. **Dockerfile 和系統級修改**
+
+---
+
+## 🔥 v3.4.4 Rebuild 優化
+
+### Whisper 模型不再每次重新下載！
+
+**v3.4.4 之前的問題：**
+- 每次 `docker build --no-cache` 都要重新下載 1.5GB Whisper 模型
+- 浪費時間和帶寬
+
+**v3.4.4 解決方案：**
+- 模型快取目錄指向 Docker volume（`HF_HOME=/app/models`）
+- 模型只需下載一次，rebuild 時自動使用快取
+
+```bash
+# 首次部署（模型會自動下載到 volume）
+docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d
+
+# 之後 rebuild（不需重新下載模型）
+docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache
+# 模型快取在 meetingscribe-whisper-models volume 中
+```
 
 ---
 

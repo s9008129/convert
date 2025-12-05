@@ -1,29 +1,88 @@
 # 🚀 GPU 加速支援完整指南
 
-> **版本**: v3.4.0 - GPU 動態偵測 + VRAM 資源管理  
-> **最後更新**: 2025-01-27  
-> **適用版本**: v3.4.0+ (動態 GPU 偵測 + VRAM 釋放)  
+> **版本**: v3.4.4 - GPU 加速 + cuDNN 8/9 + 模型快取優化  
+> **最後更新**: 2025-12-05  
+> **適用版本**: v3.4.3+ (CUDA 12 + cuDNN 8/9)  
 > **狀態**: 🟢 GPU 加速驗證完成
+
+---
+
+## ⚠️ 重要：cuDNN 依賴規則
+
+> **必讀：** 在修改任何 GPU 相關設定前，請先閱讀 [INSTRUCTIONS.md](../INSTRUCTIONS.md)
+
+**CTranslate2（faster-whisper 底層）需要：**
+```
+├── CUDA 12.x
+├── cuDNN 9（用於一般推理）
+└── cuDNN 8（用於語音識別模型，如 Whisper）⚠️ 關鍵！
+```
+
+官方文件明確說明：
+> "If you plan to run models with convolutional layers (e.g. for **speech recognition**), 
+> you should also install **cuDNN 8** for CUDA 12.x."
 
 ---
 
 ## 📌 概述
 
-MeetingScribe v3.4.0 完全支援 NVIDIA GPU 加速，相比 CPU 提升 **80-100倍** 轉錄速度！
+MeetingScribe v3.4.4 完全支援 NVIDIA GPU 加速，相比 CPU 提升 **80-100倍** 轉錄速度！
 
 ### 🎯 版本更新歷史
 
 | 版本 | 發布日期 | 改進內容 | GPU 加速 |
 |------|---------|---------|---------|
+| **v3.4.4** | 2025-12-05 | ✅ 模型快取優化 + 繁體中文輸出修復 | **93.7× 實時倍率** |
+| **v3.4.3** | 2025-12-05 | ✅ 真正修復 GPU - cuDNN 8 + cuDNN 9 | **93.7× 實時倍率** |
 | **v3.4.0** | 2025-01-27 | ✅ 動態 GPU 偵測 + VRAM 資源釋放 | **93.7× 實時倍率** |
 | **v3.3.6** | 2025-12-03 | ✅ cuDNN 版本相容性修復 | **93.7× 實時倍率** |
 | **v3.3.5** | 2025-12-03 | ✅ GPU Dockerfile 建立 | **83× 實時倍率** |
-| **v3.3.4** | 2025-12-03 | GPU 環境配置初步支援 | 部分支援 |
-| **v3.3.3 及之前** | - | ❌ 不支援 GPU | 僅 CPU 模式 |
 
 ---
 
-## 🔥 v3.4.0 重大修復：動態 GPU 偵測 + VRAM 資源管理
+## 🔥 v3.4.3 重大修復：cuDNN 8 + cuDNN 9
+
+### 問題現象（v3.4.0）
+
+即使程式碼正確，容器仍無法使用 GPU：
+- ❌ 日誌顯示 GPU 偵測成功，但轉錄時崩潰
+- ❌ 錯誤：`Could not load library libcudnn_ops_infer.so.8`
+- ❌ 容器反覆重啟
+
+### 根本原因分析（第一性原理）
+
+**問題一：原始 Dockerfile 無 CUDA**
+```
+docker/Dockerfile 使用 python:3.11-slim-bookworm
+├── ❌ 無 CUDA Runtime
+├── ❌ 無 cuDNN
+└── ❌ 無 cuBLAS
+```
+
+**問題二：cuDNN 版本不完整**
+```
+nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+├── ✅ CUDA 12.3.2
+├── ✅ cuDNN 9.0.0
+└── ❌ cuDNN 8（Whisper 語音識別需要！）
+```
+
+### 解決方案（v3.4.3）
+
+創建 `docker/Dockerfile.gpu`：
+```dockerfile
+FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+
+# ✅ 安裝 cuDNN 8（Whisper 語音識別必需）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libcudnn8=8.9.7.29-1+cuda12.2 \
+    && rm -rf /var/lib/apt/lists/* && ldconfig
+```
+
+---
+
+## 🔥 v3.4.0 修復：動態 GPU 偵測 + VRAM 資源管理
 
 ### 問題現象（v3.3.6）
 

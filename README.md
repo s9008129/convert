@@ -1,8 +1,8 @@
-# MeetingScribe v3.4.1
+# MeetingScribe v3.4.4
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.4.1-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.4.4-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -13,11 +13,20 @@
 
 </div>
 
+> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [`INSTRUCTIONS.md`](INSTRUCTIONS.md) - 最高指導原則
+
 ---
 
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 v3.4.4 繁體中文輸出修復 + Whisper 模型快取優化
+
+- ✅ **修復繁體中文輸出**：強化 System Prompt 與 User Message 中的語言約束，即使逐字稿含英文也確保輸出繁體中文
+- ✅ **Whisper 模型快取優化**：設定 `HF_HOME=/app/models`，模型儲存至 Docker Volume，重建時無需重新下載
+- ✅ **新增 INSTRUCTIONS.md**：最高指導原則文件，防止 cuDNN、繁體中文輸出等問題再次發生
+- ⚠️ **需要 Docker 重建**：請執行 `docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache`
 
 ### 🆕 v3.4.1 簡化設計：完全移除自訂格式功能
 

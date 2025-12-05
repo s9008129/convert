@@ -1,13 +1,15 @@
 # ============================================================
 # docker-compose-windows-gpu.yml
-# MeetingScribe v3.4.3 - Windows + RTX 4090 專用 GPU 加速版
+# MeetingScribe v3.4.4 - Windows + RTX 4090 專用 GPU 加速版
 # ============================================================
 # 
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
 # 使用 NVIDIA CUDA 12 + cuDNN 8/9 基底映像支援 faster-whisper GPU 加速
 #
-# 重要：需要安裝 cuDNN 8 庫以支援 Whisper 語音識別
-# 參考：https://opennmt.net/CTranslate2/installation.html
+# 重要依賴（參見 INSTRUCTIONS.md）：
+# - cuDNN 8 庫：Whisper 語音識別必需
+# - cuDNN 9 庫：CTranslate2 推理引擎
+# - 參考: https://opennmt.net/CTranslate2/installation.html
 # 
 # 使用方式：
 #   cd docker
@@ -111,10 +113,11 @@ services:
     # 標籤：方便識別
     labels:
       - "com.meetingscribe.project=meetingscribe"
-      - "com.meetingscribe.version=3.4.2"
+      - "com.meetingscribe.version=3.4.4"
       - "com.meetingscribe.platform=windows-gpu"
       - "com.meetingscribe.gpu=rtx4090"
       - "com.meetingscribe.cuda=12.3"
+      - "com.meetingscribe.cudnn=8+9"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]

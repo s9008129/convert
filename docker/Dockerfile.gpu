@@ -98,7 +98,11 @@ ENV PATH="/opt/venv/bin:$PATH" \
     MAX_FILE_SIZE_MB=100 \
     ENABLE_BATCH_UPLOAD=false \
     MAX_CONCURRENT_TASKS=1 \
-    QUEUE_MAX_SIZE=50
+    QUEUE_MAX_SIZE=50 \
+    # v3.4.4: 將 Whisper 模型快取目錄指向 volume 掛載點
+    # 這樣模型只需下載一次，rebuild 時自動使用快取
+    HF_HOME=/app/models \
+    XDG_CACHE_HOME=/app/models
 
 # 建立非 root 用戶
 RUN useradd -m -u 1000 appuser
@@ -112,9 +116,10 @@ COPY --from=builder /opt/venv /opt/venv
 # 複製應用程式碼
 COPY --chown=appuser:appuser . .
 
-# 預載 Whisper 模型（使用 CPU 下載，執行時使用 CUDA）
-# 這樣模型就會被打包進映像，不需要每次啟動時重新下載
-RUN python -c "from faster_whisper import WhisperModel; print('Downloading Whisper medium model...'); WhisperModel('medium', device='cpu', compute_type='int8')" || true
+# 建立模型目錄（會被 volume 覆蓋）
+# 注意：不在 build 時下載模型，而是在運行時首次使用時下載
+# 這樣可以利用 volume 持久化，避免每次 rebuild 重新下載
+RUN mkdir -p /app/models && chown -R appuser:appuser /app/models
 
 # 建立資料目錄
 RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/cache /app/models && \

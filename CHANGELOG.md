@@ -5,6 +5,77 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.4.4] - 2025-12-05
+
+### 重大改進 🔥
+
+此版本解決兩個重複發生的問題，並建立最高指導原則防止未來再犯。
+
+#### 1. 修復會議記錄輸出英文問題
+
+**問題根因（第一性原理分析）：**
+- Gemma 3 等多語言模型傾向使用輸入語言作為輸出語言
+- 當逐字稿包含英文時，模型自動切換到英文模式
+- 僅在 system prompt 要求中文輸出**不夠**
+
+**解決方案（三道防線）：**
+1. `config.py`：在 `<critical_rules>` 中強化繁體中文為「最高優先級」
+2. `config.py`：新增 `<language_enforcement>` 區塊強制語言規則
+3. `summarization.py`：在 user message 前綴加入繁體中文指令
+
+```python
+user_message = f"""【重要】請使用繁體中文（台灣正體）輸出，不要使用英文。
+
+以下是會議的逐字稿，請整理成會議記錄：
+{transcript}"""
+```
+
+#### 2. 優化 Docker Rebuild 效率
+
+**問題：** 每次 `docker build --no-cache` 都重新下載 1.5GB Whisper 模型
+
+**根本原因：**
+- 模型下載在 Docker image layer 中
+- `--no-cache` 會清除所有 layer，包括模型
+
+**解決方案：**
+- 將模型快取目錄指向 Docker volume 掛載點
+- 設定 `HF_HOME=/app/models` 和 `XDG_CACHE_HOME=/app/models`
+- 模型只需下載一次，rebuild 時自動使用快取
+
+### 新增功能
+
+- ✨ `INSTRUCTIONS.md` - 開發最高指導原則
+  - cuDNN 8/9 依賴規則
+  - 繁體中文輸出三道防線
+  - Docker 重建優化指南
+  - 每次發布前檢查清單
+
+### 修改檔案
+
+| 檔案 | 修改內容 |
+|------|----------|
+| `backend/core/config.py` | 強化繁體中文輸出規則 |
+| `backend/services/summarization.py` | 新增中文指令前綴 |
+| `docker/Dockerfile.gpu` | 模型快取指向 volume |
+| `docker/docker-compose-windows-gpu.yml` | 更新至 v3.4.4 |
+| `INSTRUCTIONS.md` | 新增開發最高指導原則 |
+
+### 部署指南
+
+```bash
+# 首次部署（模型會自動下載到 volume）
+docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d
+
+# 之後 rebuild（不需重新下載模型）
+docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache
+docker-compose -f docker/docker-compose-windows-gpu.yml up -d
+# 模型快取在 meetingscribe-whisper-models volume 中
+```
+
+---
+
 ## [3.4.3] - 2025-12-05
 
 ### 重大修復 🔥 - GPU 加速實際生效

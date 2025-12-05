@@ -114,7 +114,12 @@ class SummarizationService:
         system_prompt = settings.DEFAULT_SYSTEM_PROMPT
         log.info("使用系統預設格式生成會議記錄")
         
-        user_message = f"以下是會議的逐字稿，請整理成會議記錄：\n\n{transcript}"
+        # v3.4.4: 強化繁體中文輸出指令，解決英文輸入導致英文輸出問題
+        user_message = f"""【重要】請使用繁體中文（台灣正體）輸出，不要使用英文。
+
+以下是會議的逐字稿，請整理成會議記錄：
+
+{transcript}"""
         
         try:
             if mode == ProcessingMode.CLOUD:
