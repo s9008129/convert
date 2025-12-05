@@ -81,7 +81,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    - 無論逐字稿是什麼語言，輸出必須是繁體中文（台灣正體）
    - 即使逐字稿是英文或包含英文，也必須翻譯成繁體中文輸出
    - 禁止在輸出中使用英文字母（Markdown 語法除外）
-   - 英文專有名詞必須翻譯：AI→人工智慧、RPA→流程自動化
 </critical_rules>
 ```
 
