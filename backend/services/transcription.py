@@ -100,18 +100,23 @@ class TranscriptionService:
             
             # 執行轉錄 - 使用繁體中文 initial_prompt 引導輸出
             # Whisper 不區分 zh-TW/zh-CN，使用 initial_prompt 是業界最佳實踐
-            traditional_chinese_prompt = "以下是台灣繁體中文的會議逐字稿，請使用正體中文輸出。"
+            # 注意：initial_prompt 不應該包含指令性文字，應該是「範例內容」格式
+            # 參考: https://github.com/openai/whisper/discussions/117
+            traditional_chinese_prompt = "這是一場專業會議的逐字記錄，討論主題包含專案進度、決議事項。"
             
             segments, info = self._model.transcribe(
                 audio_path,
                 language="zh",  # 指定中文語言
                 beam_size=5,
-                initial_prompt=traditional_chinese_prompt,  # 引導輸出繁體中文
+                initial_prompt=traditional_chinese_prompt,  # 引導輸出繁體中文風格
                 vad_filter=True,  # 過濾靜音
                 vad_parameters=dict(
                     min_silence_duration_ms=500,
                     speech_pad_ms=400
-                )
+                ),
+                condition_on_previous_text=True,  # 啟用上下文連貫性
+                no_speech_threshold=0.6,  # 降低靜音誤判
+                compression_ratio_threshold=2.4,  # 避免重複輸出
             )
             
             # 收集所有段落

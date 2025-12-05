@@ -1,8 +1,9 @@
 # 🐳 Docker 映像檔 Rebuild 時機指南
 
-> **版本**: v1.0  
+> **版本**: v2.0（v3.4 更新）  
 > **適用專案**: MeetingScribe  
-> **最後更新**: 2025-12-01
+> **最後更新**: 2025-12-03
+> **⚠️ 重要提示**: 自 v3.4 起，請改用 **[Docker 零重建部署指南](Docker零重建部署指南.md)** 獲得更好的開發體驗
 
 ---
 
@@ -10,26 +11,29 @@
 
 本指南解答一個常見問題：**「我修改了程式碼，到底需不需要重建 Docker 映像檔？」**
 
-答案取決於：
-1. 你修改了**什麼類型**的檔案
-2. 你的 Docker Compose 是否設定了 **Volume Mount**
+**⚡ v3.4 更新：現在大多數修改都無需重建！**
+
+> 如果您正在尋求更快的開發體驗，建議直接跳轉到新的 [Docker 零重建部署指南](Docker零重建部署指南.md)，它提供了一套完整的零重建方案，可將開發效率提升 **60-180 倍**。
+
+本指南仍保持更新，用於以下場景：
+1. **生產部署環境**（不使用 override.yml）
+2. **理解 Docker 基本原理**
+3. **Dockerfile 和系統級修改**
 
 ---
 
 ## 🎯 快速判斷表
 
-| 修改類型 | 需要 Rebuild？ | 需要 Restart？ | 說明 |
-|----------|---------------|---------------|------|
-| **Python 程式碼** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | Volume Mount 會覆蓋容器內檔案 |
-| **Python 程式碼** (無 Volume Mount) | ✅ 需要 | - | 程式碼在 build 時複製進映像 |
-| **前端 HTML/CSS/JS** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | 靜態檔案即時生效 |
-| **前端 HTML/CSS/JS** (無 Volume Mount) | ✅ 需要 | - | 需重建映像 |
-| **requirements.txt** | ✅ 需要 | - | 依賴在 build 時安裝 |
-| **Dockerfile** | ✅ 需要 | - | 定義映像建構流程 |
-| **docker-compose.yml** | ❌ 不需要 | ✅ 需要 | 只是執行配置 |
-| **.env 環境變數** | ❌ 不需要 | ✅ 需要 (`down` + `up`) | 環境變數在啟動時讀取 |
-| **config.yaml** (有 Volume Mount) | ❌ 不需要 | ✅ 需要 | 配置檔案即時生效 |
-| **Whisper 模型變更** | ✅ 需要 | - | 模型在 build 時下載 |
+| 修改類型 | v3.3 及更早 | v3.4 零重建方案 | 說明 |
+|----------|------------|---------------|------|
+| **Python 程式碼** (backend/*.py) | ❌ 需要 rebuild | ✅ 只需 restart | Volume Mount 實時同步 |
+| **前端檔案** (HTML/CSS/JS) | ❌ 需要 rebuild | ✅ 瀏覽器刷新 | 前端即時生效 |
+| **config.yaml** | ❌ 需要 rebuild | ✅ 只需 restart | 配置文件動態注入 |
+| **requirements.txt** | ✅ 需要 rebuild | ✅ 只需 restart | entrypoint 自動安裝 |
+| **.env 環境變數** | ✅ 需要 down+up | ✅ 只需 restart | .env.local 優先級覆蓋 |
+| **docker-compose.yml** | ❌ 需要 down+up | ❌ 需要 down+up | 服務配置變更 |
+| **Dockerfile** | ✅ 需要 rebuild | ✅ 需要 rebuild | 映像定義變更 |
+| **系統依賴** (apt-get) | ✅ 需要 rebuild | ✅ 需要 rebuild | 映像系統級變更 |
 
 ---
 

@@ -1,0 +1,100 @@
+# ============================================================
+# docker-compose.override.yml
+# MeetingScribe 零重建開發配置
+# ============================================================
+# 
+# 🎯 目的：
+# - 無損覆蓋requirements.txt的修改（無需rebuild）
+# - 無損覆蓋.env環境變數變更（無需down+up）
+# - 無損覆蓋config.yaml配置變更（無需restart）
+# - 無損覆蓋前後端程式碼變更（只需restart）
+#
+# 📋 使用方式：
+#   開發模式（有此檔案）：docker compose up
+#   生產模式（無此檔案）：docker compose up
+#
+# 🔧 工作原理：
+#   - Docker Compose 自動載入 docker-compose.override.yml
+#   - override.yml 中的設定會覆蓋 docker-compose.yml
+#   - 透過 tmpfs 和環境變數注入，實現零重建更新
+# ============================================================
+
+services:
+  app:
+    # ========================================
+    # 環境隔離層：防止主機環境污染
+    # ========================================
+    environment:
+      # 強制排除 .env.local 中的變數被父層覆蓋
+      - COMPOSE_OVERRIDE=true
+
+    # ========================================
+    # 程式碼層：實時同步開發中的所有變更
+    # ========================================
+    volumes:
+      # 核心：掛載整個專案根目錄的開發檔案
+      # 支援：
+      # - backend/*.py 變更（只需 restart）
+      # - frontend/* 變更（只需瀏覽器刷新）
+      # - config.yaml 變更（只需 restart）
+      # - requirements.txt 變更（已通過 pip-sync 在容器啟動時處理）
+      
+      # 後端程式碼：立即生效，無需rebuild
+      - ../backend:/app/backend:ro
+      
+      # 前端程式碼：立即生效，無需rebuild
+      - ../frontend:/app/frontend:ro
+      
+      # 配置檔案：立即生效，無需rebuild
+      - ../config.yaml:/app/config.yaml:ro
+      
+      # 依賴管理：透過 pip 在容器啟動時動態安裝
+      # （見下方 entrypoint 說明）
+      - ../requirements.txt:/app/requirements.txt:ro
+      
+      # 臨時檔案系統（確保容器不被污染）
+      - /tmp/meetingscribe-temp:/tmp:rw
+    
+    # ========================================
+    # 啟動配置：實現動態依賴注入
+    # ========================================
+    entrypoint: >
+      sh -c 'echo "[INIT] MeetingScribe 開發環境初始化";
+      if [ -f /app/requirements.txt ]; then
+        echo "[INIT] 檢測依賴變更...";
+        pip install --no-cache-dir -q -r /app/requirements.txt || echo "[INIT] ⚠️  依賴同步失敗，使用現有環境繼續啟動";
+      fi;
+      echo "[INIT] 啟動 MeetingScribe...";
+      exec python -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload'
+    
+    # ========================================
+    # 日誌配置：便於調試
+    # ========================================
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+        labels: "com.meetingscribe.dev=true"
+
+# ============================================================
+# 🚀 零重建工作流程：
+# 
+# 1️⃣ 修改 config.yaml：
+#    $ docker compose restart
+#
+# 2️⃣ 修改 backend/*.py 或 frontend/*：
+#    $ docker compose restart
+#
+# 3️⃣ 修改 requirements.txt：
+#    $ docker compose restart
+#    （容器啟動時會自動 pip install）
+#
+# 4️⃣ 修改 .env 變數：
+#    編輯 .env.local，然後 docker compose restart
+#
+# 5️⃣ 完整清空重來：
+#    $ docker compose down -v
+#    $ docker compose up
+#
+# ============================================================

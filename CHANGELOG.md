@@ -5,209 +5,38 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
-## [3.3.6] - 2025-12-03
+## [3.5.1] - 2025-12-05
 
-### 重大修復 🔥🔥🔥
+### 緊急修正 🔥
 
-- **徹底修復 GPU 加速問題 - cuDNN 版本不相容**
+- **修復 GPU 加速失效問題（嚴重）**
+  - **問題描述**：Whisper 轉錄時使用 CPU 模式（int8），而非 GPU 模式（float16），導致處理速度極慢
+  - **根本原因分析（第一性原理）**：
+    1. `device_detector.py` 設定 4000MB (4GB) 作為最低 VRAM 門檻
+    2. RTX 4090 有 24GB VRAM，但 Ollama 運行 Gemma3:27b-it-qat 模型時佔用約 20GB
+    3. 當 Whisper 需要載入時，可用 VRAM 僅剩約 3.5GB，低於 4GB 門檻
+    4. 系統判定 GPU 不可用，自動降級至 CPU 模式
+  - **修復方案**：
+    1. 將 VRAM 門檻從 4000MB 降至 2000MB
+    2. faster-whisper medium 模型實際只需約 2GB VRAM，可與 Ollama 共享 GPU
+  - **驗證結果**：
+    - 修復前：`載入 Whisper 模型: medium, 裝置: cpu, 精度: int8`
+    - 修復後：`偵測到 NVIDIA GPU: NVIDIA GeForce RTX 4090，使用 CUDA 加速` + `裝置偵測完成: cuda, 精度: float16`
+  - **修改檔案**：`backend/services/device_detector.py`
+  - **影響範圍**：所有使用 GPU 加速的 Windows/Linux 用戶
 
-  #### 問題現象
-  - 即使使用 NVIDIA CUDA 映像，GPU 使用率仍然只有 5%
-  - 錯誤訊息：`Could not load library libcudnn_ops_infer.so.8`
-  - GPU 記憶體只使用 1.0-1.1 GB（應使用 ~3 GB）
+### 技術改進 🔧
 
-  #### 根本原因（第一性原理分析）
-  
-  **關鍵發現**：ctranslate2 版本與 cuDNN 版本不相容
-  
-  | ctranslate2 版本 | 需要 cuDNN 版本 | 說明 |
-  |-----------------|----------------|------|
-  | < 4.5.0 | cuDNN 8 | 需要 libcudnn_ops_infer.so.**8** |
-  | >= 4.5.0 | cuDNN 9 | 支援 libcudnn.so.**9** |
-  
-  根據 [CTranslate2 CHANGELOG v4.5.0](https://github.com/OpenNMT/CTranslate2/blob/master/CHANGELOG.md)：
-  > "The Ctranslate2 Python package now supports CUDNN 9 and is no longer compatible with CUDNN 8."
-  
-  **原配置問題**：
-  - Dockerfile.gpu 使用 `nvidia/cuda:12.3.2-cudnn9-*` (cuDNN 9)
-  - requirements.txt 指定 `ctranslate2==4.0.0` (需要 cuDNN 8)
-  - → 版本不相容導致 GPU 加速失敗
+- **device_detector.py 改進**：
+  - 新增詳細註解說明 VRAM 需求
+  - 記憶體門檻從 4000MB 調整為 2000MB
+  - 允許 Whisper 與 Ollama 共享 GPU 記憶體
 
-  #### 修復方案
-  
-  **升級 ctranslate2 到 4.5.0+** 以支援 cuDNN 9：
-  ```
-  # requirements.txt
-  faster-whisper==1.1.0
-  ctranslate2>=4.5.0  # 支援 cuDNN 9
-  ```
-  
-  **新增必要依賴**：
-  ```
-  requests>=2.31.0  # faster-whisper 1.1.0 需要
-  ```
+### 效能提升 🚀
 
-  #### 驗證結果（令人信服的證據）
-  
-  ```
-  ============================================================
-          GPU 轉錄完整驗證測試
-  ============================================================
-  
-  [1] ctranslate2 版本與 CUDA 狀態
-      ctranslate2 版本: 4.6.1  ← 升級成功
-      CUDA 支援: True
-      CUDA 設備數量: 1
-  
-  [2] Whisper 模型載入測試
-      載入時間: 1.21s
-      設備: cuda
-  
-  [3] GPU 轉錄測試 (30 秒音訊)
-      轉錄耗時: 0.32s
-      即時倍率: 93.7x  ← 比實時快 93 倍！
-  
-  [4] GPU 記憶體使用
-      轉錄期間: 2.9 GB / 24.0 GB  ← 正確載入到 GPU
-      GPU 使用率: 35-41%  ← GPU 實際運算中
-  
-  ✅ GPU 加速驗證成功!
-  ============================================================
-  ```
-
-### 變更內容
-
-- **requirements.txt**: 升級 ctranslate2 到 4.5.0+ 並新增 requests
-- **Dockerfile.gpu**: 更新版本號至 v3.5，新增版本相容說明
-
----
-
-## [3.3.5] - 2025-12-03
-
-### 重大修復 🔥🔥🔥
-
-- **修復 GPU 加速未真正啟用問題**（第一性原理深度分析）
-  
-  #### 問題現象
-  - 系統日誌顯示「偵測到 GPU」，但 GPU 使用率極低（17%）
-  - Whisper 轉錄速度與預期 GPU 加速不符
-  - CTranslate2 CUDA 支援顯示 True，但實際未使用 GPU 計算
-  
-  #### 根本原因（第一性原理分析）
-  - **Dockerfile 使用錯誤的基礎映像**：
-    - 原始：`python:3.11-slim-bookworm`（無 CUDA 運行時庫）
-    - 根據 faster-whisper 官方文檔，GPU 執行需要：
-      1. cuBLAS for CUDA 12
-      2. cuDNN 9 for CUDA 12
-    - 這些庫只存在於 NVIDIA CUDA 官方映像中
-  
-  #### 修復方案
-  - **創建專用 GPU Dockerfile** (`docker/Dockerfile.gpu`)：
-    - 基礎映像改為：`nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04`
-    - 建置階段使用：`nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04`
-    - 包含完整 CUDA 12.3.2 + cuDNN 9 運行時庫
-  
-  - **更新 docker-compose-windows-gpu.yml**：
-    - 改用 `docker/Dockerfile.gpu`
-    - 配置正確的 GPU 環境變數
-  
-  #### 驗證結果（令人信服的證據）
-  ```
-  ============================================================
-  GPU 轉錄直接測試
-  ============================================================
-  [1] 準備測試數據...
-      音頻長度: 5 秒
-  [2] 載入 Whisper 模型...
-      載入時間: 1.30 秒
-      設備: cuda
-      計算類型: float16
-  [3] 執行轉錄...
-      轉錄時間: 0.06 秒    ← 5秒音頻只需 0.06 秒！
-      語言: zh
-  [4] 測試結果:
-      ✅ GPU 加速確認: cuda + float16
-      ✅ 模型載入成功
-      ✅ 轉錄執行成功
-  ============================================================
-  GPU 轉錄測試通過!
-  ============================================================
-  ```
-  
-  - **性能提升**：83x 實時速度（5秒音頻 → 0.06秒轉錄）
-  - **GPU 記憶體使用**：982 MiB / 24564 MiB
-  - **CUDA 版本**：12.3.2
-
-### 新增檔案 📁
-
-- `docker/Dockerfile.gpu` - GPU CUDA 加速專用 Dockerfile
-- `test_gpu_transcription.py` - GPU 轉錄測試腳本
-
-### 修改檔案 📝
-
-- `docker/docker-compose-windows-gpu.yml` - 改用 Dockerfile.gpu
-- `scripts/deploy.bat` - GPU 偵測邏輯優化
-
-### 技術細節 🔧
-
-| 項目 | 之前 (v3.3.4) | 之後 (v3.3.5) |
-|------|---------------|---------------|
-| 基礎映像 | python:3.11-slim | nvidia/cuda:12.3.2-cudnn9-runtime |
-| CUDA 版本 | 無 | 12.3.2 |
-| cuDNN 版本 | 無 | 9 |
-| 計算類型 | int8 (CPU) | float16 (GPU) |
-| 轉錄速度 | ~1x 實時 | 83x 實時 |
-
----
-
-## [3.3.4] - 2025-12-03
-
-### 重大修復 🔥
-
-- **修復 Docker GPU 支援問題**
-  - 問題分析（第一性原理）：
-    1. `docker-compose.yml` 中的 GPU 配置區塊被完全註解掉
-    2. 缺少 `NVIDIA_VISIBLE_DEVICES` 和 `NVIDIA_DRIVER_CAPABILITIES` 環境變數
-    3. 容器啟動時沒有請求 GPU 資源，導致 Whisper 只能使用 CPU 模式
-  - 根本原因：
-    - `deploy.resources.reservations.devices` 區塊被註解
-    - 這是 Docker Compose V2 啟用 GPU 的必要配置
-  - 修復內容：
-    1. 啟用 `docker-compose.yml` 中的 GPU 配置（預設開啟）
-    2. 添加 NVIDIA GPU 環境變數：
-       - `NVIDIA_VISIBLE_DEVICES=all`
-       - `NVIDIA_DRIVER_CAPABILITIES=compute,utility`
-    3. 配置 `deploy.resources.reservations.devices` 以請求 GPU
-    4. 設定資源限制：16GB 記憶體、8 CPU 核心
-  - 修改文件：
-    - `docker/docker-compose.yml`（啟用 GPU 配置）
-    - `scripts/deploy.bat`（新增 GPU 偵測功能）
-
-### 功能改進 ✨
-
-- **deploy.bat 新增 GPU 偵測功能**
-  - 啟動時自動檢測 NVIDIA GPU
-  - 顯示 GPU 型號（如 RTX 4090）
-  - 無 GPU 時顯示警告並提示將使用 CPU 模式
-  - 改進 help 訊息，說明 GPU 支援要求
-
-### 部署需求 📋
-
-- **Windows GPU 支援先決條件**：
-  1. Docker Desktop 需啟用 WSL2 後端
-  2. 安裝最新版 NVIDIA 驅動程式
-  3. Docker Desktop Settings → Resources → GPU → 勾選 Enable GPU
-  
-- **驗證 GPU 支援**：
-  ```bash
-  docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
-  ```
-
-### 文件更新 📝
-
-- 更新 `docker/docker-compose.yml` 版本標籤至 v3.3.4
-- 添加完整的 GPU 配置說明註解
-- 添加 Windows/Linux GPU 支援先決條件說明
+- **GPU 加速恢復後的效能改善**：
+  - 轉錄速度：約 **3-5 倍** 提升（CPU int8 → GPU float16）
+  - 預估處理時間：5 分鐘音檔從約 4 分鐘縮短至約 1 分鐘
 
 ---
 

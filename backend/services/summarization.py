@@ -3,6 +3,7 @@ MeetingScribe LLM 摘要服務
 支援本地模式（Ollama）、LM Studio（OpenAI 相容）和雲端模式（Gemini API）
 """
 
+import re
 import httpx
 from typing import Optional
 from openai import OpenAI, AsyncOpenAI
@@ -99,12 +100,26 @@ class SummarizationService:
         if progress_callback:
             progress_callback(65.0, "生成摘要中...")
         
-        # 組合 prompt
+        # 組合 prompt（使用者自訂格式優先權最高）
         system_prompt = settings.DEFAULT_SYSTEM_PROMPT
         
         if user_prompt:
-            # 將使用者 prompt 加到 system prompt 後面
-            system_prompt = f"{system_prompt}\n\n使用者額外要求：\n{user_prompt}"
+            # 使用者自訂格式具有最高優先權
+            # 將使用者指令置於前端，並明確標示為「必須遵守」
+            user_instruction = f"""【優先指令 - 使用者自訂格式要求】
+
+以下是使用者指定的會議記錄格式或特殊要求，這些指令具有最高優先權，必須嚴格遵守：
+
+<user_custom_format>
+{user_prompt}
+</user_custom_format>
+
+請務必按照上述使用者自訂格式進行輸出。若使用者格式與系統預設格式衝突，以使用者格式為準。
+
+---
+
+"""
+            system_prompt = user_instruction + system_prompt
         
         user_message = f"以下是會議的逐字稿，請整理成會議記錄：\n\n{transcript}"
         
@@ -156,7 +171,7 @@ class SummarizationService:
         user_message: str,
         progress_callback: Optional[callable] = None
     ) -> str:
-        """使用 Ollama 本地模式生成摘要"""
+        """使用 Ollama 本地模式生成摘要（針對 Gemma 3 優化）"""
         client = await self._get_ollama_client()
         
         try:
@@ -164,9 +179,10 @@ class SummarizationService:
             if progress_callback:
                 progress_callback(65.0, "載入 Ollama 模型...")
             
-            # 強制設定低溫以確保中文輸出（Gemma3:27b 最佳實踐）
-            effective_temperature = 0.1
-            
+            # 針對 Gemma 3 模型的最佳參數配置
+            # temperature 低：減少隨機性，提高格式遵循度
+            # num_ctx 高：確保長逐字稿不被截斷
+            # repeat_penalty：避免重複輸出
             response = await client.post(
                 "/api/chat",
                 json={
@@ -177,7 +193,13 @@ class SummarizationService:
                     ],
                     "stream": False,
                     "options": {
-                        "temperature": effective_temperature
+                        "temperature": 0.1,       # 低溫提高格式遵循度
+                        "top_p": 0.9,             # 控制輸出多樣性
+                        "top_k": 40,              # 限制候選詞數量
+                        "repeat_penalty": 1.15,   # 防止重複（比預設 1.1 稍高）
+                        "num_ctx": 8192,          # 擴大上下文視窗
+                        "num_predict": 4096,      # 允許生成更長的輸出
+                        "stop": ["---\n\n## 原始逐字稿"]  # 停止在逐字稿之前
                     }
                 }
             )
@@ -188,6 +210,9 @@ class SummarizationService:
             
             data = response.json()
             summary = data.get("message", {}).get("content", "")
+            
+            # 後處理：清理不需要的前綴
+            summary = self._clean_ollama_output(summary)
             
             # 檢查摘要是否為空
             if not summary or not summary.strip():
@@ -203,6 +228,37 @@ class SummarizationService:
         except Exception as e:
             log.error(f"Ollama 摘要生成失敗: {e}")
             raise
+    
+    def _clean_ollama_output(self, summary: str) -> str:
+        """
+        清理 Ollama 輸出中的常見問題
+        - 移除 LLM 常加的前綴（「好的，我來整理...」）
+        - 確保以正確的標題開頭
+        """
+        import re
+        
+        # 常見的無用前綴模式
+        prefixes_to_remove = [
+            r"^好的[，,]?\s*我[來来][整幫]理.*?[：:。\n]",
+            r"^以下是.*?會議記錄[：:。\n]",
+            r"^我[來来]為[您你]整理.*?[：:。\n]",
+            r"^根據逐字稿[，,]?\s*",
+            r"^OK[,，]?\s*",
+            r"^Sure[,，]?\s*",
+        ]
+        
+        cleaned = summary.strip()
+        for pattern in prefixes_to_remove:
+            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # 確保以 # 會議記錄 開頭
+        if not cleaned.startswith("#"):
+            # 嘗試找到第一個 # 標題
+            match = re.search(r"^#\s", cleaned, re.MULTILINE)
+            if match:
+                cleaned = cleaned[match.start():]
+        
+        return cleaned.strip()
     
     async def _summarize_with_lmstudio(
         self,

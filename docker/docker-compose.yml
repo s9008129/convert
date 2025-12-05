@@ -1,6 +1,6 @@
 # ============================================================
 # docker-compose.yml
-# MeetingScribe v3.3.4 - Windows/Linux 通用版（CUDA GPU 支援）
+# MeetingScribe v2.2 - Windows/Linux 通用版（CUDA GPU 支援）
 # ============================================================
 # 
 # 🔒 隔離保證：
@@ -8,11 +8,6 @@
 # - 使用獨立的 Docker 網路 (meetingscribe-network)
 # - 使用帶專案前綴的 Volume 命名
 # - 設定資源限制，不影響其他 Docker 服務
-# 
-# 🎮 GPU 支援：
-# - v3.3.4 啟用 NVIDIA GPU 支援（預設開啟）
-# - 自動偵測 GPU，無 GPU 時自動降級到 CPU 模式
-# - 需要 Docker Desktop 啟用 WSL2 後端
 # 
 # ============================================================
 
@@ -32,36 +27,32 @@ services:
     hostname: meetingscribe-app
     restart: unless-stopped
     
-    # 載入環境變數檔案
+    # 載入環境變數檔案（優先級順序）
     env_file:
       - ../.env
+      - ../.env.local  # 本地開發覆蓋（若存在）
     
     # ========================================
-    # GPU 資源配置 - v3.3.4 啟用 NVIDIA GPU
+    # 資源限制 - 確保不影響其他服務
+    # 對於 RTX 4090，可取消註解以啟用 GPU
     # ========================================
-    deploy:
-      resources:
-        limits:
-          cpus: '8'
-          memory: 16G
-        reservations:
-          cpus: '2'
-          memory: 4G
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '8'
+    #       memory: 16G
+    #     reservations:
+    #       cpus: '2'
+    #       memory: 4G
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     
     ports:
       - "9527:9527"
     
     environment:
-      # ========================================
-      # GPU 運算設定（v3.3.4 新增）
-      # ========================================
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      
       # ========================================
       # 本地模式設定（Ollama - 連接主機）
       # ========================================
@@ -122,10 +113,9 @@ services:
     # 標籤：方便識別和管理
     labels:
       - "com.meetingscribe.project=meetingscribe"
-      - "com.meetingscribe.version=3.3.4"
+      - "com.meetingscribe.version=2.2"
       - "com.meetingscribe.platform=windows-linux"
       - "com.meetingscribe.description=會議音檔轉錄服務"
-      - "com.meetingscribe.gpu=nvidia"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]
@@ -161,27 +151,10 @@ volumes:
       - "com.meetingscribe.project=meetingscribe"
 
 # ============================================================
-# ⚠️ Windows/Linux GPU 支援說明 (v3.3.4)：
-# 
-# 🎮 GPU 自動偵測：
-# - 容器會自動偵測可用的 NVIDIA GPU
-# - 無 GPU 時會自動降級到 CPU 模式（Whisper 使用 int8 量化）
-# 
-# 📋 先決條件（Windows）：
-# 1. Docker Desktop 需啟用 WSL2 後端
-# 2. 安裝最新版 NVIDIA 驅動程式（支援 CUDA）
-# 3. Docker Desktop Settings → Resources → GPU → 勾選 Enable GPU
-# 
-# 📋 先決條件（Linux）：
-# 1. 安裝 NVIDIA Container Toolkit
-#    curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-#    curl -s -L https://nvidia.github.io/nvidia-docker/$(. /etc/os-release;echo $ID$VERSION_ID)/nvidia-docker.list | \
-#      sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-#    sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-#    sudo systemctl restart docker
-# 
-# 🔍 驗證 GPU 支援：
-#    docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+# ⚠️ Windows/Linux 注意事項：
+# 1. 需要安裝 NVIDIA Container Toolkit
+# 2. 無 GPU 時會自動降級到 CPU 模式
+# 3. Ollama 在主機上運行，透過 host.docker.internal 連接
 # 
 # 🔒 隔離保證：
 # - 此服務使用獨立網路 (172.30.0.0/16)

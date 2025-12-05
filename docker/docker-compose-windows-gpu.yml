@@ -20,7 +20,7 @@ services:
   app:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.gpu
+      dockerfile: docker/Dockerfile
     image: meetingscribe:windows-gpu
     container_name: meetingscribe-app
     hostname: meetingscribe-app

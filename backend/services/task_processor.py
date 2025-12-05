@@ -277,6 +277,9 @@ class TaskProcessor:
 
     def _format_result(self, task: TaskInfo, transcript: str, summary: str) -> str:
         """格式化最終結果（含英文清理機制）"""
+        # 確保設備偵測已執行，避免顯示 unknown
+        if not device_detector.current_device:
+            device_detector.detect_best_device()
         device_info = device_detector.get_device_info()
         
         # 步驟 1：檢查 summary 是否已包含標準 header
@@ -315,7 +318,7 @@ class TaskProcessor:
 > 檔案：{task.original_filename}  
 > 處理時間：{task.created_at.strftime('%Y-%m-%d %H:%M:%S')}  
 > 處理模式：{'本地模式 (Ollama)' if task.processing_mode == ProcessingMode.LOCAL else '雲端模式 (Gemini)'}  
-> 運算裝置：{device_info.get('current_device', 'unknown')}  
+> 運算裝置：{device_info.get('current_device', 'unknown').upper() if device_info.get('gpu_available') or device_info.get('mps_available') else device_info.get('current_device', 'cpu').upper()}  
 
 ---
 
@@ -336,7 +339,7 @@ class TaskProcessor:
         if task.user_prompt:
             result = result.replace("---\n\n## 原始逐字稿", f"""---
 
-### 使用者自訂指令
+### 使用者自訂會議記錄格式
 
 {task.user_prompt}
 

@@ -24,6 +24,11 @@ const elements = {
     modeCloud: document.getElementById('modeCloud'),
     cloudWarning: document.getElementById('cloudWarning'),
     
+    // 自訂格式範本
+    formatTemplateFile: document.getElementById('formatTemplateFile'),
+    uploadTemplateBtn: document.getElementById('uploadTemplateBtn'),
+    templateStatus: document.getElementById('templateStatus'),
+    
     // 自訂 Prompt
     userPrompt: document.getElementById('userPrompt'),
     
@@ -580,6 +585,19 @@ function setupEventListeners() {
     if (elements.resetFromErrorBtn) {
         elements.resetFromErrorBtn.addEventListener('click', resetUI);
     }
+    
+    // 自訂格式範本上傳
+    if (elements.uploadTemplateBtn) {
+        elements.uploadTemplateBtn.addEventListener('click', () => {
+            if (elements.formatTemplateFile) {
+                elements.formatTemplateFile.click();
+            }
+        });
+    }
+    
+    if (elements.formatTemplateFile) {
+        elements.formatTemplateFile.addEventListener('change', handleFormatTemplateUpload);
+    }
 }
 
 function selectMode(mode) {
@@ -661,4 +679,178 @@ function copyResult() {
             console.error('複製失敗:', err);
         });
     }
+}
+
+/**
+ * 處理自訂會議記錄格式範本上傳
+ * 支援 .md, .txt, .doc, .docx 檔案
+ * 將內容轉換為 Markdown 格式作為 LLM 的格式參考
+ */
+async function handleFormatTemplateUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const fileName = file.name;
+    const fileExt = fileName.split('.').pop().toLowerCase();
+    
+    // 驗證檔案類型
+    const allowedTypes = ['md', 'txt', 'doc', 'docx'];
+    if (!allowedTypes.includes(fileExt)) {
+        if (elements.templateStatus) {
+            elements.templateStatus.innerHTML = '<span class="template-error">❌ 不支援的檔案格式</span>';
+        }
+        return;
+    }
+    
+    // 更新狀態為處理中
+    if (elements.templateStatus) {
+        elements.templateStatus.innerHTML = '<span class="template-processing">⏳ 處理中...</span>';
+    }
+    
+    try {
+        let content = '';
+        
+        if (fileExt === 'md' || fileExt === 'txt') {
+            // 純文字或 Markdown 檔案，直接讀取
+            content = await readFileAsText(file);
+        } else if (fileExt === 'doc' || fileExt === 'docx') {
+            // Word 檔案，使用 mammoth.js 轉換（如果可用）或提取純文字
+            content = await extractWordContent(file);
+        }
+        
+        if (content && content.trim()) {
+            // 將範本內容格式化並填入 userPrompt
+            const formattedContent = formatTemplateContent(content, fileName);
+            
+            if (elements.userPrompt) {
+                // 如果 userPrompt 已有內容，附加在後面
+                const existingContent = elements.userPrompt.value.trim();
+                if (existingContent) {
+                    elements.userPrompt.value = existingContent + '\n\n---\n\n' + formattedContent;
+                } else {
+                    elements.userPrompt.value = formattedContent;
+                }
+            }
+            
+            // 更新狀態為成功
+            if (elements.templateStatus) {
+                elements.templateStatus.innerHTML = `<span class="template-success">✅ 已載入範本：${fileName}</span>`;
+            }
+        } else {
+            throw new Error('無法讀取檔案內容');
+        }
+        
+    } catch (error) {
+        console.error('範本處理失敗:', error);
+        if (elements.templateStatus) {
+            elements.templateStatus.innerHTML = '<span class="template-error">❌ 範本處理失敗</span>';
+        }
+    }
+    
+    // 清空 file input 以便重新上傳相同檔案
+    event.target.value = '';
+}
+
+/**
+ * 讀取檔案為純文字
+ */
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = (e) => reject(e);
+        reader.readAsText(file, 'UTF-8');
+    });
+}
+
+/**
+ * 從 Word 檔案提取內容
+ * 簡易實作：使用 FileReader 讀取並嘗試提取文字
+ */
+async function extractWordContent(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const arrayBuffer = e.target.result;
+                
+                // 嘗試使用 mammoth.js（如果已載入）
+                if (typeof mammoth !== 'undefined') {
+                    const result = await mammoth.extractRawText({ arrayBuffer });
+                    resolve(result.value);
+                    return;
+                }
+                
+                // 簡易方法：對於 DOCX（本質上是 ZIP 檔案），嘗試提取 XML 中的純文字
+                // 這是一個 fallback 方案
+                const text = await extractTextFromDocx(arrayBuffer);
+                resolve(text);
+                
+            } catch (err) {
+                reject(err);
+            }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+/**
+ * 簡易 DOCX 文字提取（fallback 方案）
+ */
+async function extractTextFromDocx(arrayBuffer) {
+    try {
+        // DOCX 是 ZIP 格式，包含 word/document.xml
+        // 使用瀏覽器的 Compression API 或純 JS 解壓縮
+        // 這裡使用簡化方法：將 ArrayBuffer 轉為字串並提取可見文字
+        
+        const uint8Array = new Uint8Array(arrayBuffer);
+        let text = '';
+        
+        // 尋找 XML 文字內容（簡化處理）
+        let inTag = false;
+        let buffer = '';
+        
+        for (let i = 0; i < uint8Array.length; i++) {
+            const char = String.fromCharCode(uint8Array[i]);
+            
+            if (char === '<') {
+                if (buffer.trim()) {
+                    text += buffer.trim() + ' ';
+                }
+                buffer = '';
+                inTag = true;
+            } else if (char === '>') {
+                inTag = false;
+            } else if (!inTag && char.charCodeAt(0) >= 32) {
+                buffer += char;
+            }
+        }
+        
+        // 清理並返回
+        return text.replace(/\s+/g, ' ').trim();
+        
+    } catch (err) {
+        console.warn('DOCX 提取失敗，返回空字串:', err);
+        return '';
+    }
+}
+
+/**
+ * 格式化範本內容為 LLM 可理解的格式指令
+ */
+function formatTemplateContent(content, fileName) {
+    return `【參考範本】來源：${fileName}
+
+請嚴格按照以下會議記錄範本的格式、結構和風格來生成本次會議記錄：
+
+---範本開始---
+${content.trim()}
+---範本結束---
+
+重要：
+1. 請模仿上述範本的標題層級、項目符號、表格格式
+2. 請保持範本中的語氣和用詞風格
+3. 若範本有特定區塊（如決議事項、待辦追蹤），請確保輸出包含相同區塊
+4. 使用者提供的範本格式優先權最高，覆蓋系統預設格式`;
 }

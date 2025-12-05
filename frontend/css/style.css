@@ -631,3 +631,75 @@ body {
     .btn { width: 100%; }
     .title { font-size: 28px; }
 }
+
+/* Format Template Upload - v3.5.0 */
+.format-template-upload {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.btn-upload-template {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: var(--transition-fast);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.btn-upload-template:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-upload-template:active {
+    transform: translateY(0);
+}
+
+.template-status {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+}
+
+.template-hint {
+    opacity: 0.7;
+}
+
+.template-success {
+    color: var(--color-success);
+    font-weight: 500;
+}
+
+.template-error {
+    color: var(--color-error);
+    font-weight: 500;
+}
+
+.template-processing {
+    color: var(--color-primary);
+}
+
+.template-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin: var(--spacing-md) 0;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+}
+
+.template-divider::before,
+.template-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+}
