@@ -12,13 +12,13 @@ llm:
     base_url: "http://localhost:11434"
     
     # 使用的模型
-20.     # 推薦選項：
-21.     #   - gemma3:27b-it-qat  台灣繁體中文優化，推薦首選
-22.     #   - qwen2.5:7b       中文優化
-23.     #   - llama3.1:8b      平衡速度與品質
-24.     #   - mistral:7b       快速，英文較好
-25.     #   - llama3.1:70b     最高品質（需 40GB+ VRAM）
-26.     model: "gemma3:27b-it-qat"
+    # 推薦選項：
+    #   - gemma3:27b-it-qat  台灣繁體中文優化，推薦首選
+    #   - qwen2.5:7b       中文優化
+    #   - llama3.1:8b      平衡速度與品質
+    #   - mistral:7b       快速，英文較好
+    #   - llama3.1:70b     最高品質（需 40GB+ VRAM）
+    model: "gemma3:27b-it-qat"
     
     # 上下文視窗大小（token 數）
     # 影響可處理的逐字稿長度

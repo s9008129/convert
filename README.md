@@ -13,7 +13,7 @@
 
 </div>
 
-> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [INSTRUCTIONS.md](.github/INSTRUCTIONS.md) - 最高指導原則（含自動 Commit 規範、第一性原理分析、Context7 查詢要求）
+> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [INSTRUCTIONS.md](.github/INSTRUCTIONS.md) - 最高指導原則（含自動 Commit 規範、第一性原理分析、Context7 查詢要求、Git 雙平台管理策略）
 
 ---
 
@@ -38,6 +38,9 @@ MeetingScribe 是一個企業級會議轉錄工具，支援跨 Windows、macOS�
 - ✅ **移除 macOS Docker 部署方案**：`docker-compose-mac.yml`、`Dockerfile.mac`、`start-mac.sh` 等檔案移至 `old_mac/` 資料夾
 - ✅ **新增原生服務腳本**：`start-mac-native.sh`、`restart-mac-native.sh`、`stop-mac-native.sh`
 - ✅ **MPS 加速支援**：Whisper 轉錄和 Ollama 推理都使用 Apple Metal Performance Shaders
+- ✅ **LM Studio 支援**：macOS 可選用 LM Studio 作為本地 LLM（OpenAI 相容 API）
+- ✅ **MLX-Whisper 支援**：使用 Apple MLX 框架優化的 Whisper，MPS 加速效能提升 4.2 倍
+- ✅ **平台自動檢測**：程式碼自動根據平台選擇最佳配置和後端
 - ✅ **完整部署文件**：[MAC_原生服務部署指南.md](doc/MAC_原生服務部署指南.md)
 - ⚠️ **僅影響 macOS**：Windows 和 Linux 繼續使用 Docker 部署
 
@@ -48,6 +51,23 @@ MeetingScribe 是一個企業級會議轉錄工具，支援跨 Windows、macOS�
 | 10 分鐘 | 240 秒 | 57 秒 | **4.2x** |
 | 30 分鐘 | 720 秒 | 171 秒 | **4.2x** |
 | 60 分鐘 | 1440 秒 | 342 秒 | **4.2x** |
+
+#### 技術架構
+
+**配置管理**：
+- `config.yaml` - Windows/Linux 預設配置（Ollama + Faster-Whisper）
+- `config.mac.yaml` - macOS 專用配置（LM Studio + MLX-Whisper）
+- `backend/core/platform_config.py` - 自動平台檢測與配置載入
+
+**服務後端**：
+- **LLM 提供者**：Ollama（Windows/Linux）、LM Studio（macOS）、Gemini API（雲端）
+- **Whisper 後端**：Faster-Whisper（CUDA/CPU）、MLX-Whisper（MPS 加速）
+
+**前端支援**：
+- 自動偵測並顯示 MPS GPU 狀態
+- 顯示當前使用的 LLM 提供者（Ollama/LM Studio）
+
+---
 
 ### 🆕 v3.4.1 簡化設計：完全移除自訂格式功能
 

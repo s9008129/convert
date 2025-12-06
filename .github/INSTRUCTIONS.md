@@ -609,6 +609,115 @@ topic: "CUDA GPU acceleration"
 
 ---
 
+## 🔧 第九部分：Git 版本控制策略 - 雙平台管理最佳實踐
+
+### 9.1 核心原則
+
+根據業界最佳實踐（參考 [The Twelve-Factor App](https://12factor.net/)），我們採用以下策略：
+
+**最高指導原則**：
+1. ✅ **配置與程式碼分離**：底層程式邏輯共享，配置檔案平台隔離
+2. ✅ **單一程式碼庫**：所有平台使用同一個 Git Repository
+3. ✅ **環境變數優先**：敏感資訊（API Key）使用 `.env`，不進版控
+4. ✅ **平台配置檔案**：平台特定設定使用 `config.{platform}.yaml`
+
+### 9.2 檔案組織結構
+
+```
+convert/
+├── .gitignore                      # 定義不進版控的檔案
+├── .env.example                    # 環境變數範例（進版控）✅
+├── .env                            # 實際環境變數（不進版控）⚠️
+│
+├── config.yaml                     # Windows/Linux 預設配置（進版控）✅
+├── config.mac.yaml                 # macOS 專用配置（進版控）✅
+│
+├── backend/                        # 共享程式邏輯（進版控）✅
+│   ├── core/
+│   │   ├── config.py              # Pydantic 設定類別
+│   │   └── platform_config.py     # 平台檢測與配置載入
+│   ├── services/
+│   │   ├── summarization.py       # LLM 服務（支援 Ollama/LM Studio/Gemini）
+│   │   └── transcription.py       # Whisper 服務（支援 MLX/Faster-Whisper）
+│   └── api/
+│       └── routes.py               # API 路由
+│
+├── scripts/                        # 平台特定腳本（進版控）✅
+│   ├── deploy.bat                 # Windows Docker 部署
+│   ├── deploy.sh                  # Linux Docker 部署
+│   ├── start-mac-native.sh        # macOS 原生服務啟動
+│   ├── restart-mac-native.sh      # macOS 原生服務重啟
+│   └── stop-mac-native.sh         # macOS 原生服務停止
+│
+├── docker/                         # Docker 配置（進版控）✅
+│   ├── docker-compose.yml         # Linux 預設
+│   ├── docker-compose-windows-gpu.yml  # Windows GPU
+│   └── Dockerfile                 # 通用映像定義
+│
+├── old_mac/                        # 舊版 macOS Docker 方案（不進版控）⚠️
+└── doc/                            # 文件（進版控）✅
+```
+
+### 9.3 配置載入優先順序
+
+```
+1. config.yaml          # 基礎配置（所有平台共用）
+2. config.{platform}.yaml  # 平台特定配置（覆蓋基礎配置）
+3. .env                 # 環境變數（覆蓋所有配置）
+```
+
+### 9.4 平台隔離保證機制
+
+#### 自動平台檢測
+
+```python
+# backend/core/platform_config.py
+def get_platform() -> str:
+    """自動檢測平台"""
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    elif system == "windows":
+        return "windows"
+    return "linux"
+```
+
+#### 配置自動載入
+
+```python
+def load_platform_config() -> Dict[str, Any]:
+    """自動載入平台配置（深度合併）"""
+    config = yaml.safe_load(open('config.yaml'))
+    
+    platform_config_path = f'config.{get_platform()}.yaml'
+    if os.path.exists(platform_config_path):
+        platform_config = yaml.safe_load(open(platform_config_path))
+        config = deep_merge(config, platform_config)
+    
+    return config
+```
+
+### 9.5 禁止事項
+
+**Windows 使用者**：
+- ❌ 禁止修改 `config.mac.yaml`
+- ❌ 禁止修改 `scripts/start-mac-native.sh`
+
+**macOS 使用者**：
+- ❌ 禁止修改 `config.yaml`（除非確定不影響 Windows）
+- ❌ 禁止修改 `docker/docker-compose-*.yml`
+
+**所有使用者**：
+- ❌ 禁止將 `.env` 提交到 Git
+- ❌ 禁止硬編碼平台特定邏輯（使用 `if get_platform() == 'macos'`）
+
+### 9.6 參考資料
+
+- [The Twelve-Factor App - Config](https://12factor.net/config)
+- [Git Branching Strategies](https://www.atlassian.com/git/tutorials/comparing-workflows)
+
+---
+
 ## 📌 版本歷史
 
 | 版本 | 日期 | 更新內容 |
@@ -616,6 +725,7 @@ topic: "CUDA GPU acceleration"
 | v1.0 | 2025-12-05 | 初版：記錄 cuDNN 8 需求、繁體中文輸出規範、Docker 重建優化 |
 | v2.0 | 2025-12-06 | 擴充版：新增文件管理、設定檔對映、部署維護、Git 規範 |
 | v2.1 | 2025-12-06 | 強化版：新增自動 Commit 原則、第一性原理分析、Context7 查詢規範 |
+| v3.5.0 | 2025-12-06 | 雙平台版：新增 Git 版本控制策略、macOS 原生模式管理 |
 
 ---
 

@@ -1,10 +1,10 @@
 """
 MeetingScribe LLM 摘要服務
-支援本地模式（Ollama）、LM Studio（OpenAI 相容）和雲端模式（Gemini API）
+支援本地模式（Ollama/LM Studio）和雲端模式（Gemini API）
 
-v3.5.2 改進：
+v3.5.0 改進：
+- 支援平台自動偵測和配置（macOS 使用 LM Studio，Windows 使用 Ollama）
 - 實現 Ollama 模型 VRAM 釋放機制（keep_alive=0）
-- 自訂格式功能完全重構：使用者格式具有絕對優先權
 - 優化本地模型摘要品質：改善參數和提示詞策略
 """
 
@@ -16,6 +16,12 @@ from datetime import datetime, timedelta
 
 from backend.core.config import settings
 from backend.core.logger import log
+from backend.core.platform_config import (
+    get_global_config,
+    get_config_value,
+    get_llm_provider,
+    get_platform
+)
 from backend.models.schemas import ProcessingMode
 
 
@@ -50,10 +56,16 @@ class SummarizationService:
     def _get_lmstudio_client(self) -> OpenAI:
         """取得 LM Studio 客戶端（OpenAI 相容介面）"""
         if not self._lmstudio_client:
+            # 從平台配置獲取 LM Studio 設定
+            config = get_global_config()
+            base_url = get_config_value(config, 'llm.lmstudio.base_url', settings.LMSTUDIO_BASE_URL)
+            api_key = get_config_value(config, 'llm.lmstudio.api_key', 'not-needed')
+            
             self._lmstudio_client = OpenAI(
-                base_url=settings.LMSTUDIO_BASE_URL,
-                api_key="lm-studio"  # LM Studio 不需要真實 API Key
+                base_url=base_url,
+                api_key=api_key
             )
+            log.info(f"LM Studio 客戶端初始化完成 (base_url={base_url})")
         return self._lmstudio_client
     
     def _get_gemini_api_key(self) -> str:
@@ -147,19 +159,42 @@ class SummarizationService:
     ) -> str:
         """
         使用本地 LLM 生成摘要
-        自動偵測並選擇可用的引擎（Ollama 優先，其次 LM Studio）
+        v3.5.0: 根據平台配置自動選擇 LLM 提供者
+        - macOS: 優先 LM Studio，其次 Ollama
+        - Windows/Linux: 優先 Ollama，其次 LM Studio
         """
-        # 優先嘗試 Ollama
-        ollama_available = await self.check_ollama_health()
-        if ollama_available:
-            log.info("使用 Ollama 本地模式")
-            return await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
+        # 獲取平台配置的 LLM 提供者
+        config = get_global_config()
+        provider = get_config_value(config, 'llm.provider', 'ollama')
+        platform_name = get_platform()
         
-        # 其次嘗試 LM Studio
-        lmstudio_available = await self.check_lmstudio_health()
-        if lmstudio_available:
-            log.info("使用 LM Studio 本地模式")
-            return await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
+        log.info(f"平台: {platform_name}, 配置的 LLM 提供者: {provider}")
+        
+        # 根據配置選擇提供者（macOS 優先 LM Studio）
+        if provider == 'lmstudio' or platform_name == 'macos':
+            # macOS 優先使用 LM Studio
+            lmstudio_available = await self.check_lmstudio_health()
+            if lmstudio_available:
+                log.info("使用 LM Studio 本地模式")
+                return await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
+            
+            # LM Studio 不可用，嘗試 Ollama
+            ollama_available = await self.check_ollama_health()
+            if ollama_available:
+                log.info("LM Studio 不可用，回退到 Ollama")
+                return await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
+        else:
+            # Windows/Linux 優先使用 Ollama
+            ollama_available = await self.check_ollama_health()
+            if ollama_available:
+                log.info("使用 Ollama 本地模式")
+                return await self._summarize_with_ollama(system_prompt, user_message, progress_callback)
+            
+            # Ollama 不可用，嘗試 LM Studio
+            lmstudio_available = await self.check_lmstudio_health()
+            if lmstudio_available:
+                log.info("Ollama 不可用，回退到 LM Studio")
+                return await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
         
         # 都不可用，拋出錯誤
         raise RuntimeError("本地 LLM 不可用：請確認 Ollama 或 LM Studio 已啟動")
@@ -275,28 +310,51 @@ class SummarizationService:
         user_message: str,
         progress_callback: Optional[callable] = None
     ) -> str:
-        """使用 LM Studio（OpenAI 相容）生成摘要"""
+        """
+        使用 LM Studio（OpenAI 相容）生成摘要
+        v3.5.0: 從平台配置讀取模型和參數
+        """
         client = self._get_lmstudio_client()
+        config = get_global_config()
+        
+        # 從配置獲取模型和參數
+        model = get_config_value(config, 'llm.lmstudio.model', settings.LMSTUDIO_MODEL)
+        temperature = get_config_value(config, 'llm.lmstudio.temperature', 0.1)
+        max_tokens = get_config_value(config, 'llm.lmstudio.max_tokens', 32768)
         
         try:
             # 進度更新：開始生成摘要
             if progress_callback:
-                progress_callback(65.0, "載入 LM Studio 模型...")
+                progress_callback(65.0, f"載入 LM Studio 模型 ({model})...")
             
-            # 強制設定低溫以確保中文輸出
-            effective_temperature = 0.1
+            log.info(f"使用 LM Studio 生成摘要 (model={model}, temperature={temperature})")
             
             response = client.chat.completions.create(
-                model=settings.LMSTUDIO_MODEL,
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=effective_temperature
+                temperature=temperature,
+                max_tokens=max_tokens
             )
             
             if progress_callback:
                 progress_callback(85.0, "處理摘要結果...")
+            
+            summary = response.choices[0].message.content
+            
+            # 檢查摘要是否為空
+            if not summary or not summary.strip():
+                log.warning("LM Studio 摘要生成結果為空")
+                raise RuntimeError("摘要生成失敗：結果為空")
+            
+            log.info(f"LM Studio 摘要生成成功，模型: {model}")
+            return summary.strip()
+            
+        except Exception as e:
+            log.error(f"LM Studio 摘要生成失敗: {e}")
+            raise RuntimeError(f"LM Studio 摘要生成失敗: {e}")
             
             summary = response.choices[0].message.content
             

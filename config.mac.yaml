@@ -1,0 +1,227 @@
+# =====================================================
+# MeetingScribe - macOS 專用配置檔
+# v3.5.0 - 原生服務模式（使用 MPS 加速）
+# =====================================================
+# 
+# 此檔案僅用於 macOS 平台
+# Windows 平台請使用 config.yaml
+#
+# 配置優先順序：
+# 1. 環境變數（.env）
+# 2. config.mac.yaml（本檔案）- macOS 特定設定
+# 3. config.yaml - 預設值
+# =====================================================
+
+# ===== 平台識別 =====
+platform: "macos"
+deployment_mode: "native"  # native（原生） vs docker（容器）
+
+# ===== LLM 設定（macOS 專用）=====
+llm:
+  # macOS 使用 LM Studio（OpenAI 相容 API）
+  provider: "lmstudio"
+  
+  lmstudio:
+    # LM Studio 服務位址（本機）
+    base_url: "http://localhost:1234/v1"
+    
+    # 使用的模型（必須已在 LM Studio 中載入）
+    # 推薦：gemma-3-27b-it-qat（已偵測到）
+    model: "gemma-3-27b-it-qat"
+    
+    # API Key（LM Studio 本地服務通常為 "not-needed"）
+    api_key: "not-needed"
+    
+    # 上下文視窗大小
+    # 根據模型不同而調整
+    # gemma-3-27b: 支援 32768 tokens
+    max_tokens: 32768
+    
+    # 生成參數
+    temperature: 0.1  # 降低隨機性，提高穩定性
+    top_p: 0.9
+    frequency_penalty: 0.0
+    presence_penalty: 0.0
+    
+    # 超時設定（秒）
+    timeout: 600
+  
+  # Ollama 備用設定（若需要）
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "gemma3:27b-it-qat"
+    num_ctx: 32768
+    temperature: 0.1
+    timeout: 600
+
+# ===== Whisper 語音轉錄設定（macOS 專用）=====
+whisper:
+  # macOS 使用 MLX-Whisper（Apple Silicon 優化）
+  backend: "mlx"  # mlx（MPS 加速） vs faster-whisper（CPU/CUDA）
+  
+  # MLX-Whisper 設定
+  mlx:
+    # 模型大小
+    # tiny, base, small, medium, large-v3
+    # 推薦：medium（平衡速度與品質）
+    model: "medium"
+    
+    # 語言（zh = 中文）
+    language: "zh"
+    
+    # 運算裝置
+    # mps = Apple Metal Performance Shaders（推薦）
+    # cpu = CPU 模式
+    device: "mps"
+    
+    # 批次大小（影響記憶體使用）
+    batch_size: 8
+    
+    # 是否使用 FP16（半精度）
+    # MPS 支援 FP16，速度更快
+    fp16: true
+  
+  # Faster-Whisper 備用設定（若 MLX 不可用）
+  faster_whisper:
+    model: "medium"
+    language: "zh"
+    device: "cpu"
+    compute_type: "int8"
+
+# ===== 路徑設定（macOS 專用）=====
+paths:
+  # 資料目錄（使用專案相對路徑）
+  data: "./data"
+  input: "./data/uploads"
+  output: "./data/outputs"
+  cache: "./data/cache"
+  temp: "./data/temp"
+  logs: "./logs"
+  models: "./models"
+  
+  # 虛擬環境（避免影響系統環境）
+  venv: "./venv"
+
+# ===== 系統提示詞 =====
+# 使用與 Windows 版本相同的提示詞
+# 來源：config.yaml 的 system_prompt
+# 避免重複定義，使用預設值
+
+# ===== GPU/裝置設定（macOS 專用）=====
+device:
+  # 自動偵測並使用最佳裝置
+  auto_detect: true
+  
+  # 優先順序
+  # 1. MPS（Apple Silicon GPU）
+  # 2. CPU
+  preference: ["mps", "cpu"]
+  
+  # MPS 相關設定
+  mps:
+    # 是否啟用 MPS 加速
+    enabled: true
+    
+    # 記憶體分配策略
+    # high_water_mark = 自動管理
+    # preallocate = 預先分配
+    memory_strategy: "high_water_mark"
+    
+    # 最大記憶體使用（GB）
+    # null = 自動（推薦）
+    max_memory_gb: null
+
+# ===== 進階設定 =====
+advanced:
+  # 是否使用快取
+  use_cache: true
+  
+  # 詳細日誌
+  verbose: false
+  
+  # 失敗時繼續
+  continue_on_error: true
+  
+  # 輸出格式
+  output_format: "markdown"
+  
+  # 包含原始逐字稿
+  include_transcript: true
+  
+  # 最大重試次數
+  max_retries: 3
+  
+  # 虛擬環境自動管理
+  auto_manage_venv: true
+  
+  # Python 版本檢查
+  python_min_version: "3.11"
+
+# ===== 效能監控（macOS 專用）=====
+monitoring:
+  # 是否啟用效能監控
+  enabled: false
+  
+  # 記錄處理時間
+  log_processing_time: true
+  
+  # 記錄記憶體使用
+  log_memory_usage: false
+  
+  # 記錄 GPU 使用率（需要額外工具）
+  log_gpu_usage: false
+
+# ===== 排隊系統設定 =====
+queue:
+  # 最大同時處理任務數
+  # macOS 原生模式建議設為 1（避免記憶體競爭）
+  max_concurrent: 1
+  
+  # 排隊上限
+  max_queue_size: 50
+  
+  # 單一任務超時（秒）
+  task_timeout: 3600
+  
+  # 預估處理時間（分鐘/任務）
+  estimated_minutes_per_task: 3
+
+# ===== 自動清理設定 =====
+cleanup:
+  # 是否啟用自動清理
+  enabled: true
+  
+  # 保留天數
+  uploads_retention_days: 1
+  outputs_retention_days: 7
+  cache_retention_days: 30
+  logs_retention_days: 14
+  
+  # 清理時間（24 小時制）
+  cleanup_hour: 3  # 凌晨 3:00
+
+# ===== 開發模式設定 =====
+development:
+  # 是否為開發模式
+  debug: false
+  
+  # 熱重載
+  hot_reload: true
+  
+  # 跨域設定
+  cors_origins: ["http://localhost:9527", "http://127.0.0.1:9527"]
+  
+  # API 文件
+  enable_docs: true
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+
+# ===== 備註 =====
+# 此配置檔案專為 macOS 平台設計
+# 主要差異：
+# 1. 使用 LM Studio（而非 Ollama）
+# 2. 使用 MLX-Whisper + MPS 加速（而非 faster-whisper + CUDA）
+# 3. 原生部署（而非 Docker）
+# 4. 虛擬環境隔離
+#
+# Windows 使用者請勿修改此檔案，請使用 config.yaml

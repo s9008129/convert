@@ -28,10 +28,22 @@ async def health_check():
     """
     健康檢查端點
     回傳系統狀態、GPU 資訊、排隊狀態
+    v3.5.0: 支援 MPS 偵測
     """
+    from backend.core.platform_config import get_platform, get_device
+    
     # 偵測裝置
     device_detector.detect_best_device()
     device_info = device_detector.get_device_info()
+    
+    # v3.5.0: 偵測平台和裝置
+    platform_name = get_platform()
+    device_name = get_device()
+    
+    # 根據平台更新 GPU 名稱
+    if device_name == 'mps' and platform_name == 'macos':
+        device_info['gpu_name'] = 'Apple MPS (Metal Performance Shaders)'
+        device_info['gpu_available'] = True
     
     # 檢查服務狀態
     ollama_available = await summarization_service.check_ollama_health()
@@ -43,7 +55,7 @@ async def health_check():
     
     return HealthStatus(
         status="healthy",
-        version="2.2.0",
+        version="3.5.0",
         gpu_available=device_info.get("gpu_available", False),
         gpu_name=device_info.get("gpu_name"),
         ollama_available=ollama_available,

@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v2.3.4 - 移除重試功能，簡化 UX
+ * v3.5.0 - 支援 macOS 原生模式和 MPS 偵測
  */
 
 // 全域狀態
@@ -117,10 +117,23 @@ async function checkHealth() {
             elements.systemStatus.textContent = data.status === 'healthy' ? '系統正常' : '系統異常';
         }
         
-        // 更新 GPU 狀態
+        // 更新 GPU 狀態（v3.5.0: 支援 MPS 偵測）
         if (elements.gpuStatus) {
-            elements.gpuStatus.className = data.gpu_available ? 'status-ok' : 'status-warning';
-            elements.gpuStatus.textContent = data.gpu_name ? `GPU: ${data.gpu_name}` : 'GPU 未偵測';
+            let gpuText = 'GPU 未偵測';
+            let statusClass = 'status-warning';
+            
+            if (data.gpu_available && data.gpu_name) {
+                gpuText = `GPU: ${data.gpu_name}`;
+                statusClass = 'status-ok';
+                
+                // 特別處理 MPS
+                if (data.gpu_name.includes('MPS') || data.gpu_name.includes('Metal')) {
+                    gpuText = `🍎 ${data.gpu_name}`;
+                }
+            }
+            
+            elements.gpuStatus.className = statusClass;
+            elements.gpuStatus.textContent = gpuText;
         }
         
         // 更新排隊狀態

@@ -29,8 +29,9 @@
 
 1. **原生 Python 服務**：直接在 macOS 上運行 FastAPI，無虛擬化開銷
 2. **MLX-Whisper**：使用 Apple 官方 MLX 框架，針對 Apple Silicon 優化
-3. **MPS 加速**：Whisper 轉錄和 Ollama 推理都使用 Metal Performance Shaders
+3. **MPS 加速**：Whisper 轉錄和 Ollama/LM Studio 推理都使用 Metal Performance Shaders
 4. **統一記憶體**：充分利用 Apple Silicon 的統一記憶體架構
+5. **平台自動檢測**：程式碼自動根據平台選擇最佳配置和後端
 
 #### 移除內容
 
@@ -53,10 +54,24 @@
   - `doc/MAC_原生服務部署指南.md` - 原生模式完整部署指南
   - 包含效能對比、故障排除、進階設定
 
-- ✨ **MPS 加速支援**
-  - Whisper 轉錄：使用 `mlx-whisper` + MPS 加速
-  - Ollama 推理：自動使用 MPS 加速
-  - 環境變數：`WHISPER_DEVICE=mps`
+- ✨ **平台檢測與配置系統**
+  - `backend/core/platform_config.py` - 自動平台檢測與配置載入
+  - `config.mac.yaml` - macOS 專用配置檔案
+  - 支援配置深度合併（base config + platform config + env vars）
+
+- ✨ **LM Studio 支援**（macOS 專用）
+  - OpenAI 相容 API 整合
+  - 自動檢測 LM Studio 服務
+  - 支援模型熱切換
+
+- ✨ **MLX-Whisper 支援**（macOS 專用）
+  - 使用 `mlx-whisper` 套件（Apple MLX 框架）
+  - MPS 加速，效能提升 4.2 倍
+  - 自動降級到 Faster-Whisper（如 MLX 不可用）
+
+- ✨ **前端 MPS 偵測**
+  - 自動偵測並顯示 "Apple MPS (Metal Performance Shaders)"
+  - 支援 LM Studio 狀態顯示
 
 #### 技術改進
 
@@ -65,14 +80,22 @@
 - **模型自動下載**：首次啟動自動下載 Whisper 和 Gemma 模型
 - **進程管理**：使用 `.server.pid` 追蹤服務進程
 - **日誌系統**：日誌輸出到 `logs/app.log`
+- **雙平台架構**：底層程式碼共享，配置層隔離
 
 #### 修改檔案
 
 | 檔案 | 修改內容 |
 |------|----------|
-| `README.md` | v3.4.4 → v3.5.0，新增 macOS 原生模式說明 |
+| `README.md` | v3.4.4 → v3.5.0，新增 macOS 原生模式說明、技術架構說明 |
 | `CHANGELOG.md` | 記錄 v3.5.0 重大異動 |
 | `.gitignore` | 新增 `old_mac/` 忽略規則 |
+| `.github/INSTRUCTIONS.md` | 新增 Git 雙平台版本控制策略 |
+| `config.mac.yaml` | 全新 macOS 專用配置檔案 |
+| `backend/core/platform_config.py` | 平台檢測與配置載入系統 |
+| `backend/services/summarization.py` | 支援 LM Studio，平台自動選擇 |
+| `backend/services/transcription.py` | 支援 MLX-Whisper，平台自動選擇 |
+| `backend/api/routes.py` | MPS 偵測支援 |
+| `frontend/js/app.js` | MPS GPU 顯示支援 |
 | `doc/MAC_原生服務部署指南.md` | 全新原生模式部署文件 |
 | `scripts/start-mac-native.sh` | 原生服務啟動腳本 |
 | `scripts/restart-mac-native.sh` | 原生服務重啟腳本 |
@@ -104,7 +127,11 @@ brew install python@3.11 ffmpeg
 ollama pull mlx-community/whisper-large-v3-mlx
 ollama pull gemma3:27b-it-qat
 
-# 5. 啟動原生服務
+# 5. （可選）安裝 LM Studio
+# 下載 LM Studio: https://lmstudio.ai
+# 載入 gemma-3-27b-it-qat 模型
+
+# 6. 啟動原生服務
 cd ~/dev/convert
 ./scripts/start-mac-native.sh
 ```
@@ -119,11 +146,13 @@ cd ~/dev/convert
   - [MLX-Whisper GitHub](https://github.com/ml-explore/mlx-whisper)
   - [Ollama Documentation](https://github.com/ollama/ollama)
   - [Apple Metal Performance Shaders](https://developer.apple.com/metal/)
+  - [LM Studio Documentation](https://lmstudio.ai/docs)
 
 - 🔬 **技術研究**：
   - [Stack Overflow: MPS in Docker](https://stackoverflow.com/questions/79541677/)
   - [PyTorch GitHub Issue #81224](https://github.com/pytorch/pytorch/issues/81224)
   - [Podman GPU Support](https://podman-desktop.io/docs/podman/gpu)
+  - [The Twelve-Factor App](https://12factor.net/)
 
 - 📊 **效能測試**：
   - [Reddit: Whisper Turbo vs MLX](https://www.reddit.com/r/LocalLLaMA/comments/1ftuq9i/)
