@@ -1,5 +1,53 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.1] - 2025-12-06
+
+### 🐛 排隊邏輯修復
+
+#### 問題描述
+用戶回報排隊邏輯顯示異常：
+- 顯示「目前排隊人數：0 人」
+- 顯示「您的排隊位置：1」
+- 顯示「預計等待：0 分鐘」
+- 邏輯矛盾：如果是第1位且不需等待，應該立即開始處理，不應顯示排隊位置
+
+#### 根本原因
+`backend/services/queue_manager.py` 的 `get_next_task()` 方法中：
+- ✅ 有清除 `queue_position = None`
+- ❌ 但未清除 `estimated_wait_seconds`（應設為 0）
+
+#### 修復內容
+1. **backend/services/queue_manager.py**
+   - 在 `get_next_task()` 中新增 `task.estimated_wait_seconds = 0`
+   - 確保任務從佇列取出時，排隊位置和等待時間都被清除
+
+2. **backend/services/task_processor.py**
+   - 更新註解，確保與實際狀態一致
+
+#### 驗證結果
+✅ **單元測試**：`tests/test_queue_fix.py` - 4個測試全部通過
+- 第一個任務立即處理（queue_position = None, estimated_wait = 0）
+- 第二個任務正確等待並自動晉升
+- 任務狀態轉換正確（QUEUED → PENDING → COMPLETED）
+- 佇列狀態統計準確
+
+✅ **整合測試**：`tests/test_queue_integration.py` - 1個測試通過
+- 模擬2個音訊檔案上傳完整流程
+- 驗證排隊位置、等待時間、狀態轉換全部正確
+
+#### 核心驗證點
+1. ✅ 第一個任務從佇列取出時，`queue_position` 立即設為 `None`
+2. ✅ 第一個任務從佇列取出時，`estimated_wait_seconds` 設為 `0`
+3. ✅ 第二個任務在第一個開始處理後，自動晉升到第1位
+4. ✅ 佇列狀態計算正確（排隊中 vs 處理中）
+5. ✅ 任務狀態轉換正確（QUEUED → PENDING → COMPLETED）
+
+#### 測試通過率
+- **5/5 測試通過** (100%)
+- 詳細報告：`doc/QUEUE_LOGIC_FIX_REPORT.md`
+
+---
+
 ## [v3.5.0] - 2025-12-06
 
 ### 核心修復 🔧

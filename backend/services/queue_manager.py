@@ -98,6 +98,7 @@ class TaskQueueManager:
                 self._processing.add(task_id)
                 task.status = TaskStatus.PENDING
                 task.queue_position = None
+                task.estimated_wait_seconds = 0
                 task.started_at = datetime.now()
                 
                 # 更新其他任務的排隊位置
