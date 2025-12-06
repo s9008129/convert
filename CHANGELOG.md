@@ -1,5 +1,63 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.3] - 2025-12-06
+
+### 🐛 重大修復
+
+#### 1. 服務連線異常修復（macOS Native 模式）
+
+**問題描述**：
+- Safari 無法連接到服務器 `127.0.0.1:9527`
+- 錯誤訊息：「Safari 無法打開網頁」
+- 根本原因：Docker 容器 `meetingscribe-app` 已停止但佔用配置，導致 Native 服務無法正常啟動
+
+**診斷結果**：
+```bash
+# Docker 容器狀態
+meetingscribe-app (meetingscribe:mac)
+  - 狀態: Exited (0)
+  - 埠號綁定: 9527
+  - 影響: 阻止 Native 服務啟動
+
+# Native 服務狀態
+  - PID 檔案存在但程序已終止
+  - 埠號 9527 未被監聽
+```
+
+**修復內容**：
+
+1. **安全移除衝突的 Docker 容器**
+   - 移除已停止的 `meetingscribe-app` 容器
+   - 釋放埠號 9527 綁定
+   - **不影響 Windows Docker 版本**
+
+2. **重新啟動 Native 服務**
+   - 使用 `start_service.sh` 啟動服務
+   - 驗證服務健康狀態
+   - 確認 MPS 加速正常運作
+
+3. **新增 Docker 清理腳本** (`scripts/cleanup_docker.sh`)
+   - 自動檢測並移除 macOS 的 MeetingScribe Docker 容器
+   - 可選擇性移除 Docker 映像檔
+   - 包含安全檢查，僅在 macOS 系統執行
+   - **完全不影響 Windows 版本**
+
+**修復後狀態**：
+```bash
+✅ 服務狀態: healthy
+✅ 版本: 3.5.2
+✅ GPU: Apple MPS (Metal Performance Shaders)
+✅ 埠號: 9527 (LISTEN)
+✅ LM Studio: 可用
+✅ Gemini API: 可用
+```
+
+**安全保證**：
+- ✅ 僅移除 macOS 本地的 Docker 容器
+- ✅ Windows Docker 版本完全不受影響
+- ✅ Docker 映像檔保留（可手動清理）
+- ✅ 所有配置檔案未變更
+
 ## [v3.5.2] - 2025-12-06
 
 ### 🐛 重大修復

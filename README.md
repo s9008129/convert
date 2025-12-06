@@ -1,7 +1,7 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.2-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.3-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
@@ -27,6 +27,36 @@
 - 本地模式：100% 離線，零資料上傳
 - 加密儲存：敏感資訊本地加密
 - 自動清理：過期檔案自動刪除
+
+## 🆕 v3.5.3 更新（2025-12-06）
+
+### 重大修復：服務連線異常問題解決 ✅
+
+**問題**：Safari 無法連接到 `127.0.0.1:9527`
+
+**根本原因**：
+- Docker 容器 `meetingscribe-app` 已停止但佔用埠號配置
+- Native 服務程序已終止，但 PID 檔案殘留
+- 導致新服務無法綁定埠號 9527
+
+**修復方案**：
+1. ✅ 安全移除衝突的 Docker 容器（僅 macOS，不影響 Windows）
+2. ✅ 清理過期的 PID 檔案
+3. ✅ 重新啟動 Native 服務
+4. ✅ 新增 Docker 清理腳本 (`scripts/cleanup_docker.sh`)
+
+**修復後狀態**：
+```bash
+✅ 服務: http://127.0.0.1:9527 (健康)
+✅ GPU: Apple MPS 正常運作
+✅ LM Studio: 可用
+✅ Gemini API: 可用
+```
+
+**安全保證**：
+- ✅ Windows Docker 版本完全不受影響
+- ✅ 配置檔案未變更
+- ✅ 僅移除 macOS 本地 Docker 容器
 
 ## 🆕 v3.5.2 更新（2025-12-06）
 
