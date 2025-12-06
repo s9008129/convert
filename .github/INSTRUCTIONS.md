@@ -221,17 +221,316 @@ RUN apt-get install -y \
 
 ---
 
+## 📋 第六部分：文件管理與同步（關鍵規則）
+
+### 6.1 文件分類與用途
+
+**核心文件**（必須維護）：
+
+| 文件 | 用途 | 更新時機 |
+|------|------|---------|
+| `README.md` | 專案首頁，快速開始 | 每次版本發布 |
+| `CHANGELOG.md` | 版本歷史記錄 | 每次 commit 前 |
+| `INSTRUCTIONS.md` | 開發最高指導原則 | 發現新痛點時 |
+| `doc/管理者操作指南.md` | 管理維運指南 | 架構變更時 |
+| `doc/系統開發及實作規劃.md` | 完整技術文件 | 重大功能變更時 |
+
+**平台專用文件**：
+
+| 文件 | 適用對象 | 何時閱讀 |
+|------|---------|---------|
+| `doc/Windows批次檔部署指南.md` | Windows 使用者 | 部署前 |
+| `doc/MAC_Docker部署指南.md` | macOS 使用者 | 部署前 |
+| `doc/Docker映像檔Rebuild時機指南.md` | 所有使用者 | 修改程式前 |
+
+**驗證報告**（歷史記錄）：
+
+| 文件模式 | 說明 | 範例 |
+|---------|------|------|
+| `*_VERIFICATION_*.md` | 重大修復的驗證報告 | `GPU_ACCELERATION_VERIFICATION_v3.4.3.md` |
+| 保留原則 | 不刪除，作為歷史證據 | - |
+
+### 6.2 版本號同步規則
+
+**強制要求**：
+- 所有文件中的版本號必須一致
+- 版本號格式：`v主版本.次版本.修訂號`（如 `v3.4.4`）
+- 每次發布前執行全文件搜尋：`grep -r "v3.4.3" doc/`
+
+**版本號出現位置**：
+```yaml
+- README.md: 第一行標題
+- CHANGELOG.md: 最新版本區塊標題
+- docker-compose-*.yml: labels.version
+- 所有 doc/*.md: 頂部版本標註
+```
+
+### 6.3 文件更新檢查清單
+
+每次版本發布前：
+
+- [ ] 更新 `CHANGELOG.md` 記錄所有變更
+- [ ] 更新 `README.md` 版本號和新功能說明
+- [ ] 檢查所有 doc/ 文件版本號是否一致
+- [ ] 確認 docker-compose-*.yml 的 version label 已更新
+- [ ] 執行 `grep -r "v舊版本" .` 確認無遺漏
+
+### 6.4 文件命名規範
+
+**中文文件**：
+- 使用繁體中文，台灣用語
+- 範例：`管理者操作指南.md`、`系統開發及實作規劃.md`
+
+**英文文件**：
+- 全大寫 + 底線
+- 範例：`INSTRUCTIONS.md`、`CHANGELOG.md`
+
+**驗證報告**：
+- 格式：`主題_VERIFICATION_v版本.md`
+- 範例：`GPU_ACCELERATION_VERIFICATION_v3.4.3.md`
+
+---
+
+## 📋 第七部分：設定檔管理規範（避免混淆）
+
+### 7.1 設定檔分類與對映
+
+**環境變數檔**（`.env`）：
+
+| 檔案 | 用途 | 何時使用 |
+|------|------|---------|
+| `.env.example` | 範本檔，進版控 | 新增參數時更新 |
+| `.env` | 實際設定，不進版控 | 部署時建立 |
+| `.env.local.example` | 本地覆蓋範本 | 開發環境需要時 |
+| `.env.local` | 本地覆蓋，不進版控 | 本地開發時 |
+
+**Docker Compose 檔**：
+
+| 檔案 | 適用平台 | 何時使用 |
+|------|---------|---------|
+| `docker-compose.yml` | Windows/Linux CPU | 無 GPU 環境 |
+| `docker-compose-windows-gpu.yml` | Windows + NVIDIA GPU | RTX 4090 等 |
+| `docker-compose-mac.yml` | macOS | Mac 電腦 |
+
+**Dockerfile**：
+
+| 檔案 | 用途 | 何時修改 |
+|------|------|---------|
+| `Dockerfile` | 通用 CPU 版本 | 新增系統套件 |
+| `Dockerfile.gpu` | GPU 加速版本 | cuDNN/CUDA 變更 |
+| `Dockerfile.mac` | macOS 專用 | Mac 相容性問題 |
+
+**決策樹**：
+```
+我要修改什麼？
+├─ 調整參數（檔案大小、模型名稱）
+│  → 修改 .env
+│  → 重啟服務即可
+│
+├─ 改變 AI 行為（會議記錄格式）
+│  → 修改 config.yaml
+│  → 重啟服務即可
+│
+├─ 部署到不同平台
+│  → 選擇對應 docker-compose-xxx.yml
+│  → 執行 build + up
+│
+└─ 安裝新套件或系統依賴
+   → 修改 Dockerfile
+   → 執行 build --no-cache
+```
+
+### 7.2 設定檔修改後的影響範圍
+
+| 修改內容 | 需要 Rebuild? | 需要重啟? | 影響範圍 |
+|---------|--------------|----------|---------|
+| `.env` 環境變數 | ❌ | ✅ | 僅影響運行時參數 |
+| `config.yaml` | ❌ | ✅ | 僅影響 AI 行為 |
+| `requirements.txt` | ✅ | ✅ | 需重裝 Python 套件 |
+| `Dockerfile` | ✅ (--no-cache) | ✅ | 重建整個映像 |
+| `docker-compose-*.yml` | ✅ | ✅ | 重建容器配置 |
+| `backend/*.py` | ❌ (有 volume) | ✅ | 開發模式即時生效 |
+| `frontend/*.html` | ❌ (有 volume) | ❌ | 重整瀏覽器即可 |
+
+---
+
+## 📋 第八部分：部署與維護規範
+
+### 8.1 跨平台部署標準流程
+
+**Windows（批次檔方式，推薦）**：
+```batch
+# 1. 環境檢查
+docker --version
+ollama list
+
+# 2. 設定 API Key（雲端模式）
+scripts\setup-api-key.ps1
+
+# 3. 部署
+cd scripts
+deploy.bat build
+deploy.bat up
+
+# 4. 驗證
+deploy.bat status
+curl http://localhost:9527/api/health
+```
+
+**macOS**：
+```bash
+# 1. 環境檢查
+docker --version
+ollama list
+
+# 2. 部署
+chmod +x scripts/start-mac.sh
+./scripts/start-mac.sh
+
+# 3. 驗證
+docker ps | grep meetingscribe
+curl http://localhost:9527/api/health
+```
+
+### 8.2 日常維護規範
+
+**每日檢查**（自動化）：
+- 健康檢查：`curl http://localhost:9527/api/health`
+- 日誌監控：`docker logs meetingscribe-app --tail 50 | grep ERROR`
+
+**每週檢查**（手動）：
+- 磁碟空間：`docker system df`
+- 檔案清理：`curl -X POST http://localhost:9527/api/storage/cleanup`
+
+**每月檢查**（手動）：
+- 模型更新：`ollama pull gemma3:27b-it-qat`
+- 版本更新：`git pull && scripts\deploy.bat build`
+
+### 8.3 備份策略
+
+**必須備份**：
+```
+convert/
+├── .env                 # ✅ API Key 和設定
+├── config.yaml         # ✅ 系統提示詞
+└── data/
+    ├── uploads/        # ❌ 暫存，可不備份
+    └── outputs/        # ✅ 處理結果（重要）
+```
+
+**備份頻率**：
+- `.env` 和 `config.yaml`：每次修改後
+- `data/outputs/`：每週自動備份
+
+---
+
+## 📋 第九部分：Git 提交規範
+
+### 9.1 Commit Message 格式
+
+**強制格式**（中文）：
+```
+[類型] 簡短描述（不超過 50 字）
+
+詳細說明：
+- 變更內容 1
+- 變更內容 2
+- 變更內容 3
+
+影響範圍：
+- 檔案 1
+- 檔案 2
+
+測試：
+- 測試項目 1
+- 測試項目 2
+```
+
+**類型標籤**：
+- `[新增]`：新功能
+- `[修復]`：Bug 修復
+- `[重構]`：程式碼重構
+- `[文件]`：文件更新
+- `[優化]`：效能優化
+- `[安全]`：安全性修復
+
+**範例**：
+```
+[修復] 繁體中文輸出問題 v3.4.4
+
+詳細說明：
+- 強化 System Prompt 中的語言約束
+- User Message 前綴加入繁體中文指令
+- 設定 HF_HOME 和 XDG_CACHE_HOME 指向 Volume
+
+影響範圍：
+- backend/core/config.py
+- backend/services/summarization.py
+- docker/Dockerfile.gpu
+- docker/docker-compose-windows-gpu.yml
+
+測試：
+- 上傳含英文逐字稿，確認輸出繁體中文
+- 驗證模型快取在 Volume 中
+- Rebuild 確認不重新下載模型
+```
+
+### 9.2 提交前檢查清單
+
+**每次 commit 前必做**：
+
+- [ ] 執行本地測試（上傳測試檔案）
+- [ ] 更新 `CHANGELOG.md`
+- [ ] 檢查版本號是否一致
+- [ ] 確認無敏感資料（API Key、密碼）
+- [ ] 執行 `git status` 確認檔案正確
+- [ ] 撰寫清楚的 commit message
+
+---
+
 ## 📌 版本歷史
 
 | 版本 | 日期 | 更新內容 |
 |------|------|----------|
 | v1.0 | 2025-12-05 | 初版：記錄 cuDNN 8 需求、繁體中文輸出規範、Docker 重建優化 |
+| v2.0 | 2025-12-06 | 擴充版：新增文件管理、設定檔對映、部署維護、Git 規範 |
 
 ---
 
-> **⚠️ 警告：** 每次修改 GPU 或 LLM 相關功能前，請先閱讀本文件。
+## 🎯 總結：核心原則（必記）
+
+### 三大絕對原則
+
+1. **GPU 加速**：Dockerfile.gpu 必須包含 cuDNN 8 + cuDNN 9
+2. **繁體中文輸出**：三道防線（System Prompt + User Message + 參數約束）
+3. **Docker 隔離**：獨立網路、獨立命名、不影響其他服務
+
+### 五個關鍵決策
+
+1. **何時 Rebuild？** → 改 Dockerfile 才 Rebuild，改程式碼只需重啟
+2. **何時用哪個 compose？** → Windows GPU 用 `-windows-gpu.yml`，Mac 用 `-mac.yml`
+3. **何時修改哪個設定？** → 參數改 `.env`，格式改 `config.yaml`
+4. **如何驗證 GPU？** → `docker logs | grep CUDA`
+5. **如何同步文件？** → 每次發布前 `grep -r "v舊版本"`
+
+### 七個禁止事項
+
+1. ❌ 禁止刪除 cuDNN 8 依賴（會導致 Whisper 失效）
+2. ❌ 禁止移除繁體中文語言約束（會輸出英文）
+3. ❌ 禁止修改 Docker 網路為共用網路（會影響其他服務）
+4. ❌ 禁止將 `.env` 提交到 Git（含 API Key）
+5. ❌ 禁止修改 Dockerfile 不更新 CHANGELOG（文件不同步）
+6. ❌ 禁止使用 `docker system prune -a`（會刪除 Volume）
+7. ❌ 禁止修改核心邏輯不測試（可能破壞現有功能）
+
+---
+
+> **⚠️ 最高警告：** 違反本文件規範的修改，可能導致：
 > 
-> 違反本文件規範的修改，可能導致：
-> 1. GPU 加速失效（退回 CPU 模式）
-> 2. 會議記錄輸出英文
-> 3. Docker 重建時間過長
+> 1. **GPU 加速失效**（退回 CPU 模式，速度降低 10 倍）
+> 2. **會議記錄輸出英文**（需手動翻譯，失去自動化價值）
+> 3. **Docker 重建時間過長**（浪費 20-30 分鐘下載模型）
+> 4. **影響其他 Docker 服務**（網路衝突、埠佔用）
+> 5. **資料遺失**（刪除 Volume 導致模型重新下載）
+> 
+> **修改前請先閱讀本文件，遵循檢查清單！**
