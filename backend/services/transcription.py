@@ -216,60 +216,6 @@ class TranscriptionService:
         finally:
             # v3.5.0: 確保轉錄完成後釋放模型
             self._unload_model()
-            
-            # 執行轉錄 - 使用繁體中文 initial_prompt 引導輸出
-            # Whisper 不區分 zh-TW/zh-CN，使用 initial_prompt 是業界最佳實踐
-            # 注意：initial_prompt 不應該包含指令性文字，應該是「範例內容」格式
-            # 參考: https://github.com/openai/whisper/discussions/117
-            traditional_chinese_prompt = "這是一場專業會議的逐字記錄，討論主題包含專案進度、決議事項。"
-            
-            segments, info = self._model.transcribe(
-                audio_path,
-                language="zh",  # 指定中文語言
-                beam_size=5,
-                initial_prompt=traditional_chinese_prompt,  # 引導輸出繁體中文風格
-                vad_filter=True,  # 過濾靜音
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    speech_pad_ms=400
-                ),
-                condition_on_previous_text=True,  # 啟用上下文連貫性
-                no_speech_threshold=0.6,  # 降低靜音誤判
-                compression_ratio_threshold=2.4,  # 避免重複輸出
-            )
-            
-            # 收集所有段落
-            transcript_parts = []
-            total_duration = info.duration
-            processed_duration = 0.0
-            
-            for segment in segments:
-                transcript_parts.append(segment.text.strip())
-                processed_duration = segment.end
-                
-                # 更新進度
-                if progress_callback and total_duration > 0:
-                    progress = 10.0 + (processed_duration / total_duration) * 50.0
-                    progress_callback(progress, f"轉錄中... {processed_duration:.0f}/{total_duration:.0f}秒")
-            
-            transcript = " ".join(transcript_parts)
-            
-            # whisper-medium 模型直接輸出繁體中文，無需額外轉換
-            
-            elapsed = time.time() - start_time
-            log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒，裝置: {self._device.value.upper() if self._device else 'CPU'}")
-            
-            if progress_callback:
-                progress_callback(60.0, "轉錄完成")
-            
-            return transcript, duration
-            
-        except Exception as e:
-            log.error(f"轉錄失敗: {e}")
-            raise
-        finally:
-            # v3.5.0: 確保轉錄完成後釋放模型
-            self._unload_model()
     
     def _transcribe_with_mlx(
         self,
