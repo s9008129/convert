@@ -102,3 +102,6 @@ coverage.xml
 *.bak
 *.backup
 .env.local
+
+# MAC 舊版 Docker 部署方案（已廢棄，改用原生服務模式）
+old_mac/

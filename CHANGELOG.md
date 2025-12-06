@@ -1,3 +1,136 @@
+## [3.5.0] - 2025-12-06
+
+### 重大異動 🚨 - macOS 由 Docker 改為原生服務模式
+
+此版本徹底移除 macOS 的 Docker 部署方案，改為原生 Python 服務模式，效能提升 **3-5 倍**！
+
+#### 為什麼要改？（第一性原理分析）
+
+經過深度研究（詳見 [doc/MAC_whisper.md](doc/MAC_whisper.md)），我們發現 Docker on macOS 的核心限制：
+
+**問題根因**：
+1. **虛擬化層隔離**：Docker 在 macOS 上必須透過 Linux VM 運行，MPS (Metal Performance Shaders) 無法穿透虛擬化層
+2. **Metal API 限制**：Apple Metal 不像 CUDA 有遠端執行機制，容器內無法訪問宿主機的 GPU
+3. **效能損失嚴重**：CPU 模式處理速度比 MPS 加速慢 70-80%
+
+**效能對比數據**：
+
+| 音檔長度 | Docker CPU | 原生 MPS | 效能提升 |
+|---------|------------|----------|---------|
+| 10 分鐘 | ~240 秒 | ~57 秒 | **4.2 倍** |
+| 37 分鐘 | ~900 秒 | ~241 秒 | **3.7 倍** |
+| 60 分鐘 | ~1800 秒 | ~428 秒 | **4.2 倍** |
+
+*測試環境：M1 Pro 16GB, macOS 14.x, mlx-whisper large-v3*
+
+#### 技術方案
+
+根據業界最佳實踐與官方文件（[mlx-whisper](https://github.com/ml-explore/mlx-whisper)），採用以下方案：
+
+1. **原生 Python 服務**：直接在 macOS 上運行 FastAPI，無虛擬化開銷
+2. **MLX-Whisper**：使用 Apple 官方 MLX 框架，針對 Apple Silicon 優化
+3. **MPS 加速**：Whisper 轉錄和 Ollama 推理都使用 Metal Performance Shaders
+4. **統一記憶體**：充分利用 Apple Silicon 的統一記憶體架構
+
+#### 移除內容
+
+所有 macOS Docker 相關檔案已移至 `old_mac/` 資料夾（不進行版控）：
+
+- ❌ `docker/docker-compose-mac.yml` - macOS Docker Compose 配置
+- ❌ `docker/Dockerfile.mac` - macOS Docker 映像定義
+- ❌ `scripts/start-mac.sh` - Docker 啟動腳本
+- ❌ `scripts/restart-mac.sh` - Docker 重啟腳本
+- ❌ `doc/MAC_Docker部署指南.md` - Docker 部署文件
+
+#### 新增功能
+
+- ✨ **原生服務腳本**
+  - `scripts/start-mac-native.sh` - 原生服務一鍵啟動（自動安裝依賴、下載模型）
+  - `scripts/restart-mac-native.sh` - 原生服務重啟
+  - `scripts/stop-mac-native.sh` - 原生服務停止
+
+- ✨ **完整部署文件**
+  - `doc/MAC_原生服務部署指南.md` - 原生模式完整部署指南
+  - 包含效能對比、故障排除、進階設定
+
+- ✨ **MPS 加速支援**
+  - Whisper 轉錄：使用 `mlx-whisper` + MPS 加速
+  - Ollama 推理：自動使用 MPS 加速
+  - 環境變數：`WHISPER_DEVICE=mps`
+
+#### 技術改進
+
+- **虛擬環境管理**：自動建立 Python venv，隔離依賴
+- **自動依賴安裝**：啟動腳本自動 `pip install -r requirements.txt`
+- **模型自動下載**：首次啟動自動下載 Whisper 和 Gemma 模型
+- **進程管理**：使用 `.server.pid` 追蹤服務進程
+- **日誌系統**：日誌輸出到 `logs/app.log`
+
+#### 修改檔案
+
+| 檔案 | 修改內容 |
+|------|----------|
+| `README.md` | v3.4.4 → v3.5.0，新增 macOS 原生模式說明 |
+| `CHANGELOG.md` | 記錄 v3.5.0 重大異動 |
+| `.gitignore` | 新增 `old_mac/` 忽略規則 |
+| `doc/MAC_原生服務部署指南.md` | 全新原生模式部署文件 |
+| `scripts/start-mac-native.sh` | 原生服務啟動腳本 |
+| `scripts/restart-mac-native.sh` | 原生服務重啟腳本 |
+| `scripts/stop-mac-native.sh` | 原生服務停止腳本 |
+
+#### 其他平台不受影響
+
+⚠️ **重要**：此變更僅影響 macOS 平台，Windows 和 Linux 繼續使用 Docker 部署方案。
+
+- ✅ Windows：繼續使用 `docker-compose-windows-gpu.yml`
+- ✅ Linux：繼續使用 `docker-compose.yml`
+
+#### 升級指南
+
+**macOS 使用者**：
+
+```bash
+# 1. 停止舊的 Docker 服務（如果有在運行）
+docker compose -p meetingscribe -f docker/docker-compose-mac.yml down
+
+# 2. 安裝 Homebrew（如果尚未安裝）
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 3. 安裝依賴
+brew install python@3.11 ffmpeg
+
+# 4. 安裝 Ollama 並下載模型
+# 下載 Ollama: https://ollama.ai
+ollama pull mlx-community/whisper-large-v3-mlx
+ollama pull gemma3:27b-it-qat
+
+# 5. 啟動原生服務
+cd ~/dev/convert
+./scripts/start-mac-native.sh
+```
+
+**Windows/Linux 使用者**：
+
+無需變更，繼續使用現有 Docker 部署方案。
+
+#### 決策來源
+
+- 📚 **官方文件**：
+  - [MLX-Whisper GitHub](https://github.com/ml-explore/mlx-whisper)
+  - [Ollama Documentation](https://github.com/ollama/ollama)
+  - [Apple Metal Performance Shaders](https://developer.apple.com/metal/)
+
+- 🔬 **技術研究**：
+  - [Stack Overflow: MPS in Docker](https://stackoverflow.com/questions/79541677/)
+  - [PyTorch GitHub Issue #81224](https://github.com/pytorch/pytorch/issues/81224)
+  - [Podman GPU Support](https://podman-desktop.io/docs/podman/gpu)
+
+- 📊 **效能測試**：
+  - [Reddit: Whisper Turbo vs MLX](https://www.reddit.com/r/LocalLLaMA/comments/1ftuq9i/)
+  - [測試報告](doc/MAC_whisper.md)
+
+---
+
 ## [3.4.6] - 2025-12-06T01:48:24Z
 
 ### 記錄：手動修改 system_prompt

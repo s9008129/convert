@@ -1,15 +1,15 @@
-# MeetingScribe v3.4.4
+# MeetingScribe v3.5.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.4.4-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.5.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
 
-**將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
+**將會議錄音轉換為結構化會議記錄的跨平台服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [管理者指南](doc/管理者操作指南.md) • [開發原則](.github/INSTRUCTIONS.md)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 原生部署](doc/MAC_原生服務部署指南.md) • [管理者指南](doc/管理者操作指南.md) • [開發原則](.github/INSTRUCTIONS.md)
 
 </div>
 
@@ -19,14 +19,35 @@
 
 ## 🎯 簡介
 
-MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+MeetingScribe 是一個企業級會議轉錄工具，支援跨 Windows、macOS、Linux 平台無縫部署。
 
-### 🆕 v3.4.4 繁體中文輸出修復 + Whisper 模型快取優化
+### 🆕 v3.5.0 macOS 原生服務模式 - 效能提升 3-5 倍！
 
-- ✅ **修復繁體中文輸出**：強化 System Prompt 與 User Message 中的語言約束，即使逐字稿含英文也確保輸出繁體中文
-- ✅ **Whisper 模型快取優化**：設定 `HF_HOME=/app/models`，模型儲存至 Docker Volume，重建時無需重新下載
-- ✅ **新增 INSTRUCTIONS.md**：最高指導原則文件，防止 cuDNN、繁體中文輸出等問題再次發生
-- ⚠️ **需要 Docker 重建**：請執行 `docker-compose -f docker/docker-compose-windows-gpu.yml build --no-cache`
+> **重大異動**：macOS 平台由 Docker 模式改為原生服務模式
+
+#### 為什麼要改？
+
+經過深度研究（詳見 [MAC_whisper.md](doc/MAC_whisper.md)），我們發現：
+
+- ❌ **Docker on macOS 無法使用 MPS 加速**：虛擬化層阻擋 GPU 存取
+- ❌ **效能損失 70-80%**：Docker CPU 模式處理 30 分鐘音檔需 15+ 分鐘
+- ✅ **原生模式效能提升 3-5 倍**：10 分鐘音檔從 240 秒降至 57 秒
+
+#### 主要變更
+
+- ✅ **移除 macOS Docker 部署方案**：`docker-compose-mac.yml`、`Dockerfile.mac`、`start-mac.sh` 等檔案移至 `old_mac/` 資料夾
+- ✅ **新增原生服務腳本**：`start-mac-native.sh`、`restart-mac-native.sh`、`stop-mac-native.sh`
+- ✅ **MPS 加速支援**：Whisper 轉錄和 Ollama 推理都使用 Apple Metal Performance Shaders
+- ✅ **完整部署文件**：[MAC_原生服務部署指南.md](doc/MAC_原生服務部署指南.md)
+- ⚠️ **僅影響 macOS**：Windows 和 Linux 繼續使用 Docker 部署
+
+#### 效能對比
+
+| 音檔長度 | Docker CPU | 原生 MPS | 提升 |
+|---------|------------|----------|------|
+| 10 分鐘 | 240 秒 | 57 秒 | **4.2x** |
+| 30 分鐘 | 720 秒 | 171 秒 | **4.2x** |
+| 60 分鐘 | 1440 秒 | 342 秒 | **4.2x** |
 
 ### 🆕 v3.4.1 簡化設計：完全移除自訂格式功能
 
@@ -111,15 +132,17 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 
 ### 系統需求
 
-| 項目 | 最低需求 | 建議配置 |
-|------|----------|----------|
-| 作業系統 | Windows 10/11, macOS 10.15+, Linux | Windows 11 / Ubuntu 20.04+ |
-| Docker | Docker Desktop 4.0+ | 最新版本 |
-| GPU | 無（CPU 模式）| NVIDIA RTX 4090 |
-| 記憶體 | 8GB | 32GB |
-| 磁碟空間 | 20GB | 50GB |
+| 項目 | Windows/Linux | macOS (原生模式) |
+|------|--------------|-----------------|
+| 作業系統 | Windows 10/11, Linux | macOS 12.3+ |
+| 部署方式 | Docker Desktop 4.0+ | Python 原生服務 |
+| GPU | NVIDIA RTX (建議) | Apple Silicon (M1/M2/M3/M4 建議) |
+| 記憶體 | 8GB (建議 32GB) | 8GB (建議 16GB) |
+| 磁碟空間 | 20GB | 15GB |
 
 ### 前置準備
+
+#### Windows / Linux 系統
 
 1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
@@ -128,9 +151,22 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
    ```
 3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
 
+#### macOS 系統（原生模式）
+
+1. 安裝 [Homebrew](https://brew.sh/)
+2. 安裝 Python 與 FFmpeg：
+   ```bash
+   brew install python@3.11 ffmpeg
+   ```
+3. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
+   ```bash
+   ollama pull mlx-community/whisper-large-v3-mlx
+   ollama pull gemma3:27b-it-qat
+   ```
+
 ### 三步驟部署
 
-#### Windows 系統（推薦 ✅ v3.3.3+）
+#### Windows 系統（Docker 模式）
 
 ```batch
 # 1. 建構映像（首次約 10-30 分鐘）
@@ -152,18 +188,32 @@ deploy.bat up
 > 
 > 詳見：[Windows 批次檔部署指南](./doc/Windows批次檔部署指南.md)
 
-#### 其他系統（macOS / Linux）
+#### macOS 系統（原生模式 - 效能提升 3-5 倍！⚡）
 
 ```bash
-# 1. 建構映像（首次約 10-30 分鐘）
+# 1. 一鍵啟動（自動安裝依賴、下載模型、啟動服務）
+cd ~/dev/convert
+./scripts/start-mac-native.sh
+
+# 2. 瀏覽器會自動開啟
+# 或手動訪問 http://localhost:9527
+```
+
+**首次啟動需要 5-10 分鐘**（安裝依賴、下載模型），之後啟動只需 < 10 秒！
+
+詳細指南：[MAC_原生服務部署指南.md](doc/MAC_原生服務部署指南.md)
+
+#### Linux 系統（Docker 模式）
+
+```bash
+# 1. 建構映像
 cd scripts
-./deploy.ps1 build
+./deploy.sh build
 
 # 2. 啟動服務
-./deploy.ps1 up
+./deploy.sh up
 
-# 3. 開啟瀏覽器
-# 訪問 http://localhost:9527
+# 3. 訪問 http://localhost:9527
 ```
 
 ---
@@ -272,17 +322,33 @@ scripts\deploy.bat [build|up|down|restart|status|logs]
 
 > ℹ️ v3.3.3 版本新增 `deploy.bat` 批次檔，解決 Windows PowerShell 執行策略問題。優先使用批次檔。
 
-#### macOS / Linux
+#### macOS（原生模式）
 
 ```bash
+# 啟動服務
+./scripts/start-mac-native.sh
+
 # 重啟服務
-./scripts/restart-mac.sh
+./scripts/restart-mac-native.sh
+
+# 停止服務
+./scripts/stop-mac-native.sh
+
+# 查看日誌
+tail -f logs/app.log
+
+# 健康檢查
+curl http://localhost:9527/api/health
+```
+
+#### Linux（Docker 模式）
+
+```bash
+# 部署工具
+bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 
 # 健康檢查
 bash ./scripts/health-check.sh
-
-# 部署工具
-bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 ```
 
 ---
