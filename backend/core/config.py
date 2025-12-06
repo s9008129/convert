@@ -37,17 +37,17 @@ class Settings(BaseSettings):
     # LLM 設定
     # ========================================
     OLLAMA_BASE_URL: str = Field(
-        default="http://host.docker.internal:11434",
+        default="http://localhost:11434",
         description="Ollama 服務端點"
     )
     LOCAL_LLM_MODEL: str = Field(default="gemma3:27b-it-qat", description="本地 LLM 模型名稱")
     
     # LM Studio 設定（OpenAI 相容 API）
     LMSTUDIO_BASE_URL: str = Field(
-        default="http://host.docker.internal:1234/v1",
+        default="http://localhost:1234/v1",
         description="LM Studio 服務端點（OpenAI 相容）"
     )
-    LMSTUDIO_MODEL: str = Field(default="gpt-oss-20b", description="LM Studio 模型名稱")
+    LMSTUDIO_MODEL: str = Field(default="gemma-3-27b-it-qat", description="LM Studio 模型名稱")
     
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API 金鑰")
     

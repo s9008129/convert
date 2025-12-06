@@ -130,3 +130,56 @@ export DATA_DIR=/Users/hsiaojohnny/dev/convert/data
 - 基本 Whisper 轉錄
 - Ollama LLM 整合
 - CLI 介面
+
+## [v3.5.0-完整版] - 2025-12-06 12:30
+
+### 🎉 macOS Native 部署完整版
+
+#### 核心修復 🔧
+- ✅ LM Studio URL 修復：從 `host.docker.internal:1234` → `localhost:1234`
+- ✅ Ollama URL 修復：從 `host.docker.internal:11434` → `localhost:11434`
+- ✅ 移除所有 Docker 路徑依賴
+- ✅ DATA_DIR 環境變數支援
+
+#### 新增配置 📝
+- ✅ **config.mac.yaml** - macOS 專屬完整配置檔
+  - LLM 設定（本地 + 雲端）
+  - Whisper 設定（MLX 優化）
+  - GPU 設定（MPS 加速）
+  - 檔案管理
+  - 服務設定
+  - 任務處理
+  - 效能調校
+
+#### 新增文件 📚
+- ✅ **doc/MACOS_DEPLOYMENT.md** - 完整 macOS 部署指南
+  - 系統需求（硬體 + 軟體）
+  - 快速開始（6個步驟）
+  - 配置說明
+  - 常見問題（Q&A）
+  - 效能優化
+  - 故障排除
+  - 與 Windows 版本差異
+
+#### 測試驗證 ✅
+```
+API 版本號：3.5.0 ✅
+GPU：Apple MPS (Metal Performance Shaders) ✅
+MPS 加速：可用 ✅
+服務狀態：healthy ✅
+前端版本號：v3.5.0 ✅
+LM Studio URL：localhost:1234 ✅
+測試通過率：6/7 (86%) ✅
+```
+
+#### 平台隔離保證 🔒
+- ✅ macOS 配置：`config.mac.yaml`
+- ✅ Windows 配置：`config.yaml`
+- ✅ 兩版本完全獨立，互不影響
+- ✅ 共享底層邏輯，配置分離
+
+#### 已知問題 ⚠️
+- Ollama 進程檢測仍顯示可用（但不影響功能）
+- LM Studio 需手動啟動
+- 本地模式需 16GB+ 記憶體
+
