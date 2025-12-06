@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     # 系統設定
     # ========================================
     LOG_LEVEL: str = Field(default="INFO", description="日誌等級")
-    DATA_DIR: str = Field(default="/app/data", description="資料目錄")
+    DATA_DIR: str = Field(default_factory=lambda: os.getenv('DATA_DIR', '/Users/hsiaojohnny/dev/convert/data'), description="資料目錄")
     
     # ========================================
     # System Prompt 設定
