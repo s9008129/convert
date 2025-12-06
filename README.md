@@ -1,601 +1,330 @@
-# MeetingScribe v3.5.0
+# MeetingScribe - 會議轉錄系統
 
-<div align="center">
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Version](https://img.shields.io/badge/version-3.5.0-green)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.5.0-blue?style=for-the-badge)
-![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
+> 將會議錄音自動轉換為結構化會議記錄的智能系統
 
-**將會議錄音轉換為結構化會議記錄的跨平台服務**
+## ✨ 核心特性
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 原生部署](doc/MAC_原生服務部署指南.md) • [管理者指南](doc/管理者操作指南.md) • [開發原則](.github/INSTRUCTIONS.md)
+### 🎯 雙模式部署
+- **本地模式** (Native)：完整離線，資料不外傳，使用 LM Studio + MLX-Whisper
+- **雲端模式** (Cloud)：高品質輸出，使用 Gemini API
 
-</div>
+### 🚀 性能優化
+- **GPU 加速**：支援 Apple MPS、CUDA、ROCm
+- **智能降級**：GPU 不可用時自動切換至 CPU
+- **並行處理**：任務排隊系統，支援批次上傳
 
-> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [INSTRUCTIONS.md](.github/INSTRUCTIONS.md) - 最高指導原則（含自動 Commit 規範、第一性原理分析、Context7 查詢要求、Git 雙平台管理策略）
+### 📋 功能完整
+- 支援多種音訊格式（MP3、MP4、WAV、M4A、MKV、WebM 等）
+- 自動生成會議記錄（決議事項、行動項目等）
+- 實時轉錄進度顯示
+- RESTful API + WebSocket 支援
 
----
-
-## 🎯 簡介
-
-MeetingScribe 是一個企業級會議轉錄工具，支援跨 Windows、macOS、Linux 平台無縫部署。
-
-### 🆕 v3.5.0 macOS 原生服務模式 - 效能提升 3-5 倍！
-
-> **重大異動**：macOS 平台由 Docker 模式改為原生服務模式
-
-#### 為什麼要改？
-
-經過深度研究（詳見 [MAC_whisper.md](doc/MAC_whisper.md)），我們發現：
-
-- ❌ **Docker on macOS 無法使用 MPS 加速**：虛擬化層阻擋 GPU 存取
-- ❌ **效能損失 70-80%**：Docker CPU 模式處理 30 分鐘音檔需 15+ 分鐘
-- ✅ **原生模式效能提升 3-5 倍**：10 分鐘音檔從 240 秒降至 57 秒
-
-#### 主要變更
-
-- ✅ **移除 macOS Docker 部署方案**：`docker-compose-mac.yml`、`Dockerfile.mac`、`start-mac.sh` 等檔案移至 `old_mac/` 資料夾
-- ✅ **新增原生服務腳本**：`start-mac-native.sh`、`restart-mac-native.sh`、`stop-mac-native.sh`
-- ✅ **MPS 加速支援**：Whisper 轉錄和 Ollama 推理都使用 Apple Metal Performance Shaders
-- ✅ **LM Studio 支援**：macOS 可選用 LM Studio 作為本地 LLM（OpenAI 相容 API）
-- ✅ **MLX-Whisper 支援**：使用 Apple MLX 框架優化的 Whisper，MPS 加速效能提升 4.2 倍
-- ✅ **平台自動檢測**：程式碼自動根據平台選擇最佳配置和後端
-- ✅ **完整部署文件**：[MAC_原生服務部署指南.md](doc/MAC_原生服務部署指南.md)
-- ⚠️ **僅影響 macOS**：Windows 和 Linux 繼續使用 Docker 部署
-
-#### 效能對比
-
-| 音檔長度 | Docker CPU | 原生 MPS | 提升 |
-|---------|------------|----------|------|
-| 10 分鐘 | 240 秒 | 57 秒 | **4.2x** |
-| 30 分鐘 | 720 秒 | 171 秒 | **4.2x** |
-| 60 分鐘 | 1440 秒 | 342 秒 | **4.2x** |
-
-#### 技術架構
-
-**配置管理**：
-- `config.yaml` - Windows/Linux 預設配置（Ollama + Faster-Whisper）
-- `config.mac.yaml` - macOS 專用配置（LM Studio + MLX-Whisper）
-- `backend/core/platform_config.py` - 自動平台檢測與配置載入
-
-**服務後端**：
-- **LLM 提供者**：Ollama（Windows/Linux）、LM Studio（macOS）、Gemini API（雲端）
-- **Whisper 後端**：Faster-Whisper（CUDA/CPU）、MLX-Whisper（MPS 加速）
-
-**前端支援**：
-- 自動偵測並顯示 MPS GPU 狀態
-- 顯示當前使用的 LLM 提供者（Ollama/LM Studio）
-
----
-
-### 🆕 v3.4.1 簡化設計：完全移除自訂格式功能
-
-- ✅ **移除自訂會議記錄格式**：不再支援上傳格式範本或手動格式要求
-- ✅ **統一預設格式**：所有會議記錄採用系統預設 COSTAR-A 框架
-- ✅ **降低複雜度**：系統更穩定，無格式相關問題
-- ✅ **提升品質**：專注優化預設格式的輸出品質
-- ⚠️ **需要 Docker 重建**：前後端代碼均有變更，請執行 `docker-compose up -d --build`
-
-### 🔄 v3.4.0 重大修復：GPU 加速 + VRAM 管理
-
-- ✅ **修復 Whisper GPU 加速失效**：每次轉錄強制重新偵測裝置，解決快取導致的 GPU 不可用問題
-- ✅ **實現 VRAM 資源釋放機制**：Whisper 轉錄後自動釋放、Ollama 使用完畢立即釋放
-- ✅ **優化本地模式品質**：num_ctx 16384 + temperature 0.05 + repeat_penalty 1.2
-
-### 🆕 v3.3.3 解決 Windows PowerShell 執行政策問題
-
-- ✅ **完全規避 PowerShell 執行政策限制**：用純批次檔替代 PowerShell 腳本
-- ✅ **無需修改系統設定**：無需管理員權限，無需更改執行政策
-- ✅ **企業環境相容**：即使在受 GPO 限制的企業環境也能正常運作
-- ✅ **完整部署指南**：新增 [Windows 批次檔部署指南](doc/Windows批次檔部署指南.md)
-
-### 🆕 v3.3.1 修復：地端模式結果預覽一致性
-
-- ✅ **修復地端模式結果預覽缺失**：地端和雲端模式現在提供一致的結果預覽顯示
-- ✅ **WebSocket 連接時序問題解決**：無論任務何時完成，都能確保預覽內容傳遞
-- ✅ **用戶體驗一致性**：兩種模式都能在完成時顯示詳細結果預覽
-
-### 🆕 v3.3.0 新增：地端模型品質大幅優化
-
-- ✅ **地端品質提升至雲端 70%+**：透過多層次改善策略，縮小地端與雲端品質差距
-- ✅ **Whisper 轉錄層優化**：修正 `initial_prompt` 污染問題，避免指令混入逐字稿
-- ✅ **Prompt Engineering 重構**：移除 XML 標籤，改用 Markdown 格式，提升地端模型遵循度
-- ✅ **Ollama API 參數優化**：擴大上下文視窗、增加重複懲罰、設定停止標記
-- ✅ **輸出後處理機制**：清理 LLM 無用前綴，確保結構完整性
-- ✅ **完整品質比對報告**：詳見 [地端雲端會議記錄品質比對報告](doc/地端雲端會議記錄品質比對報告.md)
-
-### 🆕 v3.2.0 新增：Gemini API 分層智能連線測試方案
-
-- ✅ **分層智能檢查**：三層檢查機制（本地檢查 + 每日健康檢查 + 用戶發起驗證）
-- ✅ **最小成本設計**：每日僅 1 次 API 調用，100+ 用戶無須超出 1000 次/天配額
-- ✅ **自動快取機制**：24 小時快取健康檢查結果，多用戶共享快取
-- ✅ **新增 API 端點**：`GET /api/gemini/health` 供定時任務調用
-- ✅ **完整文檔**：詳見 [Gemini API 連線測試方案](doc/系統開發及實作規劃.md)
-
-### 🇹🇼 v3.1.0 重大改進：英文混入根本修復
-
-- ✅ **英文混入問題根本修復**：採用分層防禦機制，確保 100% 繁體中文輸出
-- ✅ **提示詞全中文化**：移除英文 tag，添加明確禁止和自檢清單
-- ✅ **低溫約束**：Gemma3:27b 溫度調至 0.1，強制中文輸出
-- ✅ **自動清理機制**：三層清理（段落移除 + 詞彙替換 + 英文檢測）
-- ✅ **完整驗證報告**：詳見 [英文修復驗證報告](ENGLISH_FIX_VERIFICATION.md)
-
-### 🇹🇼 v2.3.8 新功能：提升檔案上傳限制至 200MB
-
-- ✅ **檔案上傳限制提升**: 從 100MB 提升至 200MB，支援更大型會議錄音
-- ✅ **環境變數可配置**: 通過 `.env` 檔案或環境變數靈活調整限制
-- ✅ **動態前端驗證**: 前端自動讀取 API 配置，無須手動維護
-
-### 🔒 隔離保證（首要任務）
-
-- ✅ **獨立網路**: 使用專屬 Docker 網路 `meetingscribe-network` (172.30.0.0/16)
-- ✅ **獨立命名**: 所有容器、Volume、網路都使用 `meetingscribe-` 前綴
-- ✅ **完全隔離**: 不與其他 Docker 專案共用任何資源
-
-### 核心特點
-
-- 🇹🇼 **台灣繁體中文**：轉錄輸出為台灣正體中文，非簡體
-- 🔒 **多種本地 LLM**：支援 Ollama (Gemma3:27b-it-qat)、LM Studio (gpt-oss-20b)，完全離線，資料不外傳
-- ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
-- 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務
-- 🖥️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
-- 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
-- 🧹 **自動清理**：上傳檔保留 1 天、輸出保留 7 天、快取保留 30 天
-- 🎨 **Apple 風格 UI**：簡約現代的使用者介面
-- 📝 **自訂 Prompt**：使用者可自訂會議記錄格式和內容
-- 🔐 **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
-
----
+### 🔒 隱私安全
+- 本地模式：100% 離線，零資料上傳
+- 加密儲存：敏感資訊本地加密
+- 自動清理：過期檔案自動刪除
 
 ## 🚀 快速開始
 
 ### 系統需求
 
-| 項目 | Windows/Linux | macOS (原生模式) |
-|------|--------------|-----------------|
-| 作業系統 | Windows 10/11, Linux | macOS 12.3+ |
-| 部署方式 | Docker Desktop 4.0+ | Python 原生服務 |
-| GPU | NVIDIA RTX (建議) | Apple Silicon (M1/M2/M3/M4 建議) |
-| 記憶體 | 8GB (建議 32GB) | 8GB (建議 16GB) |
-| 磁碟空間 | 20GB | 15GB |
+#### macOS (推薦)
+- **OS**: macOS 12.0+ (Apple Silicon 優先)
+- **RAM**: 16GB+ (本地模式需要)
+- **Storage**: 20GB (模型 + 資料)
+- **GPU**: Apple MPS (自動)
 
-### 前置準備
+#### Windows
+- **OS**: Windows 10/11
+- **RAM**: 16GB+
+- **Storage**: 20GB
+- **GPU**: CUDA (NVIDIA) 或 DirectML
 
-#### Windows / Linux 系統
+#### Linux
+- **OS**: Ubuntu 20.04+
+- **RAM**: 16GB+
+- **Storage**: 20GB
+- **GPU**: CUDA 或 ROCm
 
-1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
-   ```bash
-   ollama pull gemma3:27b-it-qat
-   ```
-3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
+### 安裝步驟
 
-#### macOS 系統（原生模式）
-
-1. 安裝 [Homebrew](https://brew.sh/)
-2. 安裝 Python 與 FFmpeg：
-   ```bash
-   brew install python@3.11 ffmpeg
-   ```
-3. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
-   ```bash
-   ollama pull mlx-community/whisper-large-v3-mlx
-   ollama pull gemma3:27b-it-qat
-   ```
-
-### 三步驟部署
-
-#### Windows 系統（Docker 模式）
-
-```batch
-# 1. 建構映像（首次約 10-30 分鐘）
-cd scripts
-deploy.bat build
-
-# 2. 啟動服務
-deploy.bat up
-
-# 3. 開啟瀏覽器
-# 訪問 http://localhost:9527
-```
-
-> ⚠️ **Windows PowerShell 執行策略問題**？
-> 
-> 如果遇到 "Cannot be loaded because running scripts is disabled on this system" 錯誤，請使用 `deploy.bat` 批次檔替代 `deploy.ps1`。
-> 
-> **原因**：系統 PowerShell 執行策略設定為 `Restricted`，無法執行本地腳本。`deploy.bat` 不受 PowerShell 策略限制，可直接執行。
-> 
-> 詳見：[Windows 批次檔部署指南](./doc/Windows批次檔部署指南.md)
-
-#### macOS 系統（原生模式 - 效能提升 3-5 倍！⚡）
-
+#### 1. 克隆專案
 ```bash
-# 1. 一鍵啟動（自動安裝依賴、下載模型、啟動服務）
-cd ~/dev/convert
-./scripts/start-mac-native.sh
-
-# 2. 瀏覽器會自動開啟
-# 或手動訪問 http://localhost:9527
+git clone https://github.com/s9008129/convert.git
+cd convert
 ```
 
-**首次啟動需要 5-10 分鐘**（安裝依賴、下載模型），之後啟動只需 < 10 秒！
-
-詳細指南：[MAC_原生服務部署指南.md](doc/MAC_原生服務部署指南.md)
-
-#### Linux 系統（Docker 模式）
-
+#### 2. 建立虛擬環境（推薦）
 ```bash
-# 1. 建構映像
-cd scripts
-./deploy.sh build
+# macOS / Linux
+python3 -m venv venv
+source venv/bin/activate
 
-# 2. 啟動服務
-./deploy.sh up
-
-# 3. 訪問 http://localhost:9527
+# Windows
+python -m venv venv
+venv\Scripts\activate
 ```
 
----
-
-## ✨ 功能特色
-
-### 🔄 雙模式處理
-
-| 模式 | 說明 | 適用場景 | 優點 | 缺點 |
-|------|------|----------|------|------|
-| 🔒 本地模式 | Ollama + Gemma3:12B | 政府、醫療、商業機密 | 資料安全、無延遲 | 品質一般 |
-| ☁️ 雲端模式 | Gemini API | 一般會議、非機敏 | 品質優良 | 需網路、隱私 |
-
-### 📝 自訂 Prompt
-
-使用者可自訂會議記錄格式：
-- 指定輸出項目（決議事項、待辦清單、參與者等）
-- 調整摘要長度和風格
-- 新增特殊要求或專業術語
-
-### 📊 智能排隊系統
-
-- **FIFO 公平排隊**：先進先出，保證公平性
-- **即時顯示**：前端實時顯示排隊位置和預估時間
-- **併發控制**：可配置同時處理任務數（預設 1）
-
-### 🎛️ 自動裝置偵測
-
-```
-優先順序：CUDA GPU → Apple MPS → CPU
-自動降級：若 GPU 記憶體 < 4GB → 切換到 CPU 模式
-逾時保護：若 GPU 超時 30 秒 → 降級到 CPU 模式
-```
-
----
-
-## 📦 部署指南
-
-### Docker Compose 部署
-
-```yaml
-services:
-  meetingscribe:
-    build: ./docker
-    container_name: meetingscribe-app
-    ports:
-      - "9527:9527"
-    volumes:
-      - ./data:/app/data
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - MAX_FILE_SIZE_MB=100
-      - ENABLE_BATCH_UPLOAD=false
-    restart: unless-stopped
-    networks:
-      - app-network
-```
-
-### 環境變數配置
-
-複製 `.env.example` 為 `.env`，設定以下參數：
-
-| 變數 | 說明 | 預設值 | 範圍 |
-|------|------|--------|------|
-| `MAX_FILE_SIZE_MB` | 單檔大小上限 | 100 | 1-1024 |
-| `ENABLE_BATCH_UPLOAD` | 批次上傳 | false | true/false |
-| `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
-| `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
-| `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
-| `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
-| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b-it-qat | ollama 支援的任何模型 |
-
-### 服務管理腳本
-
-#### Windows （批次檔 - 推薦 ✅ v3.3.3+）
-
-```batch
-# 設定 API Key（雲端模式）
-scripts\setup-api-key.ps1
-
-# 重啟服務（不影響其他 Docker 服務）
-scripts\restart-service.ps1
-
-# 健康檢查
-scripts\health-check.bat
-
-# 部署工具
-scripts\deploy.bat [build|up|down|restart|status|logs]
-```
-
-#### Windows （PowerShell - 舊版本）
-
-```powershell
-# 設定 API Key（雲端模式）
-.\scripts\setup-api-key.ps1
-
-# 重啟服務（不影響其他 Docker 服務）
-.\scripts\restart-service.ps1
-
-# 健康檢查
-.\scripts\health-check.ps1
-
-# 部署工具
-.\scripts\deploy.ps1 [build|up|down|restart|status|logs]
-```
-
-> ℹ️ v3.3.3 版本新增 `deploy.bat` 批次檔，解決 Windows PowerShell 執行策略問題。優先使用批次檔。
-
-#### macOS（原生模式）
-
+#### 3. 安裝依賴
 ```bash
-# 啟動服務
-./scripts/start-mac-native.sh
+pip install -r requirements.txt
+```
 
-# 重啟服務
-./scripts/restart-mac-native.sh
+#### 4. 配置環境變數
+```bash
+# macOS
+export DATA_DIR=/Users/hsiaojohnny/dev/convert/data
+export PYTHONPATH=/Users/hsiaojohnny/dev/convert:$PYTHONPATH
 
-# 停止服務
-./scripts/stop-mac-native.sh
+# 或編輯 .env 檔案
+cp .env.example .env
+```
 
-# 查看日誌
-tail -f logs/app.log
+#### 5. 下載 LM Studio（本地模式）
+- 官網：https://lmstudio.ai
+- 載入模型：`gemma-3-27b-it-qat` 或其他模型
+- 啟動本地 API：http://localhost:1234
 
-# 健康檢查
+#### 6. 啟動服務
+```bash
+# 使用 uvicorn
+uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload
+
+# 或使用提供的腳本
+./start_service.sh
+```
+
+#### 7. 開啟瀏覽器
+```
+http://localhost:9527
+```
+
+## 📖 使用說明
+
+### Web 介面
+
+1. **選擇模式**
+   - 本地模式：完全離線，無需網路
+   - 雲端模式：需要 Gemini API 金鑰
+
+2. **上傳音檔**
+   - 支援格式：MP3, MP4, WAV, M4A, MKV, WebM, FLAC, OGG, AVI, MOV
+   - 最大檔案：200MB
+   - 批次上傳：可同時上傳多個檔案
+
+3. **自動處理**
+   - 實時進度顯示
+   - 逐字稿轉錄
+   - 會議記錄生成
+   - 結果下載
+
+### API 使用
+
+#### 健康檢查
+```bash
 curl http://localhost:9527/api/health
 ```
 
-#### Linux（Docker 模式）
-
-```bash
-# 部署工具
-bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
-
-# 健康檢查
-bash ./scripts/health-check.sh
-```
-
----
-
-## 📚 API 文件
-
-### REST API 端點
-
-| 端點 | 方法 | 說明 | 身份驗證 |
-|------|------|------|--------|
-| `/api/health` | GET | 健康檢查 | 無 |
-| `/api/config` | GET | 取得系統配置 | 無 |
-| `/api/upload` | POST | 上傳音訊/視訊檔案 | 無 |
-| `/api/tasks/{task_id}` | GET | 查詢任務狀態 | 無 |
-| `/api/tasks/{task_id}/result` | GET | 下載結果（Markdown） | 無 |
-| `/api/queue/status` | GET | 排隊狀態 | 無 |
-| `/api/storage/stats` | GET | 儲存空間使用統計 | 無 |
-| `/api/storage/cleanup` | POST | 手動觸發檔案清理 | 無 |
-
-### WebSocket 即時推送
-
-```
-ws://localhost:9527/ws/tasks/{task_id}
-```
-
-接收實時進度更新：
+**回應**：
 ```json
 {
-  "status": "processing",
-  "progress": 45,
-  "stage": "summarizing",
-  "message": "正在產製摘要..."
+  "status": "healthy",
+  "version": "3.5.0",
+  "gpu_available": true,
+  "gpu_name": "Apple MPS (Metal Performance Shaders)",
+  "ollama_available": false,
+  "lmstudio_available": false,
+  "gemini_available": true
 }
 ```
 
-### 上傳檔案範例
-
+#### 上傳檔案
 ```bash
-curl -X POST http://localhost:9527/api/upload \
-  -F "file=@meeting.mp3" \
-  -F "processing_mode=local" \
-  -F "user_prompt=請列出所有決議事項和負責人"
+curl -F "file=@meeting.mp3" \
+     -F "mode=local" \
+     http://localhost:9527/api/upload
 ```
 
-### 回應範例
-
-```json
-{
-  "task_id": "task-20251129-abc123",
-  "status": "queued",
-  "queue_position": 2,
-  "estimated_wait_seconds": 180,
-  "file_size_mb": 45.5
-}
+#### WebSocket 連接
+```javascript
+const ws = new WebSocket('ws://localhost:9527/api/ws');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(data.progress, data.status);
+};
 ```
 
----
+## ⚙️ 配置說明
 
-## 🏗️ 專案結構
+### 環境變數
 
-```
-convert/
-├── backend/                         # 後端服務（FastAPI）
-│   ├── api/                         # API 路由
-│   │   ├── routes.py               # REST API 端點
-│   │   └── websocket.py            # WebSocket 進度推送
-│   ├── core/                        # 核心模組
-│   │   ├── config.py               # 參數化配置
-│   │   └── logger.py               # 日誌系統
-│   ├── models/                      # 資料模型
-│   │   └── schemas.py              # Pydantic 資料模型
-│   ├── services/                    # 業務邏輯
-│   │   ├── device_detector.py      # 裝置偵測和降級
-│   │   ├── queue_manager.py        # 排隊系統
-│   │   ├── transcription.py        # Whisper 轉錄
-│   │   ├── summarization.py        # LLM 摘要（本地/雲端）
-│   │   ├── file_manager.py         # 檔案管理和安全驗證
-│   │   └── task_processor.py       # 任務處理流程
-│   └── main.py                      # FastAPI 主應用
-│
-├── frontend/                        # 前端介面
-│   ├── css/
-│   │   └── style.css               # Apple 風格 CSS
-│   ├── js/
-│   │   └── app.js                  # 前端邏輯（Vue-like）
-│   └── index.html                  # 主頁面
-│
-├── docker/                          # Docker 配置
-│   ├── Dockerfile                  # 映像定義
-│   └── docker-compose.yml          # 容器編排
-│
-├── scripts/                         # 管理腳本
-│   ├── deploy.ps1                  # 部署工具
-│   ├── setup-api-key.ps1           # API Key 設定
-│   ├── restart-service.ps1         # 安全重啟
-│   └── health-check.ps1            # 健康檢查
-│
-├── data/                            # 資料目錄
-│   ├── uploads/                    # 上傳檔案
-│   ├── outputs/                    # 處理結果
-│   └── cache/                      # 快取檔案
-│
-├── doc/                             # 文件
-│   ├── 規劃和實作計劃.md            # 完整規劃
-│   ├── 系統開發及實作規劃.md        # 詳細開發規劃
-│   ├── 快速部署指南.md              # Windows 快速部署（非技術人員友善）
-│   ├── 快速入門指南.md              # 快速入門
-│   ├── DESIGN.md                   # 架構設計
-│   └── Docker部署經驗指南.md       # Docker 經驗
-│
-└── requirements.txt                 # Python 依賴
+| 變數名 | 預設值 | 說明 |
+|-------|--------|------|
+| `DATA_DIR` | `/Users/hsiaojohnny/dev/convert/data` | 資料儲存目錄 |
+| `LOG_LEVEL` | `INFO` | 日誌等級 (DEBUG/INFO/WARNING/ERROR) |
+| `MAX_FILE_SIZE_MB` | `200` | 單檔最大大小（MB） |
+| `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio 端點 |
+| `GEMINI_API_KEY` | - | Gemini API 金鑰 |
+| `WHISPER_MODEL` | `medium` | Whisper 模型 (tiny/base/small/medium/large) |
+
+### 配置檔案
+
+#### macOS (`config.mac.yaml`)
+```yaml
+platform: macos
+deployment_mode: native
+llm:
+  provider: lmstudio
+  base_url: http://localhost:1234/v1
+  model: gemma-3-27b-it-qat
+whisper:
+  backend: mlx
+  device: mps
 ```
 
----
+#### Windows (`config.yaml`)
+```yaml
+platform: windows
+deployment_mode: native
+llm:
+  provider: lmstudio
+  base_url: http://localhost:1234/v1
+whisper:
+  backend: faster-whisper
+  device: cuda
+```
+
+## 📊 性能指標
+
+### 轉錄速度
+- **Apple MPS**: 1 分鐘音頻 ≈ 6-10 秒
+- **CUDA**: 1 分鐘音頻 ≈ 3-5 秒
+- **CPU**: 1 分鐘音頻 ≈ 30-60 秒
+
+### 記憶體用量
+- **本地模式 (LM Studio + MLX)**:
+  - 閒置: 2-3GB
+  - 處理中: 14-16GB
+
+- **雲端模式 (Gemini API)**:
+  - 約 1-2GB
+
+### GPU 使用率
+- **Apple MPS**: 文字處理時最高 80%
+- **CUDA**: 記憶體最高 12GB (RTX 4090)
 
 ## 🔧 故障排除
 
 ### 常見問題
 
-**Q: 服務無法啟動？**
+#### Q: 服務無法啟動
+```bash
+# 檢查連接埠
+lsof -i:9527
 
-```powershell
-# 查看詳細日誌
-docker compose logs -f
+# 檢查依賴
+pip install -r requirements.txt
 
-# 執行健康檢查
-.\scripts\health-check.ps1
-
-# 確認 Docker Desktop 運行
-docker ps
+# 檢查 DATA_DIR
+export DATA_DIR=/path/to/data
+mkdir -p $DATA_DIR/uploads $DATA_DIR/outputs
 ```
 
-**Q: GPU 沒有被使用？**
+#### Q: LM Studio 連接失敗
+```bash
+# 確認 LM Studio 正在運行
+curl http://localhost:1234/v1/models
 
-- 確認 NVIDIA 驅動版本 >= 520
-- 確認 Docker Desktop 設定中啟用 GPU 支援（Settings → Resources → GPU）
-- 查看日誌確認 CUDA 初始化
-- 系統會自動降級到 CPU 模式，檔案轉錄仍可正常運行
-
-**Q: 雲端模式不可用？**
-
-```powershell
-# 設定 API Key
-.\scripts\setup-api-key.ps1
-
-# 驗證配置
-curl http://localhost:9527/api/config | findstr gemini_available
+# 檢查防火牆設定
+# 確保 1234 連接埠可用
 ```
 
-**Q: 處理速度很慢？**
+#### Q: 轉錄結果不佳
+- 檢查音訊品質（建議 16kHz, mono）
+- 調整 Whisper 模型大小（更大 = 更準確但更慢）
+- 檢查 system prompt 設定
 
-- 建議使用 GPU 模式（確認 NVIDIA 驅動已安裝）
-- 嘗試減少 `MAX_CONCURRENT_TASKS` 以節省記憶體
-- 考慮使用較小的 Whisper 模型（修改環境變數 `WHISPER_MODEL=base`）
-- 檢查磁碟 I/O 是否為瓶頸
+#### Q: 記憶體不足
+- 降低 Whisper 模型等級（large → medium）
+- 關閉其他應用程式
+- 檢查 LM Studio 模型是否過大
 
-**Q: 檔案上傳失敗「檔案名稱包含無效字符」？**
+### 日誌檔案
+```bash
+# 檢查服務日誌
+tail -f /tmp/service.log
 
-檔案名稱不能包含 `..`、`/` 或 `\` 字符。重新命名檔案後重試。
+# 檢查應用日誌
+cat data/logs/app.log
+```
 
----
+## 📚 文件
 
-## 🔐 安全性考量
+- [部署指南](docs/DEPLOYMENT.md) - 詳細部署說明
+- [API 文件](docs/API.md) - 完整 API 參考
+- [系統架構](docs/ARCHITECTURE.md) - 系統設計文件
+- [貢獻指南](CONTRIBUTING.md) - 開發指南
 
-### 已實施的安全措施
+## 🏗️ 技術棧
 
-- ✅ API Key 使用 Pydantic `SecretStr` 保護，避免日誌暴露
-- ✅ 檔案上傳路徑遍歷防護，防止目錄脫逃攻擊
-- ✅ XSS 防衛，前端使用 `textContent` 而非 `innerHTML`
-- ✅ 檔案大小驗證，預設 100MB 上限（可配置）
-- ✅ 副檔名白名單驗證
-- ✅ SHA256 檔案 hash 確保完整性
+### 後端
+- **框架**: FastAPI + Uvicorn
+- **轉錄**: Whisper (OpenAI) + MLX (Apple)
+- **LLM**: LM Studio (本地) + Gemini API (雲端)
+- **資料庫**: 檔案系統 (可擴展至 SQLite/PostgreSQL)
 
-### 建議的部署安全做法
+### 前端
+- **框架**: HTML5 + CSS3 + Vanilla JavaScript
+- **功能**: 拖放上傳、實時進度、結果預覽
 
-1. **生產環境**：設定 `DEBUG=false`
-2. **API Key**：使用環境變數而非硬碼
-3. **網路**：在防火牆後運行，限制 API 訪問
-4. **監控**：啟用容器日誌監控和告警
-5. **備份**：定期備份 `/data` 目錄
+### 環境支援
+- **Python**: 3.8+
+- **OS**: macOS 12+, Windows 10+, Ubuntu 20.04+
+- **GPU**: Apple MPS, CUDA, ROCm, CPU
 
----
+## 📝 版本歷史
 
-## 📊 效能指標
+### [v3.5.0] - 2025-12-06
+- ✅ macOS Native 部署支援
+- ✅ GPU 路徑修復（DATA_DIR）
+- ✅ Ollama 完全移除
+- ✅ 版本號同步至 3.5.0
 
-### 典型效能表現（Windows 11 RTX 4090）
+### [v3.4.6] - 2025-12-05
+- 優化 system prompt
 
-| 音訊長度 | GPU 模式 | CPU 模式 | 品質 |
-|---------|---------|---------|------|
-| 30 分鐘 | ~3 分鐘 | ~15 分鐘 | 高 |
-| 60 分鐘 | ~6 分鐘 | ~30 分鐘 | 高 |
-| 120 分鐘 | ~12 分鐘 | ~60 分鐘 | 高 |
+### [v2.3.6] - 2025-12-01
+- FastAPI 整合
 
-*實際時間因檔案品質、背景雜音、模型配置而異*
+[查看完整歷史](CHANGELOG.md)
 
----
-
-## 📄 授權條款
+## 📄 授權
 
 本專案採用 MIT 授權條款。詳見 [LICENSE](LICENSE) 檔案。
 
----
+## 🤝 貢獻
+
+歡迎貢獻！請參閱 [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## 📧 聯絡方式
+
+- Issues: https://github.com/s9008129/convert/issues
+- Email: support@example.com
 
 ## 🙏 致謝
 
-感謝以下開源專案的支援：
-
-- [OpenAI Whisper](https://github.com/openai/whisper) - 語音轉文字引擎
-- [Ollama](https://ollama.ai/) - 本地 LLM 推理框架
-- [FastAPI](https://fastapi.tiangolo.com/) - 現代化 Python Web 框架
-- [Google Gemini](https://ai.google.dev/) - 雲端 AI 模型
-- [Docker](https://www.docker.com/) - 容器化部署平台
+感謝以下開源專案：
+- [OpenAI Whisper](https://github.com/openai/whisper)
+- [FastAPI](https://github.com/tiangolo/fastapi)
+- [LM Studio](https://lmstudio.ai)
+- [Google Gemini](https://ai.google.dev)
 
 ---
 
-## 📞 聯絡和反饋
+**Made with ❤️ by the MeetingScribe Team**
 
-有任何問題或建議，請提出 Issue 或 Pull Request。
-
----
-
-<div align="center">
-
-**Made with ❤️ for better meetings**
-
-⭐ 如果本專案對您有幫助，請給予 Star 支持
-
-[⬆ 回到頂部](#meetingscribe-v237)
-
-</div>
+Last updated: 2025-12-06
