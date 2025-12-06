@@ -44,9 +44,15 @@
 2. **backend/services/task_processor.py**
    - 更新註解，確保與實際狀態一致
 
+#### 3. System Prompt 與健康檢查熱修
+
+- 統一 `DEFAULT_SYSTEM_PROMPT`（config 與 summarizer 共用），補齊 COSTAR-X 標籤、100 字以內限制與完整性約束，消除不一致
+- 健康檢查支援同步/非同步檢查結果，避免 mock 物件 await 錯誤並保留自訂 GPU 名稱
+- 端到端整合測試補上 `@pytest.mark.asyncio`，確保整組測試可執行
+
 ### ✅ 驗證結果
 
-**測試通過率**：100% (8/8)
+**測試通過率**：100% (245/245 pytest)
 
 #### 端到端測試
 - ✅ MLX-Whisper 模型正確載入（404 錯誤已修復）
@@ -285,4 +291,3 @@ LM Studio URL：localhost:1234 ✅
 - Ollama 進程檢測仍顯示可用（但不影響功能）
 - LM Studio 需手動啟動
 - 本地模式需 16GB+ 記憶體
-

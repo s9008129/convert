@@ -4,6 +4,7 @@ v2.1 - 包含排隊系統和 User Prompt 支援
 """
 
 import os
+import inspect
 from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
@@ -41,14 +42,20 @@ async def health_check():
     device_name = get_device()
     
     # 根據平台更新 GPU 名稱
-    if device_name == 'mps' and platform_name == 'macos':
+    if device_name == 'mps' and platform_name == 'macos' and not device_info.get("gpu_name"):
         device_info['gpu_name'] = 'Apple MPS (Metal Performance Shaders)'
         device_info['gpu_available'] = True
     
-    # 檢查服務狀態
-    ollama_available = await summarization_service.check_ollama_health()
-    lmstudio_available = await summarization_service.check_lmstudio_health()
-    gemini_available = summarization_service.check_gemini_available()
+    async def _resolve_status(result):
+        """同時支援同步/非同步檢查結果"""
+        if inspect.isawaitable(result):
+            return bool(await result)
+        return bool(result)
+    
+    # 檢查服務狀態（容忍同步/異步 mock）
+    ollama_available = await _resolve_status(summarization_service.check_ollama_health())
+    lmstudio_available = await _resolve_status(summarization_service.check_lmstudio_health())
+    gemini_available = bool(summarization_service.check_gemini_available())
     
     # 取得排隊狀態
     queue_status = task_queue.get_queue_status()

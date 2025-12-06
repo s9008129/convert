@@ -8,6 +8,7 @@ import os
 import sys
 import time
 from pathlib import Path
+import pytest
 
 # 添加專案根目錄到 Python 路徑
 project_root = Path(__file__).parent.parent
@@ -21,6 +22,7 @@ from backend.core.logger import log
 from backend.core.config import settings
 
 
+@pytest.mark.asyncio
 async def test_end_to_end_workflow():
     """
     端到端測試：2個音訊檔案的完整處理流程
