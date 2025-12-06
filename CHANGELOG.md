@@ -1,5 +1,151 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.4] - 2025-12-06
+
+### 🐛 重大錯誤修復（Critical Bug Fixes）
+
+#### 1. WebSocket Broken Pipe 錯誤修復（Errno 32）
+
+**問題描述**：
+- 當客戶端意外斷開 WebSocket 連線時，伺服器端仍嘗試發送資料
+- 導致 `[Errno 32] Broken pipe` 錯誤，前端顯示「處理失敗」
+- 影響用戶體驗，造成系統不穩定
+
+**診斷結果**：
+```python
+# 錯誤發生位置
+backend/api/websocket.py:
+  - send_progress(): 未處理連線中斷異常
+  - websocket_endpoint(): 未處理發送失敗情況
+```
+
+**修復內容**：
+
+1. **ConnectionManager.send_progress() 錯誤處理強化**
+   - 捕獲 `BrokenPipeError`（連線中斷）
+   - 捕獲 `ConnectionResetError`（連線重置）
+   - 捕獲 `RuntimeError`（WebSocket 已關閉）
+   - 自動清理失效連線
+   - 新增詳細日誌記錄
+
+2. **websocket_endpoint() 所有發送操作加入錯誤處理**
+   - 初始狀態發送
+   - 心跳回應（ping/pong）
+   - 定期狀態更新
+   - 確保連線中斷時優雅退出
+
+3. **新增異常類型日誌**
+   - 記錄具體異常類型（`BrokenPipeError`, `ConnectionResetError` 等）
+   - 協助診斷連線問題
+
+**修復後狀態**：
+```
+✅ WebSocket 連線中斷時不再拋出異常
+✅ 自動清理失效連線
+✅ 服務保持穩定運行
+✅ 詳細日誌協助診斷
+```
+
+#### 2. 排隊顯示不一致問題修復
+
+**問題描述**：
+- 前端狀態欄顯示「排隊: 0」
+- 但排隊狀態區塊顯示「您的排隊位置: 1」
+- 造成用戶困惑
+
+**根本原因**：
+- 任務從隊列取出開始處理時，`total_queued` 立即更新為 0
+- 但任務的 `queue_position` 可能仍為 1（或前端未及時更新）
+- 前後端狀態同步存在時序問題
+
+**修復內容**：
+
+1. **前端 `handleProgressUpdate()` 邏輯優化**
+   - 新增狀態檢查：只有 `status === 'queued'` 且 `queue_position` 存在時才顯示排隊區塊
+   - 當任務開始處理（`status !== 'queued'`）時，立即隱藏排隊區塊
+   - 避免顯示過時的排隊資訊
+
+2. **後端 `broadcast_queue_update()` 改進**
+   - 使用 `get_task_position()` 取得最新排隊位置
+   - 確保 WebSocket 推送的資料是最新的
+   - 減少前後端狀態不一致的可能性
+
+**修復後狀態**：
+```
+✅ 排隊人數顯示正確
+✅ 排隊位置顯示正確
+✅ 任務開始處理時排隊區塊自動隱藏
+✅ 前後端狀態同步一致
+```
+
+### ✅ 測試（Testing）
+
+#### 新增測試套件：`tests/test_websocket_error_handling.py`
+
+**WebSocket 錯誤處理測試（8 個測試，全部通過）**：
+1. `test_broken_pipe_in_send_progress` - 測試 BrokenPipeError 處理
+2. `test_connection_reset_in_send_progress` - 測試 ConnectionResetError 處理
+3. `test_runtime_error_in_send_progress` - 測試 RuntimeError 處理
+4. `test_multiple_connections_partial_failure` - 測試多連線部分失敗
+5. `test_websocket_endpoint_broken_pipe_on_initial_send` - 測試初始發送失敗
+6. `test_websocket_endpoint_broken_pipe_on_heartbeat` - 測試心跳失敗
+7. `test_queue_position_updates_correctly` - 測試排隊位置更新
+8. `test_queue_position_none_when_processing` - 測試處理中任務排隊位置
+
+**測試結果**：
+```bash
+======================== 8 passed, 1 warning in 0.32s =========================
+```
+
+**現有測試驗證（全部通過）**：
+- `tests/test_api_routes.py::TestUploadEndpoint` - 7 個測試通過
+- 確保修復未破壞現有功能
+
+### 📝 技術細節
+
+**WebSocket 連線錯誤處理策略**：
+```python
+# 統一處理所有連線中斷異常
+try:
+    await websocket.send_json(message)
+except (WebSocketDisconnect, RuntimeError, ConnectionResetError, BrokenPipeError) as e:
+    log.debug(f"連線中斷 ({type(e).__name__}): {task_id}")
+    # 清理失效連線
+    dead_connections.add(websocket)
+```
+
+**排隊狀態同步改進**：
+```python
+# 前端：只在真正排隊時顯示排隊區塊
+if (status === 'queued' && message.queue_position) {
+    updateQueueDisplay(message.queue_position, totalQueued, message.message);
+    return;
+}
+
+# 後端：確保推送最新排隊位置
+current_position = task_queue.get_task_position(task_id)
+message.queue_position = current_position or task.queue_position
+```
+
+### 🔍 驗證步驟
+
+1. **WebSocket 錯誤處理驗證**
+   - 執行測試：`pytest tests/test_websocket_error_handling.py -v`
+   - 模擬客戶端斷線：強制關閉瀏覽器標籤
+   - 檢查日誌：應顯示連線中斷訊息而非錯誤堆疊
+
+2. **排隊顯示驗證**
+   - 提交任務並觀察排隊狀態
+   - 檢查「排隊人數」與「您的排隊位置」一致性
+   - 任務開始處理時排隊區塊應立即隱藏
+
+3. **系統穩定性驗證**
+   - 執行完整測試套件：`pytest tests/ -v`
+   - 啟動服務並進行端到端測試
+   - 確認所有功能正常運作
+
+---
+
 ## [v3.5.3] - 2025-12-06
 
 ### 🐛 重大修復

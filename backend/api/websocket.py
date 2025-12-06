@@ -72,7 +72,13 @@ class ConnectionManager:
         for websocket in self._connections[task_id]:
             try:
                 await websocket.send_json(message.model_dump())
-            except Exception:
+            except (WebSocketDisconnect, RuntimeError, ConnectionResetError, BrokenPipeError) as e:
+                # 客戶端已斷開連接，標記為失效
+                log.debug(f"WebSocket 發送失敗 ({type(e).__name__}): {task_id}")
+                dead_connections.add(websocket)
+            except Exception as e:
+                # 其他未預期的錯誤
+                log.warning(f"WebSocket 發送時發生未預期錯誤: {e}")
                 dead_connections.add(websocket)
         
         # 清理失效連接
@@ -86,13 +92,15 @@ class ConnectionManager:
         for task_id, connections in self._connections.items():
             task = task_queue.get_task(task_id)
             if task and task.status == TaskStatus.QUEUED:
+                # 確保 queue_position 更新為最新值
+                current_position = task_queue.get_task_position(task_id)
                 message = ProgressMessage(
                     task_id=task_id,
                     status=task.status,
                     progress=task.progress,
                     stage=task.stage,
                     message="排隊中",
-                    queue_position=task.queue_position,
+                    queue_position=current_position or task.queue_position,
                     queue_total=queue_status.total_queued
                 )
                 await self.send_progress(task_id, message)
@@ -131,7 +139,11 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 queue_total=queue_status.total_queued,
                 preview=preview
             )
-            await websocket.send_json(message.model_dump())
+            try:
+                await websocket.send_json(message.model_dump())
+            except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
+                log.warning(f"初始狀態發送失敗 ({type(e).__name__}): {task_id}")
+                return
         
         # 保持連接並定期發送更新
         while True:
@@ -144,7 +156,11 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 
                 # 處理心跳
                 if data == "ping":
-                    await websocket.send_text("pong")
+                    try:
+                        await websocket.send_text("pong")
+                    except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                        log.debug(f"心跳回應失敗，連線已中斷: {task_id}")
+                        break
                 
             except asyncio.TimeoutError:
                 # 超時，發送當前狀態
@@ -168,7 +184,11 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                         queue_total=queue_status.total_queued,
                         preview=preview
                     )
-                    await websocket.send_json(message.model_dump())
+                    try:
+                        await websocket.send_json(message.model_dump())
+                    except (RuntimeError, ConnectionResetError, BrokenPipeError):
+                        log.debug(f"狀態更新發送失敗，連線已中斷: {task_id}")
+                        break
                     
                     # 如果任務已完成，關閉連接
                     if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
@@ -176,6 +196,10 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                         
     except WebSocketDisconnect:
         log.debug(f"WebSocket 客戶端斷開: {task_id}")
+    except (RuntimeError, ConnectionResetError, BrokenPipeError) as e:
+        log.debug(f"WebSocket 連線錯誤 ({type(e).__name__}): {task_id}")
+    except Exception as e:
+        log.error(f"WebSocket 處理時發生未預期錯誤: {e}")
     finally:
         connection_manager.disconnect(websocket, task_id)
 

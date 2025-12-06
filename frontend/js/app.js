@@ -368,6 +368,7 @@ function updateQueueDisplay(position, total, statusMessage) {
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
     }
+    // 顯示當前排隊人數（total）和您的位置（position）
     if (elements.queuePosition) {
         elements.queuePosition.textContent = position || '--';
     }
@@ -384,9 +385,16 @@ function handleProgressUpdate(message) {
     const status = message.status;
     
     // 如果任務在排隊中，顯示排隊狀態
-    if (status === 'queued') {
-        updateQueueDisplay(message.queue_position, message.queue_total, message.message);
+    if (status === 'queued' && message.queue_position) {
+        // 修正：使用 queue_position 作為當前排隊人數（而非 total_queued）
+        const totalQueued = message.queue_total || 0;
+        updateQueueDisplay(message.queue_position, totalQueued, message.message);
         return;
+    }
+    
+    // 如果任務不在排隊中（已開始處理），隱藏排隊區塊
+    if (elements.queueSection && status !== 'queued') {
+        elements.queueSection.style.display = 'none';
     }
     
     // 更新進度條
