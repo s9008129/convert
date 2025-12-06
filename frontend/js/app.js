@@ -104,7 +104,8 @@ async function loadConfig() {
 
 async function checkHealth() {
     try {
-        const response = await fetch('/api/health');
+        // v3.5.4: 使用 quick 模式，避免 GPU 滿載時阻塞
+        const response = await fetch('/api/health?quick=true');
         if (!response.ok) {
             throw new Error('健康檢查失敗');
         }

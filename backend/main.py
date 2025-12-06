@@ -1,6 +1,6 @@
 """
 MeetingScribe 主應用程式
-v2.1 - 跨平台 Docker 服務
+v3.5.4 - 統一版本號管理 + 請求超時控制
 """
 
 import asyncio
@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import settings
 from backend.core.logger import log
+from backend.core.version import __version__
+from backend.middleware import TimeoutMiddleware
 from backend.api import router, websocket_endpoint
 from backend.services import task_processor, device_detector, file_manager
 
@@ -20,7 +22,7 @@ from backend.services import task_processor, device_detector, file_manager
 async def lifespan(app: FastAPI):
     """應用程式生命週期管理"""
     log.info("=" * 50)
-    log.info("🚀 MeetingScribe v2.3.6 啟動中...")
+    log.info(f"🚀 MeetingScribe v{__version__} 啟動中...")
     log.info("=" * 50)
     
     # 初始化裝置偵測
@@ -67,8 +69,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MeetingScribe",
     description="會議轉錄工具 - 將會議錄音轉換為結構化會議記錄",
-    version="2.3.6",
+    version=__version__,
     lifespan=lifespan
+)
+
+# 請求超時中間件（防止 GPU 滿載時阻塞新請求）
+app.add_middleware(
+    TimeoutMiddleware,
+    timeout=30.0  # 30 秒超時
 )
 
 # CORS 設定

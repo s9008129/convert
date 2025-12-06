@@ -1,9 +1,10 @@
 """
 MeetingScribe API 路由
-v2.1 - 包含排隊系統和 User Prompt 支援
+v3.5.4 - 統一版本號 + 裝置狀態快取
 """
 
 import os
+import time
 import inspect
 from typing import Optional
 from datetime import datetime
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse
 
 from backend.core.config import settings
 from backend.core.logger import log
+from backend.core.version import __version__
 from backend.models.schemas import (
     TaskStatus, ProcessingMode, TaskInfo, QueueStatus,
     UploadResponse, HealthStatus, ErrorResponse
@@ -25,19 +27,30 @@ router = APIRouter(prefix="/api", tags=["API"])
 
 
 @router.get("/health", response_model=HealthStatus)
-async def health_check():
+async def health_check(quick: bool = False):
     """
     健康檢查端點
     回傳系統狀態、GPU 資訊、排隊狀態
-    v3.5.0: 支援 MPS 偵測
+    
+    v3.5.4 改進：
+    - 支援 quick 模式（使用快取，避免 GPU 滿載時阻塞）
+    - 支援 MPS 偵測
+    
+    Query Parameters:
+        quick: bool - 是否使用快速模式（預設 False）
+                     - True: 使用快取資訊，不重新偵測裝置
+                     - False: 完整健康檢查（重新偵測裝置）
     """
     from backend.core.platform_config import get_platform, get_device
     
-    # 偵測裝置
-    device_detector.detect_best_device()
+    # 根據 quick 參數決定是否重新偵測裝置
+    if not quick:
+        # 完整模式：重新偵測裝置
+        device_detector.detect_best_device()
+    
     device_info = device_detector.get_device_info()
     
-    # v3.5.0: 偵測平台和裝置
+    # v3.5.4: 偵測平台和裝置
     platform_name = get_platform()
     device_name = get_device()
     
@@ -62,7 +75,7 @@ async def health_check():
     
     return HealthStatus(
         status="healthy",
-        version="3.5.0",
+        version=__version__,
         gpu_available=device_info.get("gpu_available", False),
         gpu_name=device_info.get("gpu_name"),
         ollama_available=ollama_available,
