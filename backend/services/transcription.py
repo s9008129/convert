@@ -72,7 +72,12 @@ class TranscriptionService:
             return
         
         config = get_global_config()
-        model_name = get_config_value(config, 'whisper.mlx.model', settings.WHISPER_MODEL)
+        model_name = get_config_value(config, 'whisper.mlx.model', None)
+        
+        # 若未設定 mlx.model，回退到 whisper.model 或預設值
+        if not model_name:
+            model_name = get_config_value(config, 'whisper.model', 'mlx-community/whisper-large-v3-turbo')
+            log.warning(f"未設定 whisper.mlx.model，使用回退值: {model_name}")
         
         # MLX-Whisper 自動使用 MPS，不需要手動指定
         self._device = DeviceType.MPS
@@ -83,7 +88,7 @@ class TranscriptionService:
         try:
             # MLX-Whisper 不需要顯式載入模型，在轉錄時自動載入
             self._model = "mlx"  # 標記已初始化
-            log.info(f"✅ MLX-Whisper 已初始化 (裝置: MPS)")
+            log.info(f"✅ MLX-Whisper 已初始化 (裝置: MPS, 模型: {model_name})")
         except Exception as e:
             log.error(f"MLX-Whisper 初始化失敗: {e}")
             raise
@@ -234,8 +239,14 @@ class TranscriptionService:
             raise RuntimeError("MLX-Whisper 未安裝，請執行: pip install mlx-whisper")
         
         config = get_global_config()
-        model_name = get_config_value(config, 'whisper.mlx.model', settings.WHISPER_MODEL)
-        language = get_config_value(config, 'whisper.mlx.language', 'zh')
+        model_name = get_config_value(config, 'whisper.mlx.model', None)
+        
+        # 若未設定 mlx.model，回退到 whisper.model 或預設值
+        if not model_name:
+            model_name = get_config_value(config, 'whisper.model', 'mlx-community/whisper-large-v3-turbo')
+            log.warning(f"未設定 whisper.mlx.model，使用回退值: {model_name}")
+        
+        language = get_config_value(config, 'whisper.mlx.language', get_config_value(config, 'whisper.language', 'zh'))
         
         log.info(f"使用 MLX-Whisper 轉錄 (model={model_name}, language={language})")
         

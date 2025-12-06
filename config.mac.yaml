@@ -39,8 +39,16 @@ llm:
 whisper:
   # macOS 使用 MLX-Whisper（針對 Apple Silicon 優化）
   backend: mlx-whisper
-  model: mlx-community/whisper-large-v3-turbo
-  device: mps  # Apple Metal Performance Shaders
+  
+  # MLX-Whisper 設定
+  mlx:
+    model: mlx-community/whisper-large-v3-turbo
+    device: mps  # Apple Metal Performance Shaders
+    fp16: true
+    language: zh
+  
+  # 通用設定（用於 Faster-Whisper 降級）
+  device: mps
   compute_type: float16
   beam_size: 5
   language: zh

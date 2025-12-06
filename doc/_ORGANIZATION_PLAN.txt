@@ -1,0 +1,65 @@
+文件分類計劃
+================================================================================
+
+## 分類規則
+
+### evidence/ - 驗證證據
+- 包含所有驗證報告和測試證據
+- 命名格式：{功能}_{類型}_EVIDENCE_v{版本}.md
+- 例如：queue_logic_fix_evidence_v3.5.1.md
+
+### reports/ - 技術報告
+- 包含詳細的技術分析和修復報告
+- 命名格式：{功能}_{類型}_report_v{版本}.md
+- 例如：mlx_whisper_fix_report_v3.5.1.md
+
+### guides/ - 部署指南
+- 包含所有部署、操作、使用指南
+- 命名格式：{平台}_{類型}_guide.md
+- 例如：mac_deployment_guide.md, windows_quick_start_guide.md
+
+### analysis/ - 分析文件
+- 包含系統分析、需求分析、架構分析
+- 命名格式：{主題}_analysis.md
+- 例如：system_architecture_analysis.md
+
+## 檔案對應
+
+evidence/:
+- QUEUE_LOGIC_FIX_COMPLETION_EVIDENCE.md → queue_logic_fix_evidence_v3.5.1.md
+- MAC_MIGRATION_VERIFICATION_v3.5.0.md → mac_migration_evidence_v3.5.0.md
+- TASK_COMPLETION_EVIDENCE_v3.5.0.md → task_completion_evidence_v3.5.0.md
+- WINDOWS_RTX4090_MIGRATION_EVIDENCE.md → windows_rtx4090_migration_evidence.md
+- DOCUMENTATION_SYNC_VERIFICATION_v3.4.0.md → documentation_sync_evidence_v3.4.0.md
+- GPU_ACCELERATION_VERIFICATION_v3.4.3.md → gpu_acceleration_evidence_v3.4.3.md
+- DOCKER_ZERO_REBUILD_VERIFICATION.md → docker_zero_rebuild_evidence.md
+- ENGLISH_FIX_VERIFICATION.md → english_fix_evidence.md
+- FINAL_COMPLETION_REPORT_v3.5.0.md → final_completion_evidence_v3.5.0.md
+
+reports/:
+- QUEUE_LOGIC_FIX_REPORT.md → queue_logic_fix_report_v3.5.1.md
+- CODE_REVIEW_REPORT.md → code_review_report.md
+- FIX_SUMMARY_ZH_TW.md → fix_summary_report.md
+- MIGRATION_VERIFICATION_INDEX.md → migration_verification_report.md
+- 地端雲端會議記錄品質比對報告.md → llm_quality_comparison_report.md
+
+guides/:
+- MAC_原生服務部署指南.md → mac_native_deployment_guide.md
+- MAC_whisper.md → mac_whisper_guide.md
+- MACOS_DEPLOYMENT.md → mac_deployment_guide.md
+- Windows部署完整指南.md → windows_deployment_guide.md
+- Windows批次檔部署指南.md → windows_batch_deployment_guide.md
+- Windows快速開始.md → windows_quick_start_guide.md
+- Docker部署經驗指南.md → docker_deployment_guide.md
+- Docker映像檔Rebuild時機指南.md → docker_rebuild_guide.md
+- Docker零重建部署指南.md → docker_zero_rebuild_guide.md
+- GPU加速支援指南.md → gpu_acceleration_guide.md
+- 快速入門指南.md → quick_start_guide.md
+- 快速部署指南.md → quick_deployment_guide.md
+- 管理者操作指南.md → administrator_guide.md
+
+analysis/:
+- WINDOWS_DEPLOYMENT_ANALYSIS_ZH_TW.md → windows_deployment_analysis.md
+- WINDOWS_DEPLOYMENT_SOLUTION.md → windows_deployment_solution.md
+- 系統開發及實作規劃.md → system_development_analysis.md
+

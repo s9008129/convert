@@ -2,21 +2,41 @@
 
 ## [v3.5.1] - 2025-12-06
 
-### 🐛 排隊邏輯修復
+### 🐛 重大修復
 
-#### 問題描述
-用戶回報排隊邏輯顯示異常：
-- 顯示「目前排隊人數：0 人」
-- 顯示「您的排隊位置：1」
-- 顯示「預計等待：0 分鐘」
-- 邏輯矛盾：如果是第1位且不需等待，應該立即開始處理，不應顯示排隊位置
+#### 1. MLX-Whisper 404 錯誤修復
 
-#### 根本原因
-`backend/services/queue_manager.py` 的 `get_next_task()` 方法中：
+**問題描述**：
+- macOS 版本啟動時出現 404 Client Error
+- 錯誤訊息：`Repository Not Found for url: https://huggingface.co/api/models/medium/revision/main`
+- 導致轉錄功能完全無法使用
+
+**根本原因**：
+- `config.mac.yaml` 的 Whisper 配置結構不正確
+- 程式碼讀取 `whisper.mlx.model`，但配置只有 `whisper.model`
+- 導致回退到預設值 `"medium"`（錯誤的模型路徑格式）
+
+**修復內容**：
+1. **config.mac.yaml**
+   - 重構 Whisper 配置結構，新增 `whisper.mlx` 嵌套區塊
+   - 正確設定模型路徑：`mlx-community/whisper-large-v3-turbo`
+
+2. **backend/services/transcription.py**
+   - 新增3層配置回退機制：`whisper.mlx.model` → `whisper.model` → 預設值
+   - 增加警告日誌，當配置不完整時提示開發者
+
+#### 2. 排隊邏輯顯示異常修復
+
+**問題描述**：
+- 顯示「目前排隊人數：0 人」但「您的排隊位置：1」
+- 邏輯矛盾：排隊位置為1且不需等待，應該立即開始處理
+
+**根本原因**：
+- `backend/services/queue_manager.py` 的 `get_next_task()` 方法
 - ✅ 有清除 `queue_position = None`
 - ❌ 但未清除 `estimated_wait_seconds`（應設為 0）
 
-#### 修復內容
+**修復內容**：
 1. **backend/services/queue_manager.py**
    - 在 `get_next_task()` 中新增 `task.estimated_wait_seconds = 0`
    - 確保任務從佇列取出時，排隊位置和等待時間都被清除
@@ -24,27 +44,62 @@
 2. **backend/services/task_processor.py**
    - 更新註解，確保與實際狀態一致
 
-#### 驗證結果
-✅ **單元測試**：`tests/test_queue_fix.py` - 4個測試全部通過
-- 第一個任務立即處理（queue_position = None, estimated_wait = 0）
-- 第二個任務正確等待並自動晉升
-- 任務狀態轉換正確（QUEUED → PENDING → COMPLETED）
-- 佇列狀態統計準確
+### ✅ 驗證結果
 
-✅ **整合測試**：`tests/test_queue_integration.py` - 1個測試通過
-- 模擬2個音訊檔案上傳完整流程
-- 驗證排隊位置、等待時間、狀態轉換全部正確
+**測試通過率**：100% (8/8)
 
-#### 核心驗證點
-1. ✅ 第一個任務從佇列取出時，`queue_position` 立即設為 `None`
-2. ✅ 第一個任務從佇列取出時，`estimated_wait_seconds` 設為 `0`
-3. ✅ 第二個任務在第一個開始處理後，自動晉升到第1位
-4. ✅ 佇列狀態計算正確（排隊中 vs 處理中）
-5. ✅ 任務狀態轉換正確（QUEUED → PENDING → COMPLETED）
+#### 端到端測試
+- ✅ MLX-Whisper 模型正確載入（404 錯誤已修復）
+- ✅ MLX-Whisper 使用 MPS 加速
+- ✅ 配置回退機制運作正常
 
-#### 測試通過率
-- **5/5 測試通過** (100%)
-- 詳細報告：`doc/QUEUE_LOGIC_FIX_REPORT.md`
+#### 排隊邏輯測試
+- ✅ 第一個任務從佇列取出時，`queue_position` 設為 `None`
+- ✅ 第一個任務從佇列取出時，`estimated_wait_seconds` 設為 `0`
+- ✅ 第二個任務自動晉升到第1位
+- ✅ 佇列狀態計算正確（排隊中 vs 處理中）
+- ✅ 任務狀態轉換正確（QUEUED → PENDING → COMPLETED）
+
+**測試檔案**：
+- `tests/test_end_to_end.py` - 端到端整合測試
+- `tests/test_queue_fix.py` - 4個單元測試
+- `tests/test_queue_integration.py` - 1個整合測試
+
+**詳細報告**：
+- `doc/evidence/mlx_whisper_e2e_test_evidence_v3.5.1.md` - 完整測試證據
+- `doc/evidence/queue_logic_fix_evidence_v3.5.1.md` - 排隊邏輯修復證據
+- `doc/reports/queue_logic_fix_report_v3.5.1.md` - 詳細修復報告
+
+### 📁 文件組織重構
+
+**重大改進**：重新組織 `doc/` 目錄，建立清晰的分類結構
+
+#### 新增目錄結構
+```
+doc/
+├── evidence/        # 驗證證據 - 測試驗證報告和證據
+├── reports/         # 技術報告 - 技術分析和修復報告
+├── guides/          # 部署指南 - 部署、操作、使用指南
+├── analysis/        # 分析文件 - 系統分析、架構分析
+└── README.md        # 文件導航說明
+```
+
+#### 檔案命名規範
+- **驗證證據**：`{功能}_{類型}_evidence_v{版本}.md`
+- **技術報告**：`{功能}_{類型}_report_v{版本}.md`
+- **部署指南**：`{平台}_{類型}_guide.md`
+- **分析文件**：`{主題}_analysis.md`
+
+#### 文件重新組織
+- 重新命名所有文件，使用有意義的英文名稱
+- 依類型分類到對應目錄
+- 新增 `doc/README.md` 提供文件導航
+- 更新 `.github/INSTRUCTIONS.md` 定義文件組織規範
+
+**總計**：
+- 重新組織 30+ 個文件
+- 建立4個分類目錄
+- 統一命名規範
 
 ---
 

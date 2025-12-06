@@ -1,7 +1,7 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.0-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.1-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
@@ -27,6 +27,26 @@
 - 本地模式：100% 離線，零資料上傳
 - 加密儲存：敏感資訊本地加密
 - 自動清理：過期檔案自動刪除
+
+## 🆕 v3.5.1 更新（2025-12-06）
+
+### 重大修復
+1. **MLX-Whisper 404 錯誤修復** ✅
+   - 修復 macOS 版本 HuggingFace 404 錯誤
+   - 重構 Whisper 配置結構，新增回退機制
+   - 測試通過率：100% (8/8)
+
+2. **排隊邏輯優化** ✅
+   - 修復排隊位置顯示異常
+   - 確保 `estimated_wait_seconds` 正確清除
+   - 完整的單元測試和整合測試
+
+3. **文件組織重構** ✅
+   - 建立清晰的分類結構（evidence/reports/guides/analysis）
+   - 統一檔案命名規範（30+ 個文件重新組織）
+   - 新增文件導航說明
+
+詳見：[CHANGELOG.md](CHANGELOG.md) | [證據文件](doc/evidence/mlx_whisper_e2e_test_evidence_v3.5.1.md)
 
 ## 🚀 快速開始
 
