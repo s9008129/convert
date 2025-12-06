@@ -424,67 +424,188 @@ convert/
 
 ---
 
-## 📋 第九部分：Git 提交規範
+## 📋 第九部分：自動 Git Commit 原則（Automatic Git Commit Principle）
 
-### 9.1 Commit Message 格式
+### 9.1 強制規則
 
-**強制格式**（中文）：
+**Copilot MUST 在每次完成一項任務後自動進行 git commit，並遵循以下強制規則**：
+
+1. **Commit MUST 包含完整且準確的變更內容**
+   - 不可忽略任何重要檔案修改
+   - 不可合併不相關的變更
+   - 若包含多個邏輯無關的變更，應拆分為多次 commit
+
+2. **Commit Log Message MUST 遵循要求**
+   - ✅ 詳細、精確、可理解
+   - ✅ 清楚描述任務目的、處理方式、產生的變更
+   - ✅ 若有推論或假設，MUST 以 `[推測]` 明確標記
+   - ✅ **所有 Commit Message MUST 使用繁體中文（台灣正體）撰寫**
+
+### 9.2 Commit Message 強制格式（zh-TW）
+
 ```
-[類型] 簡短描述（不超過 50 字）
+<type>: <summary>
 
-詳細說明：
-- 變更內容 1
-- 變更內容 2
-- 變更內容 3
-
-影響範圍：
-- 檔案 1
-- 檔案 2
-
-測試：
-- 測試項目 1
-- 測試項目 2
-```
-
-**類型標籤**：
-- `[新增]`：新功能
-- `[修復]`：Bug 修復
-- `[重構]`：程式碼重構
-- `[文件]`：文件更新
-- `[優化]`：效能優化
-- `[安全]`：安全性修復
-
-**範例**：
-```
-[修復] 繁體中文輸出問題 v3.4.4
-
-詳細說明：
-- 強化 System Prompt 中的語言約束
-- User Message 前綴加入繁體中文指令
-- 設定 HF_HOME 和 XDG_CACHE_HOME 指向 Volume
-
-影響範圍：
-- backend/core/config.py
-- backend/services/summarization.py
-- docker/Dockerfile.gpu
-- docker/docker-compose-windows-gpu.yml
-
-測試：
-- 上傳含英文逐字稿，確認輸出繁體中文
-- 驗證模型快取在 Volume 中
-- Rebuild 確認不重新下載模型
+詳細分析（Detailed Analysis）:
+- 變更了什麼（What was changed）
+- 為什麼要改（Why it was changed）
+- 決策如何衍生（How the decision was derived）
+  ├─ 來自使用者輸入（From user input）
+  ├─ 來自官方文件（From official documentation）
+  ├─ 來自代碼分析（From code analysis）
+  └─ 或 [推測] 基於最佳實踐（Based on best practices - if inference）
+- 任何後續工作或 TODO
+- 受影響的檔案清單
 ```
 
-### 9.2 提交前檢查清單
+### 9.3 類型標籤（Type Tags）
 
-**每次 commit 前必做**：
+- `[新增]`：新功能 (feat)
+- `[修復]`：Bug 修復 (fix)
+- `[重構]`：程式碼重構 (refactor)
+- `[文件]`：文件更新 (docs)
+- `[優化]`：效能優化 (perf)
+- `[安全]`：安全性修復 (security)
 
-- [ ] 執行本地測試（上傳測試檔案）
-- [ ] 更新 `CHANGELOG.md`
-- [ ] 檢查版本號是否一致
-- [ ] 確認無敏感資料（API Key、密碼）
-- [ ] 執行 `git status` 確認檔案正確
-- [ ] 撰寫清楚的 commit message
+### 9.4 完整範例
+
+```
+[新增] 管理者操作指南 - 深度梳理專案架構與配置
+
+詳細分析:
+變更內容:
+- 新增 doc/管理者操作指南.md (19KB+)
+- 擴充 .github/INSTRUCTIONS.md 至 v2.0
+- 新增第六至九部分的開發規範
+
+為什麼改:
+根據使用者提出的核心痛點，專案經歷多次修正導致：
+1. 架構混淆 - 不清楚系統組成與跨平台差異
+2. 設定檔混亂 - 多種 .env、.yml、.yaml 檔不知何時用
+3. Rebuild 時機不明 - 不確定何時需要重建 Docker
+4. GPU 設定複雜 - cuDNN 依賴與環境變數容易出錯
+5. 文件不同步 - 版本號不一致導致混淆
+
+決策衍生:
+[來自使用者輸入] 用戶明確指出需要友善、非技術人員可理解的指南
+[來自代碼分析] 分析 CHANGELOG.md、README.md、所有 doc/*.md 文件
+[最佳實踐] 採用第一性原理分析，建立三層知識體系
+
+後續工作:
+- [ ] 保持文件版本號同步
+- [ ] 定期驗證 Docker Rebuild 指南準確性
+- [ ] 根據新增功能更新 GPU 加速部分
+
+受影響檔案:
+- .github/INSTRUCTIONS.md (v2.0)
+- doc/管理者操作指南.md (new)
+- CHANGELOG.md
+- README.md
+```
+
+### 9.5 提交時機與頻率
+
+- **MUST 在任務完成後立即執行**
+  - 完成一個獨立功能 → commit
+  - 完成一個 Bug 修復 → commit
+  - 完成文件更新 → commit
+
+- **若一次任務包含多個步驟**
+  - MAY 依邏輯拆分多次 commit
+  - 但不可合併至難以追溯原因
+
+- **除非有更高原則阻擋**
+  - 必須在提交訊息中說明阻擋原因
+  - 例：「因安全考量暫未提交敏感設定檔」
+
+### 9.6 提交前檢查清單
+
+**每次 commit 前 MUST 完成**：
+
+- [ ] 執行本地測試驗證變更正確
+- [ ] 更新 `CHANGELOG.md` 記錄版本變更
+- [ ] 檢查所有檔案的版本號是否一致
+- [ ] 確認無敏感資料（API Key、密碼、個人資訊）洩漏
+- [ ] 執行 `git status` 確認文件清單正確
+- [ ] 撰寫清楚、完整的繁體中文 commit message
+- [ ] 驗證 commit message 包含詳細分析與決策衍生
+
+---
+
+## 📋 第十部分：第一性原理分析與技術文件查詢
+
+### 10.1 問題分析原則
+
+**遇到任何問題或要新增功能時，MUST 使用第一性原理進行深度分析**：
+
+1. **質疑現有假設** - 為什麼會這樣？是否有更根本的原因？
+2. **追溯根本原因** - 問題的本質是什麼？不是症狀。
+3. **分解複雜問題** - 將問題拆解為基本單位。
+4. **從基礎開始建構** - 基於基本事實重新組合解決方案。
+
+**應用在本專案**：
+
+- GPU 加速失效？→ 分析 CUDA/cuDNN/FFmpeg 依賴鏈（見第一部分）
+- 繁體中文輸出英文？→ 分析 LLM 多語言傾向（見第二部分）
+- Docker 重建時間長？→ 分析模型快取機制（見第三部分）
+- 文件混淆？→ 分析設定檔優先順序與決策邏輯（本部分）
+
+### 10.2 技術文件查詢強制要求
+
+**MUST 使用 Context7 MCP 取得官方技術文件，而非依賴內存知識**：
+
+```
+問題 → 第一性原理分析 → Context7 查詢 → 驗證方案 → 實作 → Commit
+```
+
+**查詢優先順序**：
+
+1. **官方文件**（最可信）
+   - 例：CTranslate2 官方指南（cuDNN 8 需求來源）
+   - 例：NVIDIA CUDA 官方文件
+   - 例：Docker 官方參考
+
+2. **GitHub Issues/Discussions**（社群驗證）
+   - 例：faster-whisper issues
+   - 例：Ollama discussions
+
+3. **技術博客與最佳實踐**（參考實現）
+   - 但必須交叉驗證官方文件
+
+**禁止**：
+- ❌ 單純依賴舊經驗
+- ❌ 假設而未驗證
+- ❌ 使用過時文件
+
+### 10.3 Context7 查詢範例
+
+```
+# 查詢 CTranslate2 cuDNN 依賴
+context7-resolve-library-id: "CTranslate2"
+context7-get-library-docs: "/opennmt/CTranslate2/latest"
+topic: "GPU support cuDNN requirements"
+
+# 查詢 Docker Volume 最佳實踐
+context7-resolve-library-id: "Docker"
+context7-get-library-docs: "/docker/docs"
+topic: "volumes persistent storage"
+
+# 查詢 faster-whisper GPU 加速
+context7-resolve-library-id: "faster-whisper"
+context7-get-library-docs: "/faster-whisper/latest"
+topic: "CUDA GPU acceleration"
+```
+
+### 10.4 決策文檔化
+
+**每次根據第一性原理得出的決策，MUST 記錄於 INSTRUCTIONS.md**：
+
+| 決策 | 根本原因 | 驗證來源 | 記錄位置 |
+|------|---------|---------|---------|
+| cuDNN 8 必須 | CTranslate2 語音識別需求 | 官方 GitHub | 第一部分 1.1 |
+| 三道防線中文輸出 | Gemma3 多語言傾向 | 實測+社群 | 第二部分 2.1-2.3 |
+| Volume 持久化模型 | --no-cache 清除 layer | 實測 | 第三部分 3.2 |
+| 文件優先順序 | Docker Compose 規範 | 官方文件 | 第七部分 7.2 |
 
 ---
 
@@ -494,6 +615,7 @@ convert/
 |------|------|----------|
 | v1.0 | 2025-12-05 | 初版：記錄 cuDNN 8 需求、繁體中文輸出規範、Docker 重建優化 |
 | v2.0 | 2025-12-06 | 擴充版：新增文件管理、設定檔對映、部署維護、Git 規範 |
+| v2.1 | 2025-12-06 | 強化版：新增自動 Commit 原則、第一性原理分析、Context7 查詢規範 |
 
 ---
 

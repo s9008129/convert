@@ -9,11 +9,11 @@
 
 **將會議錄音轉換為結構化會議記錄的跨平台 Docker 服務**
 
-[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [批次檔部署指南](doc/Windows批次檔部署指南.md) • [Docker Rebuild 指南](doc/Docker映像檔Rebuild時機指南.md)
+[快速開始](#-快速開始) • [功能特色](#-功能特色) • [部署指南](#-部署指南) • [API 文件](#-api-文件) • [快速部署指南](doc/快速部署指南.md) • [MAC 部署指南](doc/MAC_Docker部署指南.md) • [管理者指南](doc/管理者操作指南.md) • [開發原則](.github/INSTRUCTIONS.md)
 
 </div>
 
-> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [`INSTRUCTIONS.md`](INSTRUCTIONS.md) - 最高指導原則
+> ⚠️ **開發者必讀**：修改程式碼前請先閱讀 [INSTRUCTIONS.md](.github/INSTRUCTIONS.md) - 最高指導原則（含自動 Commit 規範、第一性原理分析、Context7 查詢要求）
 
 ---
 

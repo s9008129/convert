@@ -5,6 +5,82 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [3.4.5] - 2025-12-06
+
+### 重大改進 🔥 - 開發規範強化
+
+此版本建立**自動 Git Commit 強制規則**與**第一性原理分析流程**，確保未來所有修改都有完整的決策追溯與文件查詢基礎。
+
+#### 1. 自動 Git Commit 強制原則
+
+**新增規則**：
+- Copilot MUST 在每次完成任務後自動 commit
+- Commit message MUST 包含詳細的「Detailed Analysis」區塊
+- MUST 清楚標記決策來源（使用者輸入、官方文件、代碼分析、推測）
+- **所有 Commit message MUST 使用繁體中文（台灣正體）撰寫**
+
+**新增 Commit Message 格式**：
+```
+<type>: <summary>
+
+詳細分析（Detailed Analysis）:
+- 變更了什麼（What was changed）
+- 為什麼要改（Why it was changed）
+- 決策如何衍生（How the decision was derived）
+  ├─ 來自使用者輸入
+  ├─ 來自官方文件
+  ├─ 來自代碼分析
+  └─ 或 [推測] 基於最佳實踐
+- 任何後續工作或 TODO
+- 受影響的檔案清單
+```
+
+#### 2. 第一性原理分析與 Context7 查詢強制要求
+
+**新增原則**：
+- 遇到任何問題或要新增功能時，**MUST 使用第一性原理深度分析問題本質**
+- **MUST 使用 Context7 MCP 取得官方技術文件驗證方案**
+- 禁止單純依賴舊經驗或假設而未驗證
+
+**決策衍生優先順序**：
+1. 官方文件（最可信）
+2. GitHub Issues/Discussions（社群驗證）
+3. 技術博客與最佳實踐（參考實現）
+
+### 新增功能
+
+- ✨ 第九部分：自動 Git Commit 原則（v2.1）
+  - 自動提交規則與強制格式
+  - 決策衍生與來源標記機制
+  - 提交時機與頻率指南
+  - 提交前檢查清單
+
+- ✨ 第十部分：第一性原理分析與 Context7 查詢（全新）
+  - 問題分析四步驟
+  - Context7 查詢強制要求
+  - 官方文件優先順序
+  - 決策文檔化模板
+
+### 修改檔案
+
+| 檔案 | 修改內容 |
+|------|----------|
+| `.github/INSTRUCTIONS.md` | v2.0 → v2.1，新增第九、十部分 |
+| `README.md` | 更新導航連結，強調開發原則重要性 |
+| `CHANGELOG.md` | 記錄 v3.4.5 新增規則 |
+
+### 開發規範檢查清單
+
+**每次修改程式前 MUST**：
+- [ ] 閱讀相關的 INSTRUCTIONS.md 章節
+- [ ] 使用第一性原理分析問題本質
+- [ ] 使用 Context7 查詢官方文件驗證
+- [ ] 在 commit message 中標記決策來源
+- [ ] 撰寫繁體中文 commit message（包含詳細分析）
+- [ ] 更新 CHANGELOG.md 與相關文件版本號
+
+---
+
 ## [3.4.4] - 2025-12-05
 
 ### 重大改進 🔥
