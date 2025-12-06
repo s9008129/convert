@@ -43,6 +43,11 @@ doc/
 **命名規範**：`{功能}_{類型}_report_v{版本}.md` 或 `{功能}_report.md`
 
 **檔案清單**：
+- `v3.5.4_穩定版本深度分析報告.md` - v3.5.4 穩定版本深度分析（第一性原理）
+- `v3.5.4_critical_issues_analysis.md` - v3.5.4 關鍵問題分析報告
+- `v3.5.4_修復驗證報告.md` - v3.5.4 修復驗證報告
+- `MLX-Whisper修復驗證報告_v3.5.2.md` - MLX-Whisper 修復驗證報告
+- `服務連線修復驗證報告_v3.5.3.md` - 服務連線修復驗證報告
 - `queue_logic_fix_report_v3.5.1.md` - 排隊邏輯修復詳細報告
 - `code_review_report.md` - 程式碼審查報告
 - `fix_summary_report.md` - 修復總結報告
@@ -130,6 +135,7 @@ doc/
    - 分析：`analysis/windows_deployment_analysis.md`
 
 ### 按版本查找
+- **v3.5.4**：`v3.5.4_穩定版本深度分析報告.md`（主報告）
 - **v3.5.1**：`evidence/queue_logic_fix_evidence_v3.5.1.md`
 - **v3.5.0**：`evidence/mac_migration_evidence_v3.5.0.md`
 - **v3.4.3**：`evidence/gpu_acceleration_evidence_v3.4.3.md`
@@ -181,6 +187,7 @@ doc/
 
 ## 📅 更新記錄
 
+- **2025-12-06**：新增 v3.5.4 穩定版本深度分析報告（第一性原理）
 - **2025-12-06**：重新組織文件結構，建立分類目錄
 - **2025-12-06**：統一檔案命名規範
 - **2025-12-06**：新增 README.md 說明文件

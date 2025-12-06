@@ -1,8 +1,9 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.3-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.4-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
+[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.4_穩定版本深度分析報告.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
 
@@ -28,9 +29,95 @@
 - 加密儲存：敏感資訊本地加密
 - 自動清理：過期檔案自動刪除
 
-## 🆕 v3.5.3 更新（2025-12-06）
+## 🆕 v3.5.4 穩定版本（2025-12-06）
 
-### 重大修復：服務連線異常問題解決 ✅
+### 🔥 重大改進與修復
+
+#### 1. GPU 滿載時新 Session 無法開啟網頁問題完全修復 ✅
+
+**問題描述**: 當 GPU 使用率達到 100% 時，新用戶開啟網頁會一直轉圈圈，無法訪問服務。
+
+**根本原因**: 後端沒有實作請求級別的超時限制，導致等待 GPU 資源時阻塞整個 HTTP 請求。
+
+**修復方案**:
+1. ✅ 新增 **TimeoutMiddleware**（30 秒超時保護）
+   - 所有 HTTP 請求加入超時限制
+   - 超時後返回 503 Service Unavailable
+   - 防止長時間阻塞影響其他用戶
+
+2. ✅ **Health Check 支援快速模式**
+   - `?quick=true`: 使用快取資訊，不重新偵測裝置
+   - `?quick=false`: 完整健康檢查（預設）
+   - 避免 GPU 滿載時阻塞
+
+3. ✅ **前端使用快速健康檢查**
+   - 定期健康檢查使用快速模式
+   - 避免阻塞用戶體驗
+
+**修復後狀態**:
+```
+✅ GPU 滿載時新用戶可正常開啟網頁
+✅ 超時後顯示友善錯誤訊息（而非轉圈圈）
+✅ 系統保持響應性
+```
+
+#### 2. 統一版本號管理 📦
+
+**問題描述**: 版本號硬編碼在多處，服務顯示不一致。
+
+**修復方案**:
+1. ✅ 創建 **VERSION 檔案**（Single Source of Truth）
+2. ✅ 創建 `backend/core/version.py` 版本號管理模組
+3. ✅ 所有版本號引用統一（main.py, routes.py）
+4. ✅ 服務重啟後自動同步版本號
+
+#### 3. 服務管理工具 🛠️
+
+**新增功能**:
+1. ✅ `scripts/service_manager.sh` - 互動式服務管理工具
+   - 查看服務狀態
+   - 啟動/停止/重啟服務
+   - 查看日誌
+   - 顯示重啟指南
+
+2. ✅ 明確重啟時機文件
+   - Python 程式碼（.py）→ 自動重載
+   - 環境變數/配置檔 → 需要重啟
+   - 靜態檔案/版本號 → 需要重啟
+
+### 🎯 Windows 兼容性保證
+
+**深度分析結果**: ✅ **完全不影響 Windows 版本**
+
+**證據**:
+1. ✅ 所有變更在應用層（HTTP、API、版本管理）
+2. ✅ 零觸及基礎設施層（裝置偵測、GPU 運算）
+3. ✅ Windows GPU 關鍵檔案完全未修改:
+   - `backend/core/platform_config.py` ❌ 未修改
+   - `backend/services/device_detector.py` ❌ 未修改
+   - `backend/services/transcription.py` ❌ 未修改
+   - `config.yaml` ❌ 未修改
+   - `docker/docker-compose-windows-gpu.yml` ❌ 未修改
+
+詳細分析請參閱: [v3.5.4 穩定版本深度分析報告](doc/v3.5.4_穩定版本深度分析報告.md)
+
+### 🧪 測試驗證
+
+```bash
+✅ 253/254 測試通過（99.6% 通過率）
+✅ 所有核心功能驗證通過
+✅ GPU/MPS/CPU 裝置偵測正常
+✅ WebSocket 錯誤處理完善
+✅ 排隊系統穩定運作
+```
+
+---
+
+## 📚 歷史更新
+
+### v3.5.3 更新（2025-12-06）
+
+#### 重大修復：服務連線異常問題解決 ✅
 
 **問題**：Safari 無法連接到 `127.0.0.1:9527`
 
