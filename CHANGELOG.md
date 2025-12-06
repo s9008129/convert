@@ -1,10 +1,66 @@
 # MeetingScribe - 變更紀錄
 
-## [v3.5.1] - 2025-12-06
+## [v3.5.2] - 2025-12-06
 
 ### 🐛 重大修復
 
-#### 1. MLX-Whisper 404 錯誤修復
+#### 1. MLX-Whisper 模型路徑與配置檔案修復
+
+**問題描述**：
+- macOS 版本轉錄時出現 404 Client Error
+- 錯誤訊息：`Repository Not Found for url: https://huggingface.co/api/models/medium/revision/main`
+- 根本原因：配置檔案名稱錯誤 + 模型路徑格式不正確 + 後端識別邏輯缺陷
+
+**修復內容**：
+
+1. **配置檔案重新命名** (`config.mac.yaml` → `config.macos.yaml`)
+   - 問題：程式碼尋找 `config.macos.yaml`，但實際檔案為 `config.mac.yaml`
+   - 修復：將 `config.mac.yaml` 重新命名為 `config.macos.yaml`
+   - 影響：平台配置載入邏輯現在能正確合併 macOS 專屬設定
+
+2. **Whisper 配置結構優化** (`config.macos.yaml`)
+   - 修改前：`whisper.backend: mlx-whisper` + 缺少 `mlx.model` 配置
+   - 修改後：新增完整的 `whisper.mlx` 區塊
+   ```yaml
+   whisper:
+     backend: mlx-whisper
+     mlx:
+       model: mlx-community/whisper-medium  # 使用本地已安裝模型
+       device: mps
+       fp16: true
+       language: zh
+   ```
+   - 優先使用本地已安裝的 `mlx-community/whisper-medium` 模型
+
+3. **後端識別邏輯強化** (`backend/services/transcription.py`)
+   - 新增後端名稱正規化邏輯：
+   ```python
+   if 'mlx' in backend.lower():
+       self._backend = 'mlx'
+   elif 'faster' in backend.lower():
+       self._backend = 'faster-whisper'
+   ```
+   - 解決 `mlx-whisper` vs `mlx` 字串比對不匹配問題
+
+4. **MLX-Whisper API 參數修正**
+   - 修復前：將 `language` 作為位置參數傳遞（不正確）
+   - 修復後：`language` 作為 `decode_options` 的關鍵字參數傳遞
+   - 符合 MLX-Whisper 0.x 版本 API 規範
+
+**測試驗證**：
+- ✅ 測試 1: `test_meeting_1.wav` (156KB) - **通過**
+- ✅ 測試 2: `test_meeting_2.wav` (156KB) - **通過**
+- ✅ 直接 MLX-Whisper 呼叫測試 - **通過**
+- ✅ 模型從本地快取載入，無需網路下載
+
+**本地模型檢測結果**：
+```bash
+~/.cache/huggingface/hub/
+├── models--mlx-community--whisper-medium (✅ 使用中)
+└── models--mlx-community--whisper-large-v3-turbo (可用)
+```
+
+#### 2. MLX-Whisper 404 錯誤修復 (v3.5.1)
 
 **問題描述**：
 - macOS 版本啟動時出現 404 Client Error

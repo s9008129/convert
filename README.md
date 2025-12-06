@@ -1,7 +1,7 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.1-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.2-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
@@ -28,9 +28,40 @@
 - 加密儲存：敏感資訊本地加密
 - 自動清理：過期檔案自動刪除
 
-## 🆕 v3.5.1 更新（2025-12-06）
+## 🆕 v3.5.2 更新（2025-12-06）
 
-### 重大修復
+### 重大修復：MLX-Whisper 模型載入問題完全解決 ✅
+
+**問題根源**：
+1. 配置檔案名稱錯誤（`config.mac.yaml` 應為 `config.macos.yaml`）
+2. Whisper 配置結構缺少 `mlx.model` 欄位
+3. 後端識別邏輯無法處理 `mlx-whisper` 字串
+4. MLX-Whisper API 呼叫參數順序錯誤
+
+**修復成果**：
+- ✅ 重新命名配置檔案為 `config.macos.yaml`
+- ✅ 完善 Whisper MLX 配置結構，優先使用本地已安裝的 `mlx-community/whisper-medium` 模型
+- ✅ 強化後端識別邏輯，支援 `mlx-whisper` → `mlx` 自動正規化
+- ✅ 修正 MLX-Whisper API 參數傳遞方式
+
+**測試驗證**（100% 通過）：
+```bash
+🎯 MLX-Whisper 真實音檔驗證測試
+📝 測試 1: test_meeting_1.wav (156K) ✅ 成功
+📝 測試 2: test_meeting_2.wav (156K) ✅ 成功
+總測試數: 2 | 成功數: 2 | 失敗數: 0
+
+🎉 所有測試通過! MLX-Whisper 模型問題已完全修復!
+```
+
+**本地模型狀態**：
+- ✅ `mlx-community/whisper-medium` (已安裝，正在使用)
+- ✅ `mlx-community/whisper-large-v3-turbo` (已安裝，可切換)
+- ✅ 模型從本地快取載入，無需網路連線
+
+### v3.5.1 更新（2025-12-06）
+
+#### 重大修復
 1. **MLX-Whisper 404 錯誤修復** ✅
    - 修復 macOS 版本 HuggingFace 404 錯誤
    - 重構 Whisper 配置結構，新增回退機制
@@ -46,7 +77,7 @@
    - 統一檔案命名規範（30+ 個文件重新組織）
    - 新增文件導航說明
 
-詳見：[CHANGELOG.md](CHANGELOG.md) | [證據文件](doc/evidence/mlx_whisper_e2e_test_evidence_v3.5.1.md)
+詳見：[CHANGELOG.md](CHANGELOG.md)
 
 ## 🚀 快速開始
 

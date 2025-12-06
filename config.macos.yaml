@@ -42,7 +42,7 @@ whisper:
   
   # MLX-Whisper 設定
   mlx:
-    model: mlx-community/whisper-large-v3-turbo
+    model: mlx-community/whisper-medium
     device: mps  # Apple Metal Performance Shaders
     fp16: true
     language: zh

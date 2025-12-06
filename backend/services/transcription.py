@@ -44,7 +44,14 @@ class TranscriptionService:
         Others: faster-whisper (CUDA/CPU)
         """
         if self._backend is None:
-            self._backend = get_whisper_backend()
+            backend = get_whisper_backend()
+            # 正規化後端名稱
+            if 'mlx' in backend.lower():
+                self._backend = 'mlx'
+            elif 'faster' in backend.lower():
+                self._backend = 'faster-whisper'
+            else:
+                self._backend = backend
             log.info(f"Whisper 後端: {self._backend}")
         return self._backend
         
@@ -260,9 +267,9 @@ class TranscriptionService:
         result = mlx_whisper.transcribe(
             audio_path,
             path_or_hf_repo=model_name,
-            language=language,
             initial_prompt=traditional_chinese_prompt,
-            word_timestamps=False
+            word_timestamps=False,
+            language=language  # Pass language as decode_option
         )
         
         # 提取結果
