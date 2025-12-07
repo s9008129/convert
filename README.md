@@ -248,8 +248,23 @@ venv\Scripts\activate
 ```
 
 #### 3. 安裝依賴
+
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt --prefer-binary
+```
+
+**依賴修復（v3.5.4-stable-patch）**：
+- PyAV 已升級到 16.0.1，支援 FFmpeg 7.1+
+- faster-whisper 已升級到 1.2.1，兼容新版 PyAV
+- 詳見 [CHANGELOG.md](CHANGELOG.md#v354-stable-patch---2025-12-07)
+
+如遇到編譯問題，可使用以下方式：
+```bash
+# 方式 1：使用預編譯 wheels（推薦）
+pip install -r requirements.txt --prefer-binary
+
+# 方式 2：如果還有問題，用此命令更新虛擬環境
+pip install --upgrade -r requirements.txt
 ```
 
 #### 4. 配置環境變數

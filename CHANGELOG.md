@@ -1,5 +1,106 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.4-stable-patch] - 2025-12-07
+
+### 🔧 依賴修復（Dependency Fix）
+
+#### 1. PyAV 版本兼容性修復
+
+**問題診斷**：
+- PyAV 14.0.1（來自 Conda）與 FFmpeg 7.1.1 不兼容
+- 編譯錯誤：`AV_OPT_TYPE_CHANNEL_LAYOUT` 在 FFmpeg 7.1 中已移除
+- 替換為新 API：`AV_OPT_TYPE_CHLAYOUT`
+
+**第一性原理分析**：
+- 層級 1 - 源代碼層面：PyAV 舊 API 與 FFmpeg 7.1 新 API 不匹配
+- 層級 2 - 版本兼容性：FFmpeg 6.1+ 開始廢除舊 API，7.0+ 完全移除
+- 層級 3 - 依賴管理：faster-whisper 1.0.1 依賴 av 11.x，但系統有 14.0.1
+- 層級 4 - 系統環境：macOS ARM64 + FFmpeg 7.1.1 需要最新 PyAV
+
+**修復方案**：
+1. **升級 PyAV 到 16.0.1**
+   - 從 GitHub 源代碼編譯（預編譯 wheels 仍包含舊 API）
+   - 新版源代碼已修復 FFmpeg 7.1 兼容性
+   ```bash
+   git clone https://github.com/PyAV-Org/PyAV.git
+   pip install -e ./PyAV
+   ```
+
+2. **升級 faster-whisper 到 1.2.1**
+   - 支持 av >= 11.0（包括 16.0.1）
+   - 改動：`requirements.txt` 中 faster-whisper==1.0.1 → 1.2.1
+
+**修改清單**：
+- ✅ PyAV：14.0.1 → 16.0.1（從源代碼編譯）
+- ✅ faster-whisper：1.0.1 → 1.2.1
+- ✅ requirements.txt：更新版本號
+
+#### 2. 使用 Context7 MCP 最佳實踐
+
+**查詢過程**：
+1. 使用 Context7 MCP 解析庫 ID：`/pyav-org/pyav`
+2. 查詢官方文檔了解 FFmpeg 7.0+ 支持
+3. 確認 `pip install av --no-binary av` 不適用（預編譯 wheels 更新）
+4. 決策：從源代碼編譯最新版本
+
+**文檔參考**：
+- PyAV 官方支持 FFmpeg 版本 7.0+
+- 預編譯 wheels 可能滯後，源代碼編譯獲得最新修復
+- Source Reputation: Medium，Benchmark Score: 86.4
+
+#### 3. 驗證結果
+
+**依賴驗證**：
+```
+✓ PyAV 16.0.1（支持 FFmpeg 7.1.1）
+✓ FastAPI 0.109.2
+✓ Faster-Whisper 1.2.1（支持 av >= 11.0）
+✓ 所有核心依賴檢驗通過
+```
+
+**編譯狀態**：
+```
+[✓] 虛擬環境已設置
+[✓] 依賴安裝完成
+[✓] 資料目錄已建立
+[✓] 環境檢查通過
+```
+
+**性能**：
+- 使用 Apple MPS 加速
+- 效能提升 3-5 倍（v3.5.0 原生模式）
+
+#### 4. 影響範圍
+
+**直接影響**：
+- ✅ PyAV 編譯成功（移除編譯錯誤）
+- ✅ faster-whisper 依賴解決
+- ✅ 完整依賴鏈可用
+
+**向後兼容**：
+- ✅ API 完全兼容（no breaking changes）
+- ✅ 功能無變化
+- ✅ 配置無需修改
+
+#### 5. 部署步驟
+
+```bash
+# 步驟 1：更新 requirements.txt
+git pull origin main
+
+# 步驟 2：更新虛擬環境
+source venv/bin/activate
+pip install -r requirements.txt --prefer-binary
+
+# 步驟 3：確認依賴
+python -c "import av, faster_whisper; print(f'PyAV {av.__version__}, FW {faster_whisper.__version__}')"
+
+# 步驟 4：啟動服務
+bash scripts/start-mac-native.sh
+```
+
+---
+
 ## [v3.5.4-stable] - 2025-12-07
 
 ### 🛡️ 版本控制強化（Version Control Enhancement）
