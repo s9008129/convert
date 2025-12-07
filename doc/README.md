@@ -187,6 +187,11 @@ doc/
 
 ## 📅 更新記錄
 
+- **2025-12-07**：新增版本控制強化相關文件
+  - `doc/guides/upgrade/windows_v3.5.4_upgrade_guide.md` - Windows 升級指南
+  - `doc/guides/git/branch_management_guide.md` - Git 分支管理指南
+  - `doc/architecture/plans/project_restructure_plan.md` - 專案架構重整計劃
+  - `doc/reports/custom_format_status_report.md` - 自訂格式功能狀態報告
 - **2025-12-06**：新增 v3.5.4 穩定版本深度分析報告（第一性原理）
 - **2025-12-06**：重新組織文件結構，建立分類目錄
 - **2025-12-06**：統一檔案命名規範
@@ -195,5 +200,5 @@ doc/
 ---
 
 **維護者**：MeetingScribe 開發團隊  
-**最後更新**：2025-12-06  
-**版本**：v1.0.0
+**最後更新**：2025-12-07  
+**版本**：v1.1.0

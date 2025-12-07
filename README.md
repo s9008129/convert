@@ -1,20 +1,30 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.4-green)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](docs/DEPLOYMENT.md)
+[![Version](https://img.shields.io/badge/version-3.5.4--stable-green)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.4_穩定版本深度分析報告.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
 
+## ⚠️ 版本控制公告（2025-12-07）
+
+**main 分支已回退至 v3.5.4 穩定版本**
+
+- **穩定版本**：v3.5.4 (commit: `7100d81`)
+- **開發分支**：`develop` 分支包含 v3.5.5 ~ v3.6.1 的開發中功能
+- **合併原則**：未達到 Stable 等級的版本不會合併到 main
+
+詳見：[版本控制最高原則](/.github/INSTRUCTIONS.md#第十一部分版本控制最高原則2025-12-07-新增)
+
 ## ✨ 核心特性
 
 ### 🎯 雙模式部署
-- **本地模式** (Native)：完整離線，資料不外傳，使用 LM Studio + MLX-Whisper
+- **本地模式** (Native)：完整離線，資料不外傳，使用 Ollama/LM Studio + Whisper
 - **雲端模式** (Cloud)：高品質輸出，使用 Gemini API
 
 ### 🚀 性能優化
-- **GPU 加速**：支援 Apple MPS、CUDA、ROCm
+- **GPU 加速**：支援 Apple MPS、NVIDIA CUDA、ROCm
 - **智能降級**：GPU 不可用時自動切換至 CPU
 - **並行處理**：任務排隊系統，支援批次上傳
 
@@ -29,9 +39,9 @@
 - 加密儲存：敏感資訊本地加密
 - 自動清理：過期檔案自動刪除
 
-## 🆕 v3.5.4 穩定版本（2025-12-06）
+## 🆕 v3.5.4-stable 穩定版本（2025-12-07）
 
-### 🔥 重大改進與修復
+### 🛡️ 版本控制強化
 
 #### 1. GPU 滿載時新 Session 無法開啟網頁問題完全修復 ✅
 

@@ -832,3 +832,163 @@ doc/
 - 記錄設計決策、技術選型、架構規劃
 - 長期保存，較少更新
 
+---
+
+## 🚨 第十一部分：版本控制最高原則（2025-12-07 新增）
+
+### 11.1 穩定版本保護策略
+
+> **🔴 最高原則：main 分支僅允許 Stable 等級的版本**
+
+**穩定版本定義：**
+- ✅ 經過完整功能測試
+- ✅ 經過跨平台（Mac + Windows）驗證
+- ✅ 無已知重大 Bug
+- ✅ 文件已同步更新
+- ✅ 所有相關配置檔完備
+
+**當前穩定版本基準：**
+```
+Commit: 7100d81
+版本：v3.5.4
+狀態：Stable（穩定版本）
+日期：2025-12-07
+```
+
+### 11.2 分支管理策略
+
+```
+main (穩定版本)
+│
+├── develop (開發整合分支)
+│   ├── feature/xxx (新功能分支)
+│   ├── fix/xxx (修復分支)
+│   └── docs/xxx (文件分支)
+│
+└── release/vX.X.X (發布候選分支)
+```
+
+**分支規則：**
+
+| 分支類型 | 來源 | 合併目標 | 用途 |
+|---------|------|---------|------|
+| `main` | release | - | 穩定版本，僅接受 release 合併 |
+| `develop` | main | release | 開發整合，累積多個功能後整合 |
+| `feature/*` | develop | develop | 新功能開發 |
+| `fix/*` | develop | develop | Bug 修復 |
+| `release/*` | develop | main + develop | 版本發布準備 |
+| `hotfix/*` | main | main + develop | 緊急修復 |
+
+### 11.3 Push 防呆機制
+
+**Pre-Push Hook 強制檢查：**
+
+每次 push 到 main 分支時，MUST 執行以下檢查：
+
+1. **版本標記檢查**：確認 commit 包含 `[Stable]` 標記
+2. **分支來源檢查**：確認是從 release/* 或 hotfix/* 分支合併
+3. **測試狀態檢查**：確認所有測試通過
+4. **文件同步檢查**：確認 CHANGELOG.md 已更新
+
+**安裝 Pre-Push Hook：**
+
+```bash
+# 在專案根目錄執行
+cp scripts/hooks/pre-push .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
+### 11.4 Copilot 自動提醒規則
+
+**當使用者嘗試直接 push 到 main 時，Copilot MUST：**
+
+1. ⚠️ **立即警告**：「您正在嘗試 push 到 main 分支，這是受保護的穩定版本分支」
+2. 📋 **提示檢查清單**：
+   - [ ] 此變更是否經過完整測試？
+   - [ ] 此變更是否經過跨平台驗證？
+   - [ ] CHANGELOG.md 是否已更新？
+   - [ ] 版本號是否已更新？
+3. 🚫 **建議替代方案**：「建議先 push 到 develop 分支，測試通過後再透過 release 分支合併到 main」
+
+### 11.5 版本發布流程
+
+**標準發布流程（非緊急）：**
+
+```bash
+# 1. 確保在 develop 分支
+git checkout develop
+
+# 2. 建立 release 分支
+git checkout -b release/v3.5.5
+
+# 3. 進行最終測試和調整
+# ... 測試 ...
+
+# 4. 更新版本號和 CHANGELOG
+# 編輯 VERSION、CHANGELOG.md
+
+# 5. 合併到 main
+git checkout main
+git merge --no-ff release/v3.5.5 -m "[Stable] 發布 v3.5.5"
+
+# 6. 打標籤
+git tag -a v3.5.5 -m "版本 v3.5.5 - 穩定版本"
+
+# 7. 合併回 develop
+git checkout develop
+git merge release/v3.5.5
+
+# 8. 清理 release 分支
+git branch -d release/v3.5.5
+```
+
+**緊急修復流程：**
+
+```bash
+# 1. 從 main 建立 hotfix 分支
+git checkout main
+git checkout -b hotfix/critical-bug-fix
+
+# 2. 修復問題
+# ... 修復 ...
+
+# 3. 測試驗證
+# ... 測試 ...
+
+# 4. 合併到 main
+git checkout main
+git merge --no-ff hotfix/critical-bug-fix -m "[Stable][Hotfix] 修復關鍵問題"
+
+# 5. 合併到 develop
+git checkout develop
+git merge hotfix/critical-bug-fix
+
+# 6. 清理
+git branch -d hotfix/critical-bug-fix
+```
+
+### 11.6 禁止事項
+
+1. ❌ **禁止直接 push 到 main**：所有變更必須透過 PR 或合併
+2. ❌ **禁止跳過測試**：必須經過完整測試才能合併到 main
+3. ❌ **禁止遺漏文件更新**：CHANGELOG.md 和相關文件必須同步
+4. ❌ **禁止跨過 develop**：新功能不可直接從 feature 合併到 main
+
+### 11.7 版本歷史追蹤
+
+| 版本 | Commit | 狀態 | 日期 | 說明 |
+|------|--------|------|------|------|
+| v3.5.4 | 7100d81 | ✅ Stable | 2025-12-07 | 穩定版本基準 |
+
+---
+
+## 📌 版本歷史（INSTRUCTIONS.md）
+
+| 版本 | 日期 | 更新內容 |
+|------|------|----------|
+| v1.0 | 2025-12-05 | 初版：記錄 cuDNN 8 需求、繁體中文輸出規範、Docker 重建優化 |
+| v2.0 | 2025-12-06 | 擴充版：新增文件管理、設定檔對映、部署維護、Git 規範 |
+| v2.1 | 2025-12-06 | 強化版：新增自動 Commit 原則、第一性原理分析、Context7 查詢規範 |
+| v3.5.0 | 2025-12-06 | 雙平台版：新增 Git 版本控制策略、macOS 原生模式管理 |
+| v3.5.4 | 2025-12-07 | 穩定版：新增版本控制最高原則、分支管理策略、Push 防呆機制 |
+

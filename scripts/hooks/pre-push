@@ -1,0 +1,67 @@
+#!/bin/bash
+#
+# MeetingScribe Pre-Push Hook
+# 版本：v1.0
+# 日期：2025-12-07
+#
+# 用途：防止未經驗證的變更直接 push 到 main 分支
+# 安裝：cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+
+# 顏色定義
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# 讀取 push 目標
+while read local_ref local_sha remote_ref remote_sha
+do
+    # 只檢查 push 到 main 分支的情況
+    if [[ "$remote_ref" == "refs/heads/main" ]]; then
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}⚠️  警告：您正在嘗試 push 到 main 分支！${NC}"
+        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo -e "${YELLOW}🔒 main 分支是受保護的穩定版本分支${NC}"
+        echo ""
+        echo "根據專案規範（.github/INSTRUCTIONS.md 第十一部分），"
+        echo "main 分支僅允許 Stable 等級的版本。"
+        echo ""
+        echo "📋 Push 前檢查清單："
+        echo "  [ ] 此變更是否經過完整功能測試？"
+        echo "  [ ] 此變更是否經過跨平台（Mac + Windows）驗證？"
+        echo "  [ ] CHANGELOG.md 是否已更新？"
+        echo "  [ ] VERSION 檔案是否已更新？"
+        echo "  [ ] 相關文件是否已同步？"
+        echo ""
+        echo -e "${GREEN}✅ 建議流程：${NC}"
+        echo "  1. git checkout develop"
+        echo "  2. git push origin develop"
+        echo "  3. 在 develop 上完成測試"
+        echo "  4. 建立 release 分支進行最終驗證"
+        echo "  5. 合併 release 到 main 並標記 [Stable]"
+        echo ""
+        
+        # 檢查是否有 [Stable] 標記
+        COMMIT_MSG=$(git log -1 --format="%s" "$local_sha")
+        if [[ "$COMMIT_MSG" == *"[Stable]"* ]]; then
+            echo -e "${GREEN}✅ 偵測到 [Stable] 標記，允許 push${NC}"
+            exit 0
+        fi
+        
+        # 互動式確認
+        echo -e "${YELLOW}⚠️  您的 commit message 未包含 [Stable] 標記${NC}"
+        echo ""
+        read -p "您確定要繼續 push 到 main 嗎？(輸入 'yes-i-am-sure' 確認): " CONFIRM
+        
+        if [[ "$CONFIRM" != "yes-i-am-sure" ]]; then
+            echo -e "${RED}❌ Push 已取消${NC}"
+            exit 1
+        fi
+        
+        echo -e "${YELLOW}⚠️  強制 push 中...請確保您已完成所有檢查${NC}"
+    fi
+done
+
+exit 0

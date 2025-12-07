@@ -1,5 +1,52 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.4-stable] - 2025-12-07
+
+### 🛡️ 版本控制強化（Version Control Enhancement）
+
+#### 1. 確立穩定版本基準
+
+**變更內容**：
+- 將 main 分支回退至 commit `7100d81`（v3.5.4 穩定版本）
+- 建立 `develop` 分支保存後續開發內容（v3.5.5 ~ v3.6.1）
+- 新增版本控制最高原則至 `.github/INSTRUCTIONS.md`
+
+**新增規範**：
+- main 分支僅允許 Stable 等級的版本
+- 所有新功能開發必須在 develop 或 feature/* 分支進行
+- 合併到 main 必須經過完整的跨平台測試
+
+#### 2. Push 防呆機制
+
+**新增功能**：
+- `scripts/hooks/pre-push` - Git pre-push hook
+- 嘗試 push 到 main 時會顯示警告並要求確認
+- 未包含 `[Stable]` 標記的 commit 需要手動確認
+
+**安裝方式**：
+```bash
+cp scripts/hooks/pre-push .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
+#### 3. 文件新增
+
+**新增文件**：
+- `doc/guides/upgrade/windows_v3.5.4_upgrade_guide.md` - Windows 升級指南
+- `doc/guides/git/branch_management_guide.md` - Git 分支管理指南（Vibe Coder 友善版）
+- `doc/architecture/plans/project_restructure_plan.md` - 專案架構重整計劃
+- `doc/reports/custom_format_status_report.md` - 自訂格式功能狀態報告
+
+#### 4. 自訂格式功能說明
+
+**現況**：
+- 「自訂會議記錄格式」功能在 v3.5.5+ 版本開發
+- 目前穩定版 v3.5.4 **不包含**此功能
+- 功能完整實現在 develop 分支中
+- 待完成跨平台測試後再合併到 main
+
+---
+
 ## [v3.5.4] - 2025-12-06
 
 ### 🔥 重大改進（Critical Improvements）
