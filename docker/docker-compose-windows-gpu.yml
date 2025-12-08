@@ -132,24 +132,14 @@ services:
 networks:
   meetingscribe-network:
     driver: bridge
-    name: meetingscribe-network
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.30.0.0/16
-          gateway: 172.30.0.1
-    labels:
-      - "com.meetingscribe.project=meetingscribe"
+    external: true
 
 # ========================================
 # 持久化存儲
 # ========================================
 volumes:
   meetingscribe-whisper-models:
-    driver: local
-    name: meetingscribe-whisper-models
-    labels:
-      - "com.meetingscribe.project=meetingscribe"
+    external: true
 
 # ============================================================
 # Windows RTX 4090 部署檢查清單：
