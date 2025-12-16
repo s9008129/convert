@@ -180,7 +180,7 @@ whisper:
 
 ## 故障排除（常見問題）
 - 服務無法啟動：檢查 9527 埠是否被佔用（lsof -i:9527），確認依賴已安裝
-- LM Studio 連接失敗：確認 LM Studio 正在運行並可從 ML API 列表讀到模型（curl http://localhost:1234/v1/models）
+- LM Studio 連接失敗：確認 LM Studio 正在運行並可從 LM Studio API 列表讀到模型（curl http://localhost:1234/v1/models）
 - 轉錄品質差：檢查輸入音訊品質（建議 16kHz、mono），或選擇更大的 Whisper 模型
 - 記憶體不足：降低 Whisper/LLM 模型等級或增加記憶體/GPU
 
@@ -190,7 +190,7 @@ whisper:
 - requirements.txt — 依賴清單
 - backend/ — 主要後端程式碼（FastAPI 應用）
 - config*.yaml — 平台/部署設定範例
-- docs/ 或 doc/ — 部署、API、架構指南（詳細操作請參閱 docs 目錄中的具體指南）
+- doc/ — 部署、API、架構指南（詳細操作請參閱 doc 目錄中的具體指南）
 
 ---
 
