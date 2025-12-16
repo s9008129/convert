@@ -1,348 +1,132 @@
-# MeetingScribe - 會議轉錄系統
+# MeetingScribe — 會議轉錄系統
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.4--stable-green)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
-[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.4_穩定版本深度分析報告.md)
+簡短定義
+- 目標：將會議錄音自動轉為結構化會議記錄（逐字稿、決議、行動項目），支援本地與雲端部署，兼顧隱私與效能。
+- 輸入：音訊檔（MP3/MP4/WAV/M4A/MKV/WebM/FLAC/OGG/...）
+- 輸出：逐字稿（文本）、結構化會議摘要（決議、待辦）、可下載結果檔案與 API/WebSocket 實時進度通知
+- 設計原則（第一性原則）
+  - 最小可信邊界：本地模式下資料不外傳，僅在必要時使用雲端 LLM。
+  - 可替換的處理層：轉錄、LLM 推理與排隊系統彼此解耦，便於在不同硬體/供應商間切換。
+  - 漸進式降級：優先使用 GPU，加速不可用時自動回退到 CPU，保持可用性。
+  - 可觀察性與安全：健康檢查、超時保護與本地加密儲存。
 
-> 將會議錄音自動轉換為結構化會議記錄的智能系統
-
-## ⚠️ 版本控制公告（2025-12-07）
-
-**main 分支已回退至 v3.5.4 穩定版本**
-
-- **穩定版本**：v3.5.4 (commit: `7100d81`)
-- **開發分支**：`develop` 分支包含 v3.5.5 ~ v3.6.1 的開發中功能
-- **合併原則**：未達到 Stable 等級的版本不會合併到 main
-
-詳見：[版本控制最高原則](/.github/INSTRUCTIONS.md#第十一部分版本控制最高原則2025-12-07-新增)
-
-## ✨ 核心特性
-
-### 🎯 雙模式部署
-- **本地模式** (Native)：完整離線，資料不外傳，使用 Ollama/LM Studio + Whisper
-- **雲端模式** (Cloud)：高品質輸出，使用 Gemini API
-
-### 🚀 性能優化
-- **GPU 加速**：支援 Apple MPS、NVIDIA CUDA、ROCm
-- **智能降級**：GPU 不可用時自動切換至 CPU
-- **並行處理**：任務排隊系統，支援批次上傳
-
-### 📋 功能完整
-- 支援多種音訊格式（MP3、MP4、WAV、M4A、MKV、WebM 等）
-- 自動生成會議記錄（決議事項、行動項目等）
-- 實時轉錄進度顯示
-- RESTful API + WebSocket 支援
-
-### 🔒 隱私安全
-- 本地模式：100% 離線，零資料上傳
-- 加密儲存：敏感資訊本地加密
-- 自動清理：過期檔案自動刪除
-
-## 🆕 v3.5.4-stable 穩定版本（2025-12-07）
-
-### 🛡️ 版本控制強化
-
-#### 1. GPU 滿載時新 Session 無法開啟網頁問題完全修復 ✅
-
-**問題描述**: 當 GPU 使用率達到 100% 時，新用戶開啟網頁會一直轉圈圈，無法訪問服務。
-
-**根本原因**: 後端沒有實作請求級別的超時限制，導致等待 GPU 資源時阻塞整個 HTTP 請求。
-
-**修復方案**:
-1. ✅ 新增 **TimeoutMiddleware**（30 秒超時保護）
-   - 所有 HTTP 請求加入超時限制
-   - 超時後返回 503 Service Unavailable
-   - 防止長時間阻塞影響其他用戶
-
-2. ✅ **Health Check 支援快速模式**
-   - `?quick=true`: 使用快取資訊，不重新偵測裝置
-   - `?quick=false`: 完整健康檢查（預設）
-   - 避免 GPU 滿載時阻塞
-
-3. ✅ **前端使用快速健康檢查**
-   - 定期健康檢查使用快速模式
-   - 避免阻塞用戶體驗
-
-**修復後狀態**:
-```
-✅ GPU 滿載時新用戶可正常開啟網頁
-✅ 超時後顯示友善錯誤訊息（而非轉圈圈）
-✅ 系統保持響應性
-```
-
-#### 2. 統一版本號管理 📦
-
-**問題描述**: 版本號硬編碼在多處，服務顯示不一致。
-
-**修復方案**:
-1. ✅ 創建 **VERSION 檔案**（Single Source of Truth）
-2. ✅ 創建 `backend/core/version.py` 版本號管理模組
-3. ✅ 所有版本號引用統一（main.py, routes.py）
-4. ✅ 服務重啟後自動同步版本號
-
-#### 3. 服務管理工具 🛠️
-
-**新增功能**:
-1. ✅ `scripts/service_manager.sh` - 互動式服務管理工具
-   - 查看服務狀態
-   - 啟動/停止/重啟服務
-   - 查看日誌
-   - 顯示重啟指南
-
-2. ✅ 明確重啟時機文件
-   - Python 程式碼（.py）→ 自動重載
-   - 環境變數/配置檔 → 需要重啟
-   - 靜態檔案/版本號 → 需要重啟
-
-### 🎯 Windows 兼容性保證
-
-**深度分析結果**: ✅ **完全不影響 Windows 版本**
-
-**證據**:
-1. ✅ 所有變更在應用層（HTTP、API、版本管理）
-2. ✅ 零觸及基礎設施層（裝置偵測、GPU 運算）
-3. ✅ Windows GPU 關鍵檔案完全未修改:
-   - `backend/core/platform_config.py` ❌ 未修改
-   - `backend/services/device_detector.py` ❌ 未修改
-   - `backend/services/transcription.py` ❌ 未修改
-   - `config.yaml` ❌ 未修改
-   - `docker/docker-compose-windows-gpu.yml` ❌ 未修改
-
-詳細分析請參閱: [v3.5.4 穩定版本深度分析報告](doc/v3.5.4_穩定版本深度分析報告.md)
-
-### 🧪 測試驗證
-
-```bash
-✅ 253/254 測試通過（99.6% 通過率）
-✅ 所有核心功能驗證通過
-✅ GPU/MPS/CPU 裝置偵測正常
-✅ WebSocket 錯誤處理完善
-✅ 排隊系統穩定運作
-```
+快速功能總覽
+- 本地（Native） / 雲端（Cloud）雙模式：LM Studio（本地 LLM）或 Gemini（雲端 API）
+- 轉錄引擎：Whisper / faster-whisper / MLX（依平台選擇）
+- 支援 GPU：Apple MPS、NVIDIA CUDA、ROCm；自動降級至 CPU
+- REST API + WebSocket：上傳檔案、查進度、取得結果
+- 多檔批次上傳、實時進度、結果下載
 
 ---
 
-## 📚 歷史更新
+## 技術棧
 
-### v3.5.3 更新（2025-12-06）
+後端
+- 框架：FastAPI + Uvicorn
+- 轉錄：OpenAI Whisper / faster-whisper / MLX（本地模型）
+- LLM：LM Studio（本地） / Google Gemini（雲端 API）
+- 排隊/任務：內建任務隊列（輕量排隊與並發控制）
+- 儲存：檔案系統（可擴充至 SQLite/PostgreSQL）
 
-#### 重大修復：服務連線異常問題解決 ✅
+前端
+- HTML5 + CSS3 + Vanilla JS（拖放上傳、實時進度顯示）
 
-**問題**：Safari 無法連接到 `127.0.0.1:9527`
+環境與依賴
+- Python 3.8+
+- 主要第三方：whisper / faster-whisper / pyav / 相關 ML 推理套件（見 requirements.txt）
+- OS：macOS 12+（建議 Apple Silicon）、Windows 10+/Ubuntu 20.04+
+- GPU：支援 Apple MPS、CUDA、ROCm（視平台）
 
-**根本原因**：
-- Docker 容器 `meetingscribe-app` 已停止但佔用埠號配置
-- Native 服務程序已終止，但 PID 檔案殘留
-- 導致新服務無法綁定埠號 9527
+安全與隱私
+- 本地部署時：資料不外傳、支援本地模型與本地 LLM
+- 支援環境變數與 .env 配置以隱藏 API 金鑰（例如 GEMINI_API_KEY）
+- 可設定資料過期自動清理與敏感資料加密儲存
 
-**修復方案**：
-1. ✅ 安全移除衝突的 Docker 容器（僅 macOS，不影響 Windows）
-2. ✅ 清理過期的 PID 檔案
-3. ✅ 重新啟動 Native 服務
-4. ✅ 新增 Docker 清理腳本 (`scripts/cleanup_docker.sh`)
+---
 
-**修復後狀態**：
-```bash
-✅ 服務: http://127.0.0.1:9527 (健康)
-✅ GPU: Apple MPS 正常運作
-✅ LM Studio: 可用
-✅ Gemini API: 可用
-```
+## 系統需求（建議）
+- RAM: 16GB+
+- Storage: 20GB（模型與資料）
+- macOS: 12.0+（Apple Silicon 建議）
+- Windows: 10/11
+- Linux: Ubuntu 20.04+
+- 若使用本地大型模型，請評估額外 GPU/記憶體需求
 
-**安全保證**：
-- ✅ Windows Docker 版本完全不受影響
-- ✅ 配置檔案未變更
-- ✅ 僅移除 macOS 本地 Docker 容器
+---
 
-## 🆕 v3.5.2 更新（2025-12-06）
+## 安裝與部署（精簡步驟）
 
-### 重大修復：MLX-Whisper 模型載入問題完全解決 ✅
-
-**問題根源**：
-1. 配置檔案名稱錯誤（`config.mac.yaml` 應為 `config.macos.yaml`）
-2. Whisper 配置結構缺少 `mlx.model` 欄位
-3. 後端識別邏輯無法處理 `mlx-whisper` 字串
-4. MLX-Whisper API 呼叫參數順序錯誤
-
-**修復成果**：
-- ✅ 重新命名配置檔案為 `config.macos.yaml`
-- ✅ 完善 Whisper MLX 配置結構，優先使用本地已安裝的 `mlx-community/whisper-medium` 模型
-- ✅ 強化後端識別邏輯，支援 `mlx-whisper` → `mlx` 自動正規化
-- ✅ 修正 MLX-Whisper API 參數傳遞方式
-
-**測試驗證**（100% 通過）：
-```bash
-🎯 MLX-Whisper 真實音檔驗證測試
-📝 測試 1: test_meeting_1.wav (156K) ✅ 成功
-📝 測試 2: test_meeting_2.wav (156K) ✅ 成功
-總測試數: 2 | 成功數: 2 | 失敗數: 0
-
-🎉 所有測試通過! MLX-Whisper 模型問題已完全修復!
-```
-
-**本地模型狀態**：
-- ✅ `mlx-community/whisper-medium` (已安裝，正在使用)
-- ✅ `mlx-community/whisper-large-v3-turbo` (已安裝，可切換)
-- ✅ 模型從本地快取載入，無需網路連線
-
-### v3.5.1 更新（2025-12-06）
-
-#### 重大修復
-1. **MLX-Whisper 404 錯誤修復** ✅
-   - 修復 macOS 版本 HuggingFace 404 錯誤
-   - 重構 Whisper 配置結構，新增回退機制
-   - 測試通過率：100% (8/8)
-
-2. **排隊邏輯優化** ✅
-   - 修復排隊位置顯示異常
-   - 確保 `estimated_wait_seconds` 正確清除
-   - 完整的單元測試和整合測試
-
-3. **文件組織重構** ✅
-   - 建立清晰的分類結構（evidence/reports/guides/analysis）
-   - 統一檔案命名規範（30+ 個文件重新組織）
-   - 新增文件導航說明
-
-詳見：[CHANGELOG.md](CHANGELOG.md)
-
-## 🚀 快速開始
-
-### 系統需求
-
-#### macOS (推薦)
-- **OS**: macOS 12.0+ (Apple Silicon 優先)
-- **RAM**: 16GB+ (本地模式需要)
-- **Storage**: 20GB (模型 + 資料)
-- **GPU**: Apple MPS (自動)
-
-#### Windows
-- **OS**: Windows 10/11
-- **RAM**: 16GB+
-- **Storage**: 20GB
-- **GPU**: CUDA (NVIDIA) 或 DirectML
-
-#### Linux
-- **OS**: Ubuntu 20.04+
-- **RAM**: 16GB+
-- **Storage**: 20GB
-- **GPU**: CUDA 或 ROCm
-
-### 安裝步驟
-
-#### 1. 克隆專案
+1) 取得原始碼
 ```bash
 git clone https://github.com/s9008129/convert.git
 cd convert
 ```
 
-#### 2. 建立虛擬環境（推薦）
+2) 建議建立虛擬環境
+- macOS / Linux
 ```bash
-# macOS / Linux
 python3 -m venv venv
 source venv/bin/activate
-
-# Windows
+```
+- Windows
+```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-#### 3. 安裝依賴
-
+3) 安裝 Python 依賴
 ```bash
 pip install -r requirements.txt --prefer-binary
 ```
+若遇到編譯問題，先嘗試 --prefer-binary，或更新 pip 與 wheel，再重試。
 
-**依賴修復（v3.5.4-stable-patch）**：
-- PyAV 已升級到 16.0.1，支援 FFmpeg 7.1+
-- faster-whisper 已升級到 1.2.1，兼容新版 PyAV
-- 詳見 [CHANGELOG.md](CHANGELOG.md#v354-stable-patch---2025-12-07)
-
-如遇到編譯問題，可使用以下方式：
+4) 配置環境變數（範例）
+- 直接在 shell 設定：
 ```bash
-# 方式 1：使用預編譯 wheels（推薦）
-pip install -r requirements.txt --prefer-binary
-
-# 方式 2：如果還有問題，用此命令更新虛擬環境
-pip install --upgrade -r requirements.txt
+export DATA_DIR=/path/to/convert/data
+export LOG_LEVEL=INFO
+export LMSTUDIO_BASE_URL=http://localhost:1234/v1   # 若使用 LM Studio（本地）
+export GEMINI_API_KEY=your_gemini_api_key           # 若使用雲端 Gemini
 ```
-
-#### 4. 配置環境變數
+- 或建立 .env：
 ```bash
-# macOS
-export DATA_DIR=/Users/hsiaojohnny/dev/convert/data
-export PYTHONPATH=/Users/hsiaojohnny/dev/convert:$PYTHONPATH
-
-# 或編輯 .env 檔案
 cp .env.example .env
+# 編輯 .env 填入實際值
 ```
 
-#### 5. 下載 LM Studio（本地模式）
-- 官網：https://lmstudio.ai
-- 載入模型：`gemma-3-27b-it-qat` 或其他模型
-- 啟動本地 API：http://localhost:1234
+5) 若使用本地 LLM（LM Studio）
+- 下載並啟動 LM Studio（或其他本地 LLM 提供者），確認 API 可用（預設 http://localhost:1234/v1）
+- 載入並啟用所需模型（例如 gemma-3-27b…），確認模型能被呼叫
 
-#### 6. 啟動服務
+6) 啟動服務（開發）
 ```bash
-# 使用 uvicorn
 uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload
-
-# 或使用提供的腳本
+```
+或使用專案提供的啟動腳本（若存在）
+```bash
 ./start_service.sh
 ```
 
-#### 7. 開啟瀏覽器
-```
-http://localhost:9527
-```
+7) 瀏覽器開啟
+- 預設介面: http://localhost:9527
 
-## 📖 使用說明
+---
 
-### Web 介面
+## 常用 API 範例
 
-1. **選擇模式**
-   - 本地模式：完全離線，無需網路
-   - 雲端模式：需要 Gemini API 金鑰
-
-2. **上傳音檔**
-   - 支援格式：MP3, MP4, WAV, M4A, MKV, WebM, FLAC, OGG, AVI, MOV
-   - 最大檔案：200MB
-   - 批次上傳：可同時上傳多個檔案
-
-3. **自動處理**
-   - 實時進度顯示
-   - 逐字稿轉錄
-   - 會議記錄生成
-   - 結果下載
-
-### API 使用
-
-#### 健康檢查
+健康檢查
 ```bash
 curl http://localhost:9527/api/health
 ```
 
-**回應**：
-```json
-{
-  "status": "healthy",
-  "version": "3.5.0",
-  "gpu_available": true,
-  "gpu_name": "Apple MPS (Metal Performance Shaders)",
-  "ollama_available": false,
-  "lmstudio_available": false,
-  "gemini_available": true
-}
-```
-
-#### 上傳檔案
+上傳檔案（local 模式範例）
 ```bash
 curl -F "file=@meeting.mp3" \
      -F "mode=local" \
      http://localhost:9527/api/upload
 ```
 
-#### WebSocket 連接
+WebSocket 實時進度
 ```javascript
 const ws = new WebSocket('ws://localhost:9527/api/ws');
 ws.onmessage = (event) => {
@@ -351,173 +135,68 @@ ws.onmessage = (event) => {
 };
 ```
 
-## ⚙️ 配置說明
+回傳範例（health）
+```json
+{
+  "status": "healthy",
+  "version": "3.5.x",
+  "gpu_available": true,
+  "gpu_name": "Apple MPS",
+  "lmstudio_available": true,
+  "gemini_available": false
+}
+```
 
-### 環境變數
+---
 
-| 變數名 | 預設值 | 說明 |
-|-------|--------|------|
-| `DATA_DIR` | `/Users/hsiaojohnny/dev/convert/data` | 資料儲存目錄 |
-| `LOG_LEVEL` | `INFO` | 日誌等級 (DEBUG/INFO/WARNING/ERROR) |
-| `MAX_FILE_SIZE_MB` | `200` | 單檔最大大小（MB） |
-| `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio 端點 |
-| `GEMINI_API_KEY` | - | Gemini API 金鑰 |
-| `WHISPER_MODEL` | `medium` | Whisper 模型 (tiny/base/small/medium/large) |
+## 核心配置概念（快速說明）
+- DATA_DIR：儲存上傳檔案與輸出結果的位置
+- LMSTUDIO_BASE_URL / GEMINI_API_KEY：LLM 提供者設定
+- WHISPER_MODEL：轉錄模型大小（tiny/base/medium/large）— 大模型更準確但佔用更多資源
+- MAX_FILE_SIZE_MB：單檔上限，預設 200
 
-### 配置檔案
-
-#### macOS (`config.mac.yaml`)
+配置檔範例（簡化）
+- macOS / native (config.mac.yaml)
 ```yaml
 platform: macos
 deployment_mode: native
 llm:
   provider: lmstudio
   base_url: http://localhost:1234/v1
-  model: gemma-3-27b-it-qat
 whisper:
   backend: mlx
   device: mps
 ```
 
-#### Windows (`config.yaml`)
-```yaml
-platform: windows
-deployment_mode: native
-llm:
-  provider: lmstudio
-  base_url: http://localhost:1234/v1
-whisper:
-  backend: faster-whisper
-  device: cuda
-```
+---
 
-## 📊 性能指標
-
-### 轉錄速度
-- **Apple MPS**: 1 分鐘音頻 ≈ 6-10 秒
-- **CUDA**: 1 分鐘音頻 ≈ 3-5 秒
-- **CPU**: 1 分鐘音頻 ≈ 30-60 秒
-
-### 記憶體用量
-- **本地模式 (LM Studio + MLX)**:
-  - 閒置: 2-3GB
-  - 處理中: 14-16GB
-
-- **雲端模式 (Gemini API)**:
-  - 約 1-2GB
-
-### GPU 使用率
-- **Apple MPS**: 文字處理時最高 80%
-- **CUDA**: 記憶體最高 12GB (RTX 4090)
-
-## 🔧 故障排除
-
-### 常見問題
-
-#### Q: 服務無法啟動
-```bash
-# 檢查連接埠
-lsof -i:9527
-
-# 檢查依賴
-pip install -r requirements.txt
-
-# 檢查 DATA_DIR
-export DATA_DIR=/path/to/data
-mkdir -p $DATA_DIR/uploads $DATA_DIR/outputs
-```
-
-#### Q: LM Studio 連接失敗
-```bash
-# 確認 LM Studio 正在運行
-curl http://localhost:1234/v1/models
-
-# 檢查防火牆設定
-# 確保 1234 連接埠可用
-```
-
-#### Q: 轉錄結果不佳
-- 檢查音訊品質（建議 16kHz, mono）
-- 調整 Whisper 模型大小（更大 = 更準確但更慢）
-- 檢查 system prompt 設定
-
-#### Q: 記憶體不足
-- 降低 Whisper 模型等級（large → medium）
-- 關閉其他應用程式
-- 檢查 LM Studio 模型是否過大
-
-### 日誌檔案
-```bash
-# 檢查服務日誌
-tail -f /tmp/service.log
-
-# 檢查應用日誌
-cat data/logs/app.log
-```
-
-## 📚 文件
-
-- [部署指南](docs/DEPLOYMENT.md) - 詳細部署說明
-- [API 文件](docs/API.md) - 完整 API 參考
-- [系統架構](docs/ARCHITECTURE.md) - 系統設計文件
-- [貢獻指南](CONTRIBUTING.md) - 開發指南
-
-## 🏗️ 技術棧
-
-### 後端
-- **框架**: FastAPI + Uvicorn
-- **轉錄**: Whisper (OpenAI) + MLX (Apple)
-- **LLM**: LM Studio (本地) + Gemini API (雲端)
-- **資料庫**: 檔案系統 (可擴展至 SQLite/PostgreSQL)
-
-### 前端
-- **框架**: HTML5 + CSS3 + Vanilla JavaScript
-- **功能**: 拖放上傳、實時進度、結果預覽
-
-### 環境支援
-- **Python**: 3.8+
-- **OS**: macOS 12+, Windows 10+, Ubuntu 20.04+
-- **GPU**: Apple MPS, CUDA, ROCm, CPU
-
-## 📝 版本歷史
-
-### [v3.5.0] - 2025-12-06
-- ✅ macOS Native 部署支援
-- ✅ GPU 路徑修復（DATA_DIR）
-- ✅ Ollama 完全移除
-- ✅ 版本號同步至 3.5.0
-
-### [v3.4.6] - 2025-12-05
-- 優化 system prompt
-
-### [v2.3.6] - 2025-12-01
-- FastAPI 整合
-
-[查看完整歷史](CHANGELOG.md)
-
-## 📄 授權
-
-本專案採用 MIT 授權條款。詳見 [LICENSE](LICENSE) 檔案。
-
-## 🤝 貢獻
-
-歡迎貢獻！請參閱 [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## 📧 聯絡方式
-
-- Issues: https://github.com/s9008129/convert/issues
-- Email: support@example.com
-
-## 🙏 致謝
-
-感謝以下開源專案：
-- [OpenAI Whisper](https://github.com/openai/whisper)
-- [FastAPI](https://github.com/tiangolo/fastapi)
-- [LM Studio](https://lmstudio.ai)
-- [Google Gemini](https://ai.google.dev)
+## 部署考量（運維要點）
+- 可觀察性：啟用健康檢查與請求超時（服務端應配置 TimeoutMiddleware）
+- 資源管理：大模型與 GPU 使用時要限制同時執行的推理數量，使用排隊/速率限制避免資源耗盡
+- 隱私：若要求 100% 本地處理，禁用任何雲端 LLM 金鑰並確保 LM Studio 本地可用
+- 備份與清理：設定 DATA_DIR 的過期檔案自動清理與必要的備份策略
 
 ---
 
-**Made with ❤️ by the MeetingScribe Team**
+## 故障排除（常見問題）
+- 服務無法啟動：檢查 9527 埠是否被佔用（lsof -i:9527），確認依賴已安裝
+- LM Studio 連接失敗：確認 LM Studio 正在運行並可從 ML API 列表讀到模型（curl http://localhost:1234/v1/models）
+- 轉錄品質差：檢查輸入音訊品質（建議 16kHz、mono），或選擇更大的 Whisper 模型
+- 記憶體不足：降低 Whisper/LLM 模型等級或增加記憶體/GPU
 
-Last updated: 2025-12-06
+---
+
+## 檔案與文件
+- requirements.txt — 依賴清單
+- backend/ — 主要後端程式碼（FastAPI 應用）
+- config*.yaml — 平台/部署設定範例
+- docs/ 或 doc/ — 部署、API、架構指南（詳細操作請參閱 docs 目錄中的具體指南）
+
+---
+
+許可與聯絡
+- 授權：MIT（見 LICENSE）
+- Issues / 支援：https://github.com/s9008129/convert/issues
+- 聯絡信箱：support@example.com
+
+---
