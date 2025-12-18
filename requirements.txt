@@ -34,6 +34,7 @@ loguru==0.7.2
 
 # 音訊處理
 ffmpeg-python==0.2.0
+av>=12.0.0
 
 # 簡繁中文轉換 (已移除 - whisper-medium 直接輸出繁體中文)
 # opencc-python-reimplemented==0.1.7
