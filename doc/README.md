@@ -1,204 +1,280 @@
-# 文件組織結構說明
+# MeetingScribe 文件中心
 
-本目錄包含 MeetingScribe 專案的所有技術文件，已根據文件類型進行分類整理。
+> **版本**：v3.5.5  
+> **最後更新**：2025-12-18  
+> **維護者**：MeetingScribe 開發團隊
 
-## 📁 目錄結構
+---
+
+## 📚 文件導航
+
+### 🚀 快速開始（5 分鐘上手）
+
+| 文件 | 適合對象 | 說明 |
+|------|---------|------|
+| [快速開始指南](guides/quick_start_guide.md) | 所有使用者 | 3 步驟快速部署 |
+| [Mac 快速部署](guides/mac_native_deployment_guide.md) | macOS 使用者 | 原生服務部署（推薦） |
+| [Windows 快速開始](guides/windows_quick_start_guide.md) | Windows 使用者 | 批次檔一鍵部署 |
+
+### 📖 完整部署指南
+
+| 平台 | 文件 | 特色 |
+|------|------|------|
+| **macOS** | [macOS 原生部署](guides/mac_native_deployment_guide.md) | Apple MPS 加速、MLX-Whisper |
+| **Windows** | [Windows 完整部署](guides/windows_deployment_guide.md) | NVIDIA GPU 加速、Docker |
+| **Linux** | [Docker 部署經驗](guides/docker_deployment_guide.md) | 跨平台容器化 |
+
+### 🔧 管理與維護
+
+| 文件 | 用途 |
+|------|------|
+| [管理者操作指南](guides/administrator_guide.md) | 系統架構、配置、維護 |
+| [GPU 加速指南](guides/gpu_acceleration_guide.md) | CUDA、MPS 加速設定 |
+| [Docker 重建時機](guides/docker_rebuild_guide.md) | 何時需要重建映像 |
+
+### 📊 技術文件與報告
+
+| 類型 | 目錄 | 說明 |
+|------|------|------|
+| **驗證報告** | [evidence/](./evidence/) | 測試驗證證據 |
+| **技術報告** | [reports/](./reports/) | 技術分析與修復報告 |
+| **系統分析** | [analysis/](./analysis/) | 架構設計與系統分析 |
+| **版本報告** | 根目錄 | v{version}_系統修復驗證報告.md |
+
+---
+
+## 📁 目錄結構說明
 
 ```
 doc/
-├── evidence/        # 驗證證據 - 包含所有測試驗證報告和證據
-├── reports/         # 技術報告 - 包含詳細的技術分析和修復報告
-├── guides/          # 部署指南 - 包含所有部署、操作、使用指南
-├── analysis/        # 分析文件 - 包含系統分析、需求分析、架構分析
-└── README.md        # 本文件
+├── README.md                      # 📄 文件導航中心（本文件）
+├── 系統改善計劃.md                 # 🎯 系統改善與重構計畫
+├── implement_and_tasks.md          # 📋 實施計畫與任務清單
+├── v3.5.5_系統修復驗證報告.md      # ✅ 最新版本驗證報告
+│
+├── guides/                         # 📖 使用指南
+│   ├── quick_start_guide.md       # 快速開始
+│   ├── mac_native_deployment_guide.md  # Mac 原生部署
+│   ├── mac_whisper_guide.md       # Mac Whisper 設定
+│   ├── windows_deployment_guide.md     # Windows 完整部署
+│   ├── windows_quick_start_guide.md    # Windows 快速開始
+│   ├── docker_deployment_guide.md      # Docker 部署
+│   ├── gpu_acceleration_guide.md       # GPU 加速
+│   ├── administrator_guide.md          # 管理者指南
+│   └── upgrade/                    # 升級指南
+│       └── windows_v3.5.4_upgrade_guide.md
+│
+├── evidence/                       # 🧪 驗證證據
+│   ├── queue_logic_fix_evidence_v3.5.1.md
+│   ├── mac_migration_evidence_v3.5.0.md
+│   ├── task_completion_evidence_v3.5.0.md
+│   ├── windows_rtx4090_migration_evidence.md
+│   └── ... (更多驗證報告)
+│
+├── reports/                        # 📊 技術報告
+│   ├── code_review_report.md
+│   ├── fix_summary_report.md
+│   ├── migration_verification_report.md
+│   └── llm_quality_comparison_report.md
+│
+├── analysis/                       # 🔬 系統分析
+│   ├── system_development_analysis.md
+│   ├── windows_deployment_analysis.md
+│   └── windows_deployment_solution.md
+│
+├── architecture/                   # 🏗️ 架構設計
+│   └── plans/
+│       └── project_restructure_plan.md
+│
+└── old/                           # 🗄️ 歷史文件（封存）
+    ├── v3.5.4_穩定版本深度分析報告.md
+    ├── v3.5.4_critical_issues_analysis.md
+    └── ... (舊版本文件)
 ```
 
 ---
 
-## 🗂️ 分類說明
+## 🎯 根據情境找文件
 
-### evidence/ - 驗證證據
+### 情境 1：我是第一次使用 MeetingScribe
 
-包含所有功能驗證報告和測試證據文件。
+**推薦路徑：**
+1. 閱讀專案根目錄的 [README.md](../README.md)（5 分鐘）
+2. 根據您的作業系統選擇快速開始指南：
+   - macOS → [Mac 快速部署](guides/mac_native_deployment_guide.md)
+   - Windows → [Windows 快速開始](guides/windows_quick_start_guide.md)
+3. 測試上傳一個音訊檔案
+4. 如有問題，查看 [疑難排解](#疑難排解)
 
-**命名規範**：`{功能}_{類型}_evidence_v{版本}.md`
+### 情境 2：我想使用 GPU 加速
 
-**檔案清單**：
-- `queue_logic_fix_evidence_v3.5.1.md` - 排隊邏輯修復驗證證據
-- `mac_migration_evidence_v3.5.0.md` - macOS 遷移驗證證據
-- `task_completion_evidence_v3.5.0.md` - 任務完成驗證證據
-- `windows_rtx4090_migration_evidence.md` - Windows RTX4090 遷移證據
-- `documentation_sync_evidence_v3.4.0.md` - 文件同步驗證證據
-- `gpu_acceleration_evidence_v3.4.3.md` - GPU 加速驗證證據
-- `docker_zero_rebuild_evidence.md` - Docker 零重建驗證證據
-- `english_fix_evidence.md` - 英文修正驗證證據
-- `final_completion_evidence_v3.5.0.md` - 最終完成驗證證據
+**推薦路徑：**
+1. 確認您的 GPU 類型：
+   - NVIDIA GPU → [Windows 部署指南](guides/windows_deployment_guide.md)
+   - Apple Silicon → [Mac Whisper 指南](guides/mac_whisper_guide.md)
+2. 閱讀 [GPU 加速指南](guides/gpu_acceleration_guide.md)
+3. 執行環境驗證腳本：`python scripts/verify_env.py`
 
----
+### 情境 3：我需要管理和維護系統
 
-### reports/ - 技術報告
+**推薦路徑：**
+1. 閱讀 [管理者操作指南](guides/administrator_guide.md)
+2. 瞭解 [Docker 重建時機](guides/docker_rebuild_guide.md)
+3. 查看 [系統開發分析](analysis/system_development_analysis.md)
 
-包含詳細的技術分析、修復報告和系統報告。
+### 情境 4：我遇到問題需要解決
 
-**命名規範**：`{功能}_{類型}_report_v{版本}.md` 或 `{功能}_report.md`
+**推薦路徑：**
+1. 查看 [疑難排解](#疑難排解) 章節
+2. 搜尋 [evidence/](./evidence/) 目錄中的驗證報告
+3. 查看最新的 [版本修復報告](./v3.5.5_系統修復驗證報告.md)
+4. 如仍未解決，查看 GitHub Issues
 
-**檔案清單**：
-- `v3.5.4_穩定版本深度分析報告.md` - v3.5.4 穩定版本深度分析（第一性原理）
-- `v3.5.4_critical_issues_analysis.md` - v3.5.4 關鍵問題分析報告
-- `v3.5.4_修復驗證報告.md` - v3.5.4 修復驗證報告
-- `MLX-Whisper修復驗證報告_v3.5.2.md` - MLX-Whisper 修復驗證報告
-- `服務連線修復驗證報告_v3.5.3.md` - 服務連線修復驗證報告
-- `queue_logic_fix_report_v3.5.1.md` - 排隊邏輯修復詳細報告
-- `code_review_report.md` - 程式碼審查報告
-- `fix_summary_report.md` - 修復總結報告
-- `migration_verification_report.md` - 遷移驗證報告
-- `llm_quality_comparison_report.md` - LLM 品質比對報告
+### 情境 5：我想了解技術細節
 
----
-
-### guides/ - 部署指南
-
-包含所有平台的部署、操作、使用指南。
-
-**命名規範**：`{平台}_{類型}_guide.md`
-
-**分類**：
-
-#### macOS 相關
-- `mac_native_deployment_guide.md` - macOS 原生部署指南
-- `mac_whisper_guide.md` - macOS Whisper 設定指南
-- `mac_deployment_guide.md` - macOS 部署指南
-
-#### Windows 相關
-- `windows_deployment_guide.md` - Windows 完整部署指南
-- `windows_batch_deployment_guide.md` - Windows 批次檔部署指南
-- `windows_quick_start_guide.md` - Windows 快速開始指南
-
-#### Docker 相關
-- `docker_deployment_guide.md` - Docker 部署經驗指南
-- `docker_rebuild_guide.md` - Docker 映像檔重建時機指南
-- `docker_zero_rebuild_guide.md` - Docker 零重建部署指南
-
-#### GPU 與通用指南
-- `gpu_acceleration_guide.md` - GPU 加速支援指南
-- `quick_start_guide.md` - 快速入門指南
-- `quick_deployment_guide.md` - 快速部署指南
-- `administrator_guide.md` - 管理者操作指南
+**推薦路徑：**
+1. 閱讀 [系統開發分析](analysis/system_development_analysis.md)
+2. 查看 [架構設計](architecture/plans/project_restructure_plan.md)
+3. 閱讀 [技術報告](reports/)
+4. 查看 `.github/INSTRUCTIONS.md`（開發指導原則）
 
 ---
 
-### analysis/ - 分析文件
-
-包含系統分析、架構分析、解決方案分析等文件。
-
-**命名規範**：`{主題}_analysis.md` 或 `{主題}_solution.md`
-
-**檔案清單**：
-- `system_development_analysis.md` - 系統開發及實作規劃分析
-- `windows_deployment_analysis.md` - Windows 部署分析
-- `windows_deployment_solution.md` - Windows 部署解決方案
-
----
-
-## 📝 命名規範總結
+## 📖 文件命名規範
 
 ### 通用規則
-1. **全小寫字母**：所有檔案名稱使用小寫字母
-2. **底線分隔**：使用底線 `_` 分隔單字
-3. **有意義的名稱**：檔案名稱應清楚描述內容
-4. **版本標記**：重要文件應包含版本號（例如：`_v3.5.1`）
 
-### 檔案類型規範
+1. **全小寫字母**：使用小寫字母（中文除外）
+2. **底線分隔**：英文單字使用底線 `_` 分隔
+3. **有意義名稱**：檔案名稱清楚描述內容
+4. **版本標記**：重要文件包含版本號（`_v3.5.5`）
+
+### 檔案類型格式
 
 | 類型 | 格式 | 範例 |
 |------|------|------|
-| 驗證證據 | `{功能}_{類型}_evidence_v{版本}.md` | `queue_logic_fix_evidence_v3.5.1.md` |
-| 技術報告 | `{功能}_{類型}_report_v{版本}.md` | `queue_logic_fix_report_v3.5.1.md` |
+| 驗證證據 | `{功能}_evidence_v{版本}.md` | `queue_logic_fix_evidence_v3.5.1.md` |
+| 技術報告 | `{主題}_report.md` | `code_review_report.md` |
 | 部署指南 | `{平台}_{類型}_guide.md` | `mac_deployment_guide.md` |
-| 分析文件 | `{主題}_analysis.md` | `system_development_analysis.md` |
+| 系統分析 | `{主題}_analysis.md` | `system_development_analysis.md` |
+| 版本報告 | `v{版本}_{主題}.md` | `v3.5.5_系統修復驗證報告.md` |
 
 ---
 
-## 🔍 如何查找文件
-
-### 按功能查找
-1. **排隊邏輯相關**：
-   - 證據：`evidence/queue_logic_fix_evidence_v3.5.1.md`
-   - 報告：`reports/queue_logic_fix_report_v3.5.1.md`
-
-2. **macOS 部署相關**：
-   - 指南：`guides/mac_*_guide.md`
-   - 證據：`evidence/mac_migration_evidence_v3.5.0.md`
-
-3. **Windows 部署相關**：
-   - 指南：`guides/windows_*_guide.md`
-   - 分析：`analysis/windows_deployment_analysis.md`
-
-### 按版本查找
-- **v3.5.4**：`v3.5.4_穩定版本深度分析報告.md`（主報告）
-- **v3.5.1**：`evidence/queue_logic_fix_evidence_v3.5.1.md`
-- **v3.5.0**：`evidence/mac_migration_evidence_v3.5.0.md`
-- **v3.4.3**：`evidence/gpu_acceleration_evidence_v3.4.3.md`
-
----
-
-## 📋 維護規則
+## 📋 文件維護規則
 
 ### 新增文件
-1. 確定文件類型（evidence/reports/guides/analysis）
-2. 使用正確的命名規範
-3. 放入對應的目錄
-4. 更新本 README 的檔案清單
+
+1. **確定文件類型**
+   - 使用指南 → `guides/`
+   - 驗證報告 → `evidence/`
+   - 技術報告 → `reports/`
+   - 系統分析 → `analysis/`
+
+2. **遵循命名規範**
+   - 使用正確的格式
+   - 包含版本號（若適用）
+
+3. **更新導航文件**
+   - 在本 README.md 中新增連結
+   - 更新相關章節
+
+4. **Git commit 說明**
+   - 清楚描述新增的文件用途
+   - 使用繁體中文
 
 ### 更新文件
-1. 保持檔案名稱一致
-2. 重大變更時考慮版本號升級
-3. 更新變更記錄（CHANGELOG.md）
 
-### 刪除文件
-1. 確認文件已過時且無參考價值
-2. 考慮移至 `archive/` 目錄而非刪除
-3. 更新本 README 的檔案清單
+1. **保持檔案名稱一致**
+2. **重大變更時升級版本號**
+3. **在文件頂部標註更新日期**
+4. **更新 CHANGELOG.md**
 
----
+### 封存文件
 
-## 🎯 快速導航
-
-### 新手入門
-1. `guides/quick_start_guide.md` - 快速開始
-2. `guides/quick_deployment_guide.md` - 快速部署
-
-### macOS 用戶
-1. `guides/mac_deployment_guide.md` - 基本部署
-2. `guides/mac_native_deployment_guide.md` - 原生服務部署
-3. `guides/mac_whisper_guide.md` - Whisper 設定
-
-### Windows 用戶
-1. `guides/windows_quick_start_guide.md` - 快速開始
-2. `guides/windows_deployment_guide.md` - 完整部署
-3. `guides/windows_batch_deployment_guide.md` - 批次檔部署
-
-### 管理員
-1. `guides/administrator_guide.md` - 管理者操作指南
-2. `guides/docker_deployment_guide.md` - Docker 部署
-3. `guides/gpu_acceleration_guide.md` - GPU 加速設定
+1. **移至 `old/` 目錄**（而非刪除）
+2. **更新本 README.md**（移除過時連結）
+3. **在 CHANGELOG.md 中說明**
 
 ---
 
-## 📅 更新記錄
+## 🔍 疑難排解
 
-- **2025-12-07**：新增版本控制強化相關文件
-  - `doc/guides/upgrade/windows_v3.5.4_upgrade_guide.md` - Windows 升級指南
-  - `doc/guides/git/branch_management_guide.md` - Git 分支管理指南
-  - `doc/architecture/plans/project_restructure_plan.md` - 專案架構重整計劃
-  - `doc/reports/custom_format_status_report.md` - 自訂格式功能狀態報告
-- **2025-12-06**：新增 v3.5.4 穩定版本深度分析報告（第一性原理）
-- **2025-12-06**：重新組織文件結構，建立分類目錄
-- **2025-12-06**：統一檔案命名規範
-- **2025-12-06**：新增 README.md 說明文件
+### 找不到我需要的文件
+
+**Q：我想瞭解 macOS 如何部署，但找不到文件？**
+
+A：請查看 `guides/` 目錄：
+- `mac_native_deployment_guide.md` - 原生服務部署
+- `mac_whisper_guide.md` - Whisper 設定
+- `mac_deployment_guide.md` - 基本部署
+
+**Q：我想查看之前版本的修復報告？**
+
+A：舊版本報告已移至 `old/` 目錄，包含：
+- v3.5.4 穩定版本分析
+- v3.5.3 服務連線修復
+- v3.5.2 MLX-Whisper 修復
+
+### 文件中的範例無法執行
+
+**Q：我按照文件中的步驟操作，但出現錯誤？**
+
+A：請檢查：
+1. 您的系統版本是否與文件版本一致
+2. 是否執行了環境驗證：`python scripts/verify_env.py`
+3. 是否查看了該文件的「疑難排解」章節
+4. 查看最新的 [版本修復報告](./v3.5.5_系統修復驗證報告.md)
+
+### 版本號不一致
+
+**Q：為什麼有些文件標示 v3.5.4，有些是 v3.5.5？**
+
+A：
+- 最新版本：v3.5.5（2025-12-18）
+- 舊版本文件已移至 `old/` 目錄
+- 使用 `grep -r "v3.5.4" .` 檢查是否有遺漏
+
+---
+
+## 📞 支援與反饋
+
+### 回報問題
+
+1. **文件問題**：在 GitHub 開 Issue，標籤 `documentation`
+2. **功能問題**：在 GitHub 開 Issue，標籤 `bug` 或 `enhancement`
+3. **安全問題**：私下聯繫維護者
+
+### 貢獻文件
+
+我們歡迎文件貢獻！請：
+1. Fork 專案
+2. 建立文件分支：`git checkout -b docs/improve-xxx`
+3. 遵循命名規範和撰寫規範（見 `.github/INSTRUCTIONS.md`）
+4. 提交 Pull Request
+
+---
+
+## 📅 版本歷史
+
+| 版本 | 日期 | 更新內容 |
+|------|------|----------|
+| v3.5.5 | 2025-12-18 | 徹底更新所有文件，新增文件驅動開發原則 |
+| v3.5.4 | 2025-12-07 | 新增版本控制強化文件 |
+| v3.5.1 | 2025-12-06 | 重新組織文件結構 |
+| v1.0 | 2025-12-05 | 初版文件導航 |
+
+---
+
+## 📚 相關資源
+
+- [專案根目錄 README](../README.md)
+- [變更紀錄](../CHANGELOG.md)
+- [開發指導原則](../.github/INSTRUCTIONS.md)
+- [GitHub Repository](https://github.com/hsiaojohnny/meetingscribe)
 
 ---
 
 **維護者**：MeetingScribe 開發團隊  
-**最後更新**：2025-12-07  
-**版本**：v1.1.0
+**最後更新**：2025-12-18  
+**版本**：v3.5.5
