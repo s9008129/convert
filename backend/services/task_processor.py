@@ -150,12 +150,19 @@ class TaskProcessor:
                     asyncio.get_event_loop()
                 )
             
-            summary = await summarization_service.summarize(
-                transcript,
-                mode=task.processing_mode,
-                user_prompt=task.user_prompt,
-                progress_callback=sync_progress_cb
-            )
+            summary = None
+            try:
+                summary = await summarization_service.summarize(
+                    transcript,
+                    mode=task.processing_mode,
+                    user_prompt=task.user_prompt,
+                    progress_callback=sync_progress_cb
+                )
+            except Exception as e:
+                # 摘要生成失敗時，仍然返回逐字稿（不讓整個任務失敗）
+                log.warning(f"摘要生成失敗 (將使用逐字稿作為結果): {e}")
+                await self._update_progress(task.task_id, 70.0, f"摘要生成失敗，使用逐字稿: {str(e)[:50]}")
+                summary = None
             
             # 組合最終結果
             result_content = self._format_result(task, transcript, summary)
@@ -275,12 +282,17 @@ class TaskProcessor:
         
         return False
 
-    def _format_result(self, task: TaskInfo, transcript: str, summary: str) -> str:
+    def _format_result(self, task: TaskInfo, transcript: str, summary: str = None) -> str:
         """格式化最終結果（含英文清理機制）"""
         # 確保設備偵測已執行，避免顯示 unknown
         if not device_detector.current_device:
             device_detector.detect_best_device()
         device_info = device_detector.get_device_info()
+        
+        # 如果 summary 為 None（摘要生成失敗），使用逐字稿
+        if not summary:
+            log.warning("摘要為空，將使用逐字稿作為結果")
+            summary = transcript
         
         # 步驟 1：檢查 summary 是否已包含標準 header
         # 避免重複添加 header
