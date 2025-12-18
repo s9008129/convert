@@ -1,5 +1,83 @@
 # MeetingScribe - 變更紀錄
 
+## [v3.5.5] - 2025-12-18
+
+### 🔧 環境統一與日誌系統升級
+
+#### 問題診斷（第一性原理分析）
+
+**問題表徵**：上傳音訊檔案後持續出現 `No module named 'av'` 錯誤
+
+**根本原因分析**：
+1. **多個啟動腳本衝突**：
+   - `start_service.sh` 使用 conda meetingscribe 環境 ✅
+   - `scripts/start-mac-native.sh` 使用 venv 環境 ❌
+   - 用戶執行錯誤腳本導致環境不一致
+
+2. **venv 環境配置錯誤**：
+   - `venv/bin/python3` 指向 `/opt/anaconda3/bin/python3`（base 環境）
+   - base 環境無 av、mlx-whisper 等關鍵模組
+   - 導致 ImportError
+
+3. **日誌系統不完善**：
+   - 僅控制台輸出，無持久化日誌
+   - 無法追蹤問題歷史
+
+#### 修復方案
+
+**Phase 1：環境統一**
+- ✅ 刪除混亂的 `venv/` 目錄（已備份）
+- ✅ 修改 `scripts/start-mac-native.sh` 使用 conda meetingscribe
+- ✅ 修改 `scripts/restart-mac-native.sh` 使用 conda meetingscribe
+- ✅ 更新 `start_service.sh` 加入環境驗證
+- ✅ 新增 `scripts/verify_env.py` 環境驗證腳本
+
+**Phase 2：日誌系統升級**
+- ✅ 升級 `backend/core/logger.py` 至 v2.0
+- ✅ 新增檔案日誌（每日輪轉，保留 30 天）
+- ✅ 新增錯誤日誌（獨立檔案，保留 90 天）
+- ✅ 新增 JSON 結構化日誌（用於分析）
+- ✅ 新增任務 ID 綁定功能
+
+**Phase 3：測試驗證**
+- ✅ 新增 `scripts/test_full_pipeline.py` 完整管線測試
+- ✅ 所有測試 7/7 通過
+
+#### 使用 Context7 MCP 最佳實踐
+
+**查詢的技術文件**：
+| 來源 | Library ID | Benchmark Score | 用途 |
+|------|-----------|-----------------|------|
+| Loguru | /delgan/loguru | 94.2 | 日誌系統設計 |
+| Structlog | /hynek/structlog | 91.1 | 結構化日誌參考 |
+| uv | /astral-sh/uv | 87.2 | 依賴管理參考 |
+| PyAV | /pyav-org/pyav | 86.4 | 音訊處理依賴 |
+
+#### 修改檔案清單
+
+| 檔案 | 動作 | 說明 |
+|------|------|------|
+| `venv/` | 備份刪除 | 統一使用 conda 環境 |
+| `scripts/start-mac-native.sh` | 修改 | 改用 conda meetingscribe |
+| `scripts/restart-mac-native.sh` | 修改 | 改用 conda meetingscribe |
+| `start_service.sh` | 修改 | 加入環境驗證 |
+| `scripts/verify_env.py` | 新增 | 環境驗證腳本 |
+| `scripts/test_full_pipeline.py` | 新增 | 完整管線測試 |
+| `backend/core/logger.py` | 修改 | 升級至 v2.0 |
+| `doc/系統改善計劃.md` | 新增 | 系統改善計劃 |
+| `doc/implement_and_tasks.md` | 新增 | 實施計畫與任務清單 |
+| `doc/v3.5.5_系統修復驗證報告.md` | 新增 | 驗證報告 |
+
+#### 驗證結果
+
+```
+環境驗證：✅ 所有關鍵模組通過
+完整管線測試：7/7 通過
+日誌系統：app/error/json 三種日誌正常運作
+```
+
+---
+
 ## [v3.5.4-stable-patch] - 2025-12-07
 
 ### 🔧 依賴修復（Dependency Fix）

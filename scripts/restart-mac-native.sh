@@ -81,15 +81,18 @@ stop_service() {
 start_service() {
     info "正在啟動 MeetingScribe 服務..."
     
-    # 啟動虛擬環境
-    source venv/bin/activate
+    CONDA_ENV_PATH="/opt/anaconda3/envs/meetingscribe"
     
     # 設定環境變數
     export WHISPER_DEVICE=mps
     export OLLAMA_BASE_URL=http://localhost:11434
+    export PATH="$CONDA_ENV_PATH/bin:$PATH"
+    export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+    export KMP_DUPLICATE_LIB_OK=TRUE
+    export DATA_DIR="$PROJECT_ROOT/data"
     
-    # 啟動服務
-    python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
+    # 啟動服務（使用 conda 環境）
+    "$CONDA_ENV_PATH/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
     
     SERVER_PID=$!
     echo $SERVER_PID > .server.pid

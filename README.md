@@ -1,21 +1,35 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.4--stable-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.5-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
-[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.4_穩定版本深度分析報告.md)
+[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.5_系統修復驗證報告.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統
 
-## ⚠️ 版本控制公告（2025-12-07）
+## 🆕 v3.5.5 系統修復版本（2025-12-18）
 
-**main 分支已回退至 v3.5.4 穩定版本**
+### 🔧 環境統一與日誌系統升級
 
-- **穩定版本**：v3.5.4 (commit: `7100d81`)
-- **開發分支**：`develop` 分支包含 v3.5.5 ~ v3.6.1 的開發中功能
-- **合併原則**：未達到 Stable 等級的版本不會合併到 main
+**修復內容**：
+- ✅ 解決 `No module named 'av'` 持續性錯誤
+- ✅ 統一所有啟動腳本使用 conda meetingscribe 環境
+- ✅ 新增環境驗證腳本 `scripts/verify_env.py`
+- ✅ 升級日誌系統至 v2.0（檔案輪轉 + JSON 結構化）
+- ✅ 新增完整管線測試 `scripts/test_full_pipeline.py`
 
-詳見：[版本控制最高原則](/.github/INSTRUCTIONS.md#第十一部分版本控制最高原則2025-12-07-新增)
+**快速啟動**：
+```bash
+# 使用環境驗證確保一切正常
+/opt/anaconda3/envs/meetingscribe/bin/python scripts/verify_env.py
+
+# 啟動服務
+./start_service.sh
+```
+
+詳見：[v3.5.5 系統修復驗證報告](doc/v3.5.5_系統修復驗證報告.md)
+
+---
 
 ## ✨ 核心特性
 
@@ -125,86 +139,24 @@
 
 ## 📚 歷史更新
 
-### v3.5.3 更新（2025-12-06）
+<details>
+<summary>點擊展開歷史版本</summary>
 
-#### 重大修復：服務連線異常問題解決 ✅
+### v3.5.4-stable（2025-12-07）
+- GPU 滿載時新 Session 無法開啟網頁問題修復
+- 統一版本號管理
+- 服務管理工具
 
-**問題**：Safari 無法連接到 `127.0.0.1:9527`
+### v3.5.3（2025-12-06）
+- 服務連線異常問題解決
+- Docker 清理腳本
 
-**根本原因**：
-- Docker 容器 `meetingscribe-app` 已停止但佔用埠號配置
-- Native 服務程序已終止，但 PID 檔案殘留
-- 導致新服務無法綁定埠號 9527
+### v3.5.2（2025-12-06）
+- MLX-Whisper 模型載入問題修復
 
-**修復方案**：
-1. ✅ 安全移除衝突的 Docker 容器（僅 macOS，不影響 Windows）
-2. ✅ 清理過期的 PID 檔案
-3. ✅ 重新啟動 Native 服務
-4. ✅ 新增 Docker 清理腳本 (`scripts/cleanup_docker.sh`)
+</details>
 
-**修復後狀態**：
-```bash
-✅ 服務: http://127.0.0.1:9527 (健康)
-✅ GPU: Apple MPS 正常運作
-✅ LM Studio: 可用
-✅ Gemini API: 可用
-```
-
-**安全保證**：
-- ✅ Windows Docker 版本完全不受影響
-- ✅ 配置檔案未變更
-- ✅ 僅移除 macOS 本地 Docker 容器
-
-## 🆕 v3.5.2 更新（2025-12-06）
-
-### 重大修復：MLX-Whisper 模型載入問題完全解決 ✅
-
-**問題根源**：
-1. 配置檔案名稱錯誤（`config.mac.yaml` 應為 `config.macos.yaml`）
-2. Whisper 配置結構缺少 `mlx.model` 欄位
-3. 後端識別邏輯無法處理 `mlx-whisper` 字串
-4. MLX-Whisper API 呼叫參數順序錯誤
-
-**修復成果**：
-- ✅ 重新命名配置檔案為 `config.macos.yaml`
-- ✅ 完善 Whisper MLX 配置結構，優先使用本地已安裝的 `mlx-community/whisper-medium` 模型
-- ✅ 強化後端識別邏輯，支援 `mlx-whisper` → `mlx` 自動正規化
-- ✅ 修正 MLX-Whisper API 參數傳遞方式
-
-**測試驗證**（100% 通過）：
-```bash
-🎯 MLX-Whisper 真實音檔驗證測試
-📝 測試 1: test_meeting_1.wav (156K) ✅ 成功
-📝 測試 2: test_meeting_2.wav (156K) ✅ 成功
-總測試數: 2 | 成功數: 2 | 失敗數: 0
-
-🎉 所有測試通過! MLX-Whisper 模型問題已完全修復!
-```
-
-**本地模型狀態**：
-- ✅ `mlx-community/whisper-medium` (已安裝，正在使用)
-- ✅ `mlx-community/whisper-large-v3-turbo` (已安裝，可切換)
-- ✅ 模型從本地快取載入，無需網路連線
-
-### v3.5.1 更新（2025-12-06）
-
-#### 重大修復
-1. **MLX-Whisper 404 錯誤修復** ✅
-   - 修復 macOS 版本 HuggingFace 404 錯誤
-   - 重構 Whisper 配置結構，新增回退機制
-   - 測試通過率：100% (8/8)
-
-2. **排隊邏輯優化** ✅
-   - 修復排隊位置顯示異常
-   - 確保 `estimated_wait_seconds` 正確清除
-   - 完整的單元測試和整合測試
-
-3. **文件組織重構** ✅
-   - 建立清晰的分類結構（evidence/reports/guides/analysis）
-   - 統一檔案命名規範（30+ 個文件重新組織）
-   - 新增文件導航說明
-
-詳見：[CHANGELOG.md](CHANGELOG.md)
+詳細更新紀錄請參閱：[CHANGELOG.md](CHANGELOG.md)
 
 ## 🚀 快速開始
 

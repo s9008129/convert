@@ -136,26 +136,42 @@ check_ollama() {
     fi
 }
 
-# 設置虛擬環境
-setup_venv() {
-    info "檢查虛擬環境..."
+# 設置 conda 環境（v3.5.5 修正：統一使用 conda meetingscribe 環境）
+setup_conda_env() {
+    info "檢查 conda meetingscribe 環境..."
     
-    if [ ! -d "venv" ]; then
-        info "建立虛擬環境..."
-        python3 -m venv venv
-        success "虛擬環境已建立"
-    else
-        success "虛擬環境已存在"
+    CONDA_ENV_PATH="/opt/anaconda3/envs/meetingscribe"
+    
+    if [ ! -d "$CONDA_ENV_PATH" ]; then
+        error "conda meetingscribe 環境不存在"
+        error "請執行以下命令建立環境："
+        echo ""
+        echo "  conda create -n meetingscribe python=3.10 -y"
+        echo "  conda activate meetingscribe"
+        echo "  conda install -c conda-forge ffmpeg av -y"
+        echo "  pip install -r requirements.txt mlx-whisper"
+        echo ""
+        exit 1
     fi
     
-    info "啟動虛擬環境並安裝依賴..."
-    source venv/bin/activate
+    success "conda meetingscribe 環境已存在"
     
-    # 安裝依賴
-    pip install --upgrade pip
-    pip install -r requirements.txt
+    # 設定環境路徑
+    export PATH="$CONDA_ENV_PATH/bin:$PATH"
+    export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+    export KMP_DUPLICATE_LIB_OK=TRUE
     
-    success "依賴安裝完成"
+    # 執行環境驗證
+    info "執行環境驗證..."
+    if [ -f "$PROJECT_ROOT/scripts/verify_env.py" ]; then
+        "$CONDA_ENV_PATH/bin/python" "$PROJECT_ROOT/scripts/verify_env.py"
+        if [ $? -ne 0 ]; then
+            error "環境驗證失敗，請修復上述問題"
+            exit 1
+        fi
+    fi
+    
+    success "環境配置完成"
 }
 
 # 建立資料目錄
@@ -191,16 +207,16 @@ start_service() {
     info "⚡ 使用 Apple MPS 加速"
     info "🚀 效能提升 3-5 倍"
     
-    # 啟動虛擬環境
-    source venv/bin/activate
+    CONDA_ENV_PATH="/opt/anaconda3/envs/meetingscribe"
     
     # 設定環境變數
     export WHISPER_DEVICE=mps
     export OLLAMA_BASE_URL=http://localhost:11434
+    export DATA_DIR="$PROJECT_ROOT/data"
     
-    # 啟動服務
+    # 啟動服務（使用 conda 環境的 Python）
     info "正在啟動 FastAPI 服務..."
-    python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
+    "$CONDA_ENV_PATH/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
     
     SERVER_PID=$!
     echo $SERVER_PID > .server.pid
@@ -271,7 +287,7 @@ main() {
     check_python
     check_ffmpeg
     check_ollama
-    setup_venv
+    setup_conda_env
     create_dirs
     check_env
     start_service
