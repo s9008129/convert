@@ -5,6 +5,91 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [4.0.0] - 2025-12-19
+
+### 重大升級 🚀
+
+此版本完成 ASR 模型升級至 Breeze-ASR-25，並優化 LLM 參數配置。
+
+#### 1. ASR 模型升級至 Breeze-ASR-25
+
+**升級原因（第一性原理分析）：**
+- Whisper-medium 對長音檔產生幻覺問題（重複字樣）
+- 中英混用辨識效果不佳
+- 非專為台灣繁體中文優化
+
+**解決方案：**
+- 升級至 MediaTek Research 的 Breeze-ASR-25 模型
+- 整合 Silero VAD v6 語音活動偵測
+- 使用 INT8_FLOAT16 混合精度提升效能
+
+**效能改善：**
+- 中英混用 WER 降低約 22%
+- 長音檔幻覺問題大幅減少
+- 處理速度約 16.6x（RTX 4090）
+
+#### 2. 修復 VAD 參數 API 不相容問題
+
+**問題根因：**
+- faster-whisper 1.1.0 (PyPI) 使用 `onset/offset` 參數
+- GitHub master 分支使用 `threshold/neg_threshold` 參數
+- 我們的程式碼使用了新版本參數，導致錯誤
+
+**解決方案（矯正措施）：**
+```python
+def _build_vad_params(self, threshold, min_speech_ms, min_silence_ms, speech_pad_ms):
+    """根據 faster-whisper 版本建構正確的 VAD 參數"""
+    fw_version = version.parse(faster_whisper.__version__)
+    
+    if fw_version >= version.parse("1.2.0"):
+        return {"threshold": threshold, ...}  # 新版 API
+    else:
+        return {"onset": threshold, "offset": max(threshold - 0.15, 0.01), ...}  # 1.1.0 API
+```
+
+此方法確保未來版本升級時自動適配，避免再次發生。
+
+#### 3. LLM 參數優化
+
+| 參數 | 舊值 | 新值 | 說明 |
+|------|------|------|------|
+| temperature | 0.1 | 0.5 | 平衡穩定性與創意 |
+| top_k | - | 64 | Google 推薦 |
+| top_p | - | 0.95 | Google 推薦 |
+| repeat_penalty | - | 1.1 | 減少重複 |
+| num_ctx | 16384 | 32768 | 完整上下文視窗 |
+
+### 新增功能
+
+- ✨ `scripts/download_models.py` - 模型預載腳本
+- ✨ `.github/instructions.md` - 專案最高指導原則 v1.1.0
+- ✨ `doc/Implement_Plan.md` - 升級實作計畫
+- ✨ `doc/Tasks.md` - 任務分解文件
+- ✨ VAD 參數版本相容性檢查機制
+
+### 修復問題
+
+- 🐛 修復 `No module named 'requests'` 錯誤（faster-whisper 依賴）
+- 🐛 修復 `VadOptions.__init__() got unexpected keyword argument 'threshold'` 錯誤
+
+### 依賴更新
+
+- `faster-whisper`: 1.0.1 → 1.1.0
+- `ctranslate2`: 4.0.0 → >=4.5.0
+- 新增 `huggingface_hub>=0.20.0`
+- 新增 `requests>=2.28.0`
+- 新增 `packaging>=21.0`
+
+### 驗證結果
+
+- ✅ Breeze-ASR-25 CUDA 載入成功
+- ✅ VAD 參數正確使用 onset/offset
+- ✅ 轉錄速度 16.6x（6185 秒音檔耗時 371 秒）
+- ✅ LLM 摘要生成成功
+- ✅ 會議記錄 MD 檔案正確產出
+
+---
+
 ## [3.4.4] - 2025-12-05
 
 ### 重大改進 🔥

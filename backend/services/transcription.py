@@ -38,6 +38,50 @@ class TranscriptionService:
         self._model = None
         self._device: Optional[DeviceType] = None
         self._compute_type: str = "int8"
+        self._fw_version: Optional[str] = None
+    
+    def _build_vad_params(
+        self,
+        threshold: float,
+        min_speech_ms: int,
+        min_silence_ms: int,
+        speech_pad_ms: int
+    ) -> dict:
+        """
+        根據 faster-whisper 版本建構正確的 VAD 參數
+        
+        此方法解決 faster-whisper 不同版本間 API 不相容問題：
+        - 版本 1.1.0 (PyPI): 使用 onset/offset 參數
+        - 版本 >= 1.2.0 (預期): 使用 threshold/neg_threshold 參數
+        
+        這是「避免再次發生」的矯正措施。
+        """
+        import faster_whisper
+        from packaging import version
+        
+        fw_version = version.parse(faster_whisper.__version__)
+        self._fw_version = str(fw_version)
+        
+        # 版本 >= 1.2.0 使用新 API（threshold/neg_threshold）
+        if fw_version >= version.parse("1.2.0"):
+            log.info(f"faster-whisper {fw_version}: 使用新版 VAD 參數 (threshold)")
+            return {
+                "threshold": threshold,
+                "min_speech_duration_ms": min_speech_ms,
+                "min_silence_duration_ms": min_silence_ms,
+                "speech_pad_ms": speech_pad_ms
+            }
+        else:
+            # 版本 < 1.2.0 使用舊 API（onset/offset）
+            log.info(f"faster-whisper {fw_version}: 使用 1.1.0 版 VAD 參數 (onset/offset)")
+            offset = max(threshold - 0.15, 0.01)
+            return {
+                "onset": threshold,
+                "offset": offset,
+                "min_speech_duration_ms": min_speech_ms,
+                "min_silence_duration_ms": min_silence_ms,
+                "speech_pad_ms": speech_pad_ms
+            }
         
     def _load_model(self, force_cpu: bool = False):
         """
@@ -165,12 +209,14 @@ class TranscriptionService:
             # VAD 參數來自 settings，可透過 config.yaml 調整
             
             # v4.0.0: 使用設定檔中的參數
-            vad_params = {
-                "threshold": settings.ASR_VAD_THRESHOLD,
-                "min_speech_duration_ms": settings.ASR_VAD_MIN_SPEECH_MS,
-                "min_silence_duration_ms": settings.ASR_VAD_MIN_SILENCE_MS,
-                "speech_pad_ms": settings.ASR_VAD_SPEECH_PAD_MS
-            }
+            # 注意：faster-whisper 1.1.0 使用 onset/offset 參數
+            # 未來版本可能改為 threshold/neg_threshold
+            vad_params = self._build_vad_params(
+                threshold=settings.ASR_VAD_THRESHOLD,
+                min_speech_ms=settings.ASR_VAD_MIN_SPEECH_MS,
+                min_silence_ms=settings.ASR_VAD_MIN_SILENCE_MS,
+                speech_pad_ms=settings.ASR_VAD_SPEECH_PAD_MS
+            )
             
             segments, info = self._model.transcribe(
                 audio_path,
