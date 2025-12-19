@@ -1,7 +1,12 @@
 """
 MeetingScribe Whisper 轉錄服務
 支援 GPU/CPU 自動偵測和降級
-使用 whisper-medium 模型直接輸出台灣繁體中文
+
+v4.0.0: 升級至 Breeze-ASR-25 模型
+- 專為台灣繁體中文和中英混用優化
+- 整合 Silero VAD v6 語音活動偵測
+- 大幅降低長音檔幻覺問題
+
 v3.5.2: 修復 GPU 加速失效 + 實現 VRAM 資源釋放機制
 """
 
@@ -19,6 +24,11 @@ class TranscriptionService:
     Whisper 語音轉錄服務
     支援 CUDA/MPS/CPU 自動選擇和降級
     
+    v4.0.0 改進：
+    - 升級至 Breeze-ASR-25 (MediaTek Research 台灣專用模型)
+    - 整合 Silero VAD v6 預處理，過濾靜音減少幻覺
+    - 優化長音檔處理，解決重複字樣問題
+    
     v3.5.2 改進：
     - 每次轉錄後釋放模型，避免 VRAM 持續佔用
     - 強制重新偵測 GPU 可用性，避免與 Ollama 資源競爭
@@ -30,7 +40,11 @@ class TranscriptionService:
         self._compute_type: str = "int8"
         
     def _load_model(self, force_cpu: bool = False):
-        """載入 Whisper 模型（每次轉錄前重新載入以確保 GPU 可用）"""
+        """
+        載入 Whisper 模型（每次轉錄前重新載入以確保 GPU 可用）
+        
+        v4.0.0: 支援從 HuggingFace 載入 Breeze-ASR-25 模型
+        """
         from faster_whisper import WhisperModel
         
         if force_cpu:
@@ -48,19 +62,25 @@ class TranscriptionService:
                 log.info("faster-whisper 不支援 MPS，使用 CPU 模式")
                 device = "cpu"
                 compute_type = "int8"
+            
+            # v4.0.0: 使用設定檔中的 compute_type（如果是 CUDA）
+            if device == "cuda":
+                compute_type = settings.WHISPER_COMPUTE_TYPE
         
         self._device = DeviceType(device) if device != "cpu" else DeviceType.CPU
         self._compute_type = compute_type
         
-        log.info(f"載入 Whisper 模型: {settings.WHISPER_MODEL}, 裝置: {device}, 精度: {compute_type}")
+        # v4.0.0: 使用 settings.WHISPER_MODEL（支援 HuggingFace repo）
+        model_name = settings.WHISPER_MODEL
+        log.info(f"載入 Whisper 模型: {model_name}, 裝置: {device}, 精度: {compute_type}")
         
         try:
             self._model = WhisperModel(
-                settings.WHISPER_MODEL,
+                model_name,
                 device=device,
                 compute_type=compute_type
             )
-            log.info(f"✅ Whisper 模型載入成功 (裝置: {device.upper()})")
+            log.info(f"✅ Whisper 模型載入成功 (裝置: {device.upper()}, 模型: {model_name})")
         except Exception as e:
             log.error(f"Whisper 模型載入失敗: {e}")
             if device != "cpu":
@@ -140,22 +160,25 @@ class TranscriptionService:
             if progress_callback:
                 progress_callback(10.0, f"開始轉錄 (裝置: {self._device.value.upper() if self._device else 'CPU'})...")
             
-            # 執行轉錄 - 使用繁體中文 initial_prompt 引導輸出
-            # Whisper 不區分 zh-TW/zh-CN，使用 initial_prompt 是業界最佳實踐
-            # 注意：initial_prompt 不應該包含指令性文字，應該是「範例內容」格式
-            # 參考: https://github.com/openai/whisper/discussions/117
-            traditional_chinese_prompt = "這是一場專業會議的逐字記錄，討論主題包含專案進度、決議事項。"
+            # 執行轉錄 - v4.0.0: 使用 Breeze-ASR-25 + Silero VAD v6
+            # Breeze-ASR-25 專為台灣繁體中文和中英混用優化
+            # VAD 參數來自 settings，可透過 config.yaml 調整
+            
+            # v4.0.0: 使用設定檔中的參數
+            vad_params = {
+                "threshold": settings.ASR_VAD_THRESHOLD,
+                "min_speech_duration_ms": settings.ASR_VAD_MIN_SPEECH_MS,
+                "min_silence_duration_ms": settings.ASR_VAD_MIN_SILENCE_MS,
+                "speech_pad_ms": settings.ASR_VAD_SPEECH_PAD_MS
+            }
             
             segments, info = self._model.transcribe(
                 audio_path,
                 language="zh",  # 指定中文語言
-                beam_size=5,
-                initial_prompt=traditional_chinese_prompt,  # 引導輸出繁體中文風格
-                vad_filter=True,  # 過濾靜音
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    speech_pad_ms=400
-                ),
+                beam_size=settings.ASR_BEAM_SIZE,
+                initial_prompt=settings.ASR_INITIAL_PROMPT,  # 引導輸出繁體中文風格
+                vad_filter=settings.ASR_VAD_ENABLED,  # v4.0.0: 使用 Silero VAD v6
+                vad_parameters=vad_params,
                 condition_on_previous_text=True,  # 啟用上下文連貫性
                 no_speech_threshold=0.6,  # 降低靜音誤判
                 compression_ratio_threshold=2.4,  # 避免重複輸出
@@ -177,10 +200,11 @@ class TranscriptionService:
             
             transcript = " ".join(transcript_parts)
             
-            # whisper-medium 模型直接輸出繁體中文，無需額外轉換
+            # v4.0.0: Breeze-ASR-25 直接輸出繁體中文，無需額外轉換
             
             elapsed = time.time() - start_time
-            log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒，裝置: {self._device.value.upper() if self._device else 'CPU'}")
+            speed_ratio = total_duration / elapsed if elapsed > 0 else 0
+            log.info(f"轉錄完成，耗時: {elapsed:.1f}秒，音訊時長: {total_duration:.1f}秒，速度: {speed_ratio:.1f}x，裝置: {self._device.value.upper() if self._device else 'CPU'}")
             
             if progress_callback:
                 progress_callback(60.0, "轉錄完成")

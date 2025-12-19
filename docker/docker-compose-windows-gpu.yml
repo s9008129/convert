@@ -1,10 +1,15 @@
 # ============================================================
 # docker-compose-windows-gpu.yml
-# MeetingScribe v3.4.4 - Windows + RTX 4090 專用 GPU 加速版
+# MeetingScribe v4.0.0 - Windows + RTX 4090 專用 GPU 加速版
 # ============================================================
 # 
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
 # 使用 NVIDIA CUDA 12 + cuDNN 8/9 基底映像支援 faster-whisper GPU 加速
+#
+# v4.0.0 升級：
+# - ASR 模型升級至 Breeze-ASR-25（台灣專用）
+# - LLM 參數優化（temperature 0.5, top_k 64, top_p 0.95）
+# - 模型持久化 Volume 確保不重複下載
 #
 # 重要依賴（參見 INSTRUCTIONS.md）：
 # - cuDNN 8 庫：Whisper 語音識別必需
@@ -74,10 +79,11 @@ services:
       - LOCAL_LLM_MODEL=gemma3:27b-it-qat
       
       # ========================================
-      # Whisper 轉錄設定（GPU 加速）
+      # Whisper 轉錄設定 (v4.0.0: Breeze-ASR-25)
       # ========================================
-      - WHISPER_MODEL=medium
+      - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
       - WHISPER_DEVICE=auto
+      - WHISPER_COMPUTE_TYPE=int8_float16
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）
@@ -113,11 +119,12 @@ services:
     # 標籤：方便識別
     labels:
       - "com.meetingscribe.project=meetingscribe"
-      - "com.meetingscribe.version=3.4.4"
+      - "com.meetingscribe.version=4.0.0"
       - "com.meetingscribe.platform=windows-gpu"
       - "com.meetingscribe.gpu=rtx4090"
       - "com.meetingscribe.cuda=12.3"
       - "com.meetingscribe.cudnn=8+9"
+      - "com.meetingscribe.asr=breeze-asr-25"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]

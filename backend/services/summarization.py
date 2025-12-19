@@ -171,7 +171,12 @@ class SummarizationService:
         progress_callback: Optional[callable] = None
     ) -> str:
         """
-        使用 Ollama 本地模式生成摘要（針對 Gemma 3 優化）
+        使用 Ollama 本地模式生成摘要
+        
+        v4.0.0 改進：
+        - 更新生成參數：temperature 0.5, top_k 64, top_p 0.95
+        - 新增 repeat_penalty 1.1 減少重複
+        - 維持 keep_alive=0 確保 VRAM 釋放
         
         v3.5.2 改進：
         - 新增 keep_alive=0 參數，使用完畢後立即釋放 VRAM
@@ -185,10 +190,11 @@ class SummarizationService:
             if progress_callback:
                 progress_callback(65.0, "載入 Ollama 模型...")
             
-            # v3.5.2: 大幅優化參數配置
-            # - temperature 0.05: 極低溫度確保格式遵循和輸出穩定
-            # - num_ctx 16384: 擴大上下文視窗以處理長逐字稿
-            # - num_predict 6144: 允許生成更完整的會議記錄
+            # v4.0.0: 使用經過深度檢查驗證的參數配置
+            # - temperature 0.5: 平衡穩定性與創意（從 0.05 調整）
+            # - top_p 0.95: Google 官方推薦
+            # - top_k 64: Google 官方推薦
+            # - repeat_penalty 1.1: 減少重複輸出
             # - keep_alive "0": 生成完成後立即卸載模型，釋放 VRAM
             response = await client.post(
                 "/api/chat",
@@ -201,16 +207,16 @@ class SummarizationService:
                     "stream": False,
                     "keep_alive": "0",  # v3.5.2: 關鍵！使用完畢後立即釋放 VRAM
                     "options": {
-                        "temperature": 0.05,      # v3.5.2: 極低溫提高格式遵循度和內容準確度
-                        "top_p": 0.85,            # 稍微收緊以提高輸出品質
-                        "top_k": 30,              # 限制候選詞數量，提高準確度
-                        "repeat_penalty": 1.2,    # v3.5.2: 提高重複懲罰，避免內容重複
-                        "num_ctx": 16384,         # v3.5.2: 大幅擴大上下文視窗
-                        "num_predict": 6144,      # v3.5.2: 允許生成更長的輸出
-                        "stop": ["</details>", "---\n\n---"]  # 更精確的停止標記
+                        "temperature": 0.5,       # v4.0.0: 從 0.05 提高，平衡穩定性與創意
+                        "top_p": 0.95,            # v4.0.0: Google 推薦
+                        "top_k": 64,              # v4.0.0: Google 推薦
+                        "repeat_penalty": 1.1,    # v4.0.0: 減少重複
+                        "num_ctx": 32768,         # v4.0.0: 使用完整上下文視窗
+                        "num_predict": 8192,      # v4.0.0: 允許生成更長的輸出
+                        "stop": ["</details>", "---\n\n---"]  # 停止標記
                     }
                 },
-                timeout=600.0  # v3.5.2: 增加超時時間以處理長逐字稿
+                timeout=600.0
             )
             response.raise_for_status()
             

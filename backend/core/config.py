@@ -73,11 +73,49 @@ class Settings(BaseSettings):
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
     
     # ========================================
-    # Whisper 設定
+    # Whisper 設定 (v4.0.0: 升級至 Breeze-ASR-25)
     # ========================================
-    WHISPER_MODEL: str = Field(default="medium", description="Whisper 模型名稱")
+    WHISPER_MODEL: str = Field(
+        default="SoybeanMilk/faster-whisper-Breeze-ASR-25",
+        description="Whisper 模型名稱（支援 HuggingFace repo 或本地路徑）"
+    )
     WHISPER_DEVICE: str = Field(default="auto", description="Whisper 運算裝置 (auto/cuda/cpu)")
-    WHISPER_COMPUTE_TYPE: str = Field(default="float16", description="Whisper 計算精度")
+    WHISPER_COMPUTE_TYPE: str = Field(
+        default="int8_float16",
+        description="Whisper 計算精度 (int8/int8_float16/float16)"
+    )
+    
+    # ========================================
+    # ASR VAD 設定 (v4.0.0 新增)
+    # ========================================
+    ASR_VAD_ENABLED: bool = Field(
+        default=True,
+        description="是否啟用 VAD（語音活動偵測）"
+    )
+    ASR_VAD_THRESHOLD: float = Field(
+        default=0.5,
+        description="VAD 語音偵測閾值 (0.0-1.0)"
+    )
+    ASR_VAD_MIN_SPEECH_MS: int = Field(
+        default=250,
+        description="最短語音持續時間（毫秒）"
+    )
+    ASR_VAD_MIN_SILENCE_MS: int = Field(
+        default=2000,
+        description="觸發分割的最短靜音時間（毫秒）"
+    )
+    ASR_VAD_SPEECH_PAD_MS: int = Field(
+        default=400,
+        description="語音前後保留緩衝（毫秒）"
+    )
+    ASR_BEAM_SIZE: int = Field(
+        default=5,
+        description="Beam Search 大小"
+    )
+    ASR_INITIAL_PROMPT: str = Field(
+        default="以下是台灣繁體中文的會議記錄。",
+        description="轉錄初始提示詞"
+    )
     
     # ========================================
     # 系統設定
@@ -122,7 +160,7 @@ class Settings(BaseSettings):
 </audience>
 
 <response_format>
-請嚴格按照以下 Markdown 格式輸出：
+MUST按照以下 Markdown 格式輸出：
 
 # 會議記錄摘要
 
@@ -211,8 +249,6 @@ class Settings(BaseSettings):
 4. **繁體中文輸出（最高優先級）**：
    - 無論逐字稿是什麼語言，輸出必須是繁體中文（台灣正體）
    - 即使逐字稿是英文或包含英文，也必須翻譯成繁體中文輸出
-   - 禁止在輸出中使用英文字母（Markdown 語法除外）
-   - 英文專有名詞必須翻譯：AI→人工智慧、RPA→流程自動化、GPU→圖形處理器
 5. **資訊忠實**：只記錄逐字稿中提及的內容，不確定的標註「（待確認）」
 </critical_rules>
 

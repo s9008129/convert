@@ -1,6 +1,6 @@
 # ============================================
 # MeetingScribe Python 依賴
-# v2.1
+# v3.0 - Breeze-ASR-25 升級版
 # ============================================
 
 # Web 框架
@@ -9,9 +9,12 @@ uvicorn[standard]==0.27.1
 python-multipart==0.0.9
 websockets==12.0
 
-# Whisper 語音轉錄
-faster-whisper==1.0.1
-ctranslate2==4.0.0
+# Whisper 語音轉錄 (v4.0.0 升級)
+faster-whisper==1.1.0
+ctranslate2>=4.5.0
+
+# Hugging Face 模型管理 (v4.0.0 新增)
+huggingface_hub>=0.20.0
 
 # LLM 客戶端
 openai==1.12.0
@@ -34,9 +37,6 @@ loguru==0.7.2
 
 # 音訊處理
 ffmpeg-python==0.2.0
-
-# 簡繁中文轉換 (已移除 - whisper-medium 直接輸出繁體中文)
-# opencc-python-reimplemented==0.1.7
 
 # CUDA 支援（如果可用）
 # nvidia-cublas-cu12
