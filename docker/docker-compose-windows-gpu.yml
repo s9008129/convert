@@ -1,6 +1,6 @@
 # ============================================================
 # docker-compose-windows-gpu.yml
-# MeetingScribe v3.4.4 - Windows + RTX 4090 專用 GPU 加速版
+# MeetingScribe v4.0 - Windows + RTX 4090 專用 GPU 加速版
 # ============================================================
 # 
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化

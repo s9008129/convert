@@ -3,6 +3,22 @@
 MeetingScribe 環境驗證腳本 v1.0
 在服務啟動前執行，確保所有依賴可用
 
+用途（給非技術使用者）：
+    啟動服務前先做一輪「健康檢查」，快速確認環境是否可直接啟動，
+    避免啟動後才發現缺套件、缺目錄或設定檔遺漏。
+
+主要流程：
+    1) 檢查 Python 版本與目前執行環境
+    2) 檢查 FFmpeg、關鍵模組與可選加速模組
+    3) 檢查並建立必要資料夾、確認設定檔存在
+    4) 彙整結果，若有關鍵錯誤就回傳失敗退出碼
+
+常見錯誤情境：
+    - Python 版本太舊或不在預期環境
+    - 關鍵套件未安裝（例如 faster-whisper、aiofiles）
+    - 系統缺少 FFmpeg
+    - 必要目錄建立失敗或設定檔缺失
+
 使用方式：
     python scripts/verify_env.py
 
@@ -107,6 +123,7 @@ def check_critical_modules() -> List[Tuple[bool, str]]:
         ("httpx", "HTTPX (HTTP 客戶端)", None),
         ("yaml", "PyYAML (配置解析)", None),
         ("aiofiles", "Aiofiles (非同步檔案)", None),
+        ("docx", "python-docx (DOCX 文件生成)", "from docx import Document"),
     ]
     
     results = []
@@ -178,9 +195,15 @@ def check_config_files() -> List[Tuple[bool, str]]:
 
 
 def run_all_checks() -> bool:
-    """執行所有檢查"""
+    """
+    執行完整環境檢查並回傳是否可啟動服務。
+
+    回傳 True 代表關鍵檢查都通過；回傳 False 代表有關鍵錯誤，
+    例如核心依賴缺失或目錄建立失敗，應先修復後再啟動。
+    """
     print_header()
     
+    # 只要關鍵項目有任一失敗，就標記為不可啟動。
     critical_failed = False
     
     # 1. Python 環境

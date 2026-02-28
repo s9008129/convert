@@ -1,7 +1,8 @@
 # 功能規格：MeetingScribe 會議轉錄與摘要系統
 
-**版本**：v1.0  
+**版本**：v4.0  
 **建立日期**：2026-02-14  
+**更新日期**：2026-02-28  
 **適用範圍**：`/Users/hsiaojohnny/dev/convert`
 
 ---
@@ -39,16 +40,17 @@ MeetingScribe 是一套將會議音訊/視訊檔案轉換為結構化會議紀�
 
 ### User Story 1 - 上傳檔案並取得會議紀錄（Priority: P1）
 
-作為一般使用者，我要能上傳會議音訊並在處理完成後下載 Markdown 紀錄，減少手動整理時間。
+作為一般使用者，我要能上傳會議音訊並在處理完成後下載 Markdown 或 Word (DOCX) 紀錄，減少手動整理時間。
 
 **為什麼此優先級**：這是產品主價值鏈路（上傳→處理→下載）。
 
-**獨立測試**：呼叫 `POST /api/upload`、輪詢或 WebSocket 追蹤、最後呼叫 `GET /api/tasks/{task_id}/result`。
+**獨立測試**：呼叫 `POST /api/upload`、輪詢或 WebSocket 追蹤、最後呼叫 `GET /api/tasks/{task_id}/result` 或 `GET /api/tasks/{task_id}/result?format=docx`。
 
 **Given-When-Then 驗收情境**：
 1. **Given** 上傳副檔名與大小皆合法，**When** 呼叫上傳 API，**Then** 回傳 `task_id`、排隊位置與預估等待秒數。  
 2. **Given** 任務完成，**When** 下載結果檔，**Then** 應取得可讀 Markdown 且檔名包含 `task_id`。  
-3. **Given** 不支援檔案格式或超過大小限制，**When** 上傳，**Then** API 應回傳 4xx 與明確錯誤訊息。
+3. **Given** 任務完成，**When** 下載結果檔並帶 `format=docx`，**Then** 應取得格式正確的 Word 文件（含標題、表格框線、粗體、CJK 字型），相容 Office 2024 / M365。  
+4. **Given** 不支援檔案格式或超過大小限制，**When** 上傳，**Then** API 應回傳 4xx 與明確錯誤訊息。
 
 ---
 

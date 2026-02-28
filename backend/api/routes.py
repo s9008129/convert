@@ -1,5 +1,7 @@
 """
-MeetingScribe API 路由
+MeetingScribe 對外 API 路由。
+
+這裡定義前端會呼叫的功能：健康檢查、上傳檔案、查詢任務進度、下載結果與儲存空間管理。
 v3.5.4 - 統一版本號 + 裝置狀態快取
 """
 
@@ -162,7 +164,9 @@ async def upload_file(
 @router.get("/tasks/{task_id}", response_model=TaskInfo)
 async def get_task(task_id: str):
     """
-    查詢任務狀態和進度
+    查詢單一任務目前進度。
+
+    若任務不存在會回傳 404，避免前端誤以為仍在排隊。
     """
     task = task_queue.get_task(task_id)
     if not task:
@@ -177,10 +181,24 @@ async def get_task(task_id: str):
 
 
 @router.get("/tasks/{task_id}/result")
-async def get_task_result(task_id: str):
+async def get_task_result(task_id: str, format: str = "md"):
     """
-    取得處理結果（Markdown 檔案）
+    下載任務輸出的會議摘要檔。
+
+    支援格式：
+    - format=md（預設）：Markdown 格式
+    - format=docx：Word 文件格式
+
+    只有任務已完成才可下載；若尚未完成或檔案不存在，會回傳明確錯誤訊息。
     """
+    # 驗證格式參數
+    format = format.lower()
+    if format not in ("md", "docx"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支援的格式: {format}，僅支援 md 或 docx"
+        )
+
     task = task_queue.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"找不到任務: {task_id}")
@@ -201,10 +219,39 @@ async def get_task_result(task_id: str):
     if not os.path.exists(result_path):
         raise HTTPException(status_code=404, detail="結果檔案不存在")
     
+    # Markdown 格式（原始行為）
+    if format == "md":
+        return FileResponse(
+            result_path,
+            media_type="text/markdown",
+            filename=result_filename
+        )
+    
+    # DOCX 格式：讀取 MD → 轉換 → 回傳（含快取）
+    from backend.services.docx_converter import docx_converter
+
+    docx_filename = f"{safe_base_name}_{task_id}.docx"
+    docx_path = os.path.join(settings.outputs_dir, docx_filename)
+
+    # 快取：若已存在 .docx 且修改時間晚於 .md，直接回傳
+    if not os.path.exists(docx_path) or (
+        os.path.getmtime(docx_path) < os.path.getmtime(result_path)
+    ):
+        try:
+            with open(result_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+            docx_converter.convert(md_content, docx_path)
+        except Exception as e:
+            log.error(f"[DOCX] 轉換失敗: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"DOCX 轉換失敗: {str(e)}"
+            )
+
     return FileResponse(
-        result_path,
-        media_type="text/markdown",
-        filename=result_filename
+        docx_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=docx_filename
     )
 
 
@@ -238,7 +285,7 @@ async def cancel_task(task_id: str):
 @router.get("/queue/status", response_model=QueueStatus)
 async def get_queue_status():
     """
-    查詢排隊狀態
+    查詢目前排隊與處理中的整體狀態。
     """
     return task_queue.get_queue_status()
 

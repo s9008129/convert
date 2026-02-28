@@ -1,9 +1,15 @@
 /**
  * MeetingScribe 前端應用程式
  * v3.5.0 - 支援 macOS 原生模式和 MPS 偵測
+ *
+ * 介面流程（給非技術同仁）：
+ * 1) 載入頁面時先檢查系統可用性（API /api/config、/api/health）
+ * 2) 使用者選模式並上傳檔案（API /api/upload）
+ * 3) 以 WebSocket 接收排隊與進度更新（/ws/tasks/{taskId}）
+ * 4) 完成後顯示結果；若失敗則統一顯示錯誤區塊
  */
 
-// 全域狀態
+// 全域狀態（集中管理目前模式、任務編號、WebSocket 與鎖定狀態）
 const state = {
     currentMode: 'local',
     taskId: null,
@@ -12,7 +18,7 @@ const state = {
     modeLocked: false        // 模式是否已鎖定
 };
 
-// DOM 元素
+// 畫面元件對照表（先抓好元件，後續更新畫面會更容易）
 const elements = {
     // 狀態欄
     systemStatus: document.getElementById('systemStatus'),
@@ -47,6 +53,7 @@ const elements = {
     resultPreview: document.getElementById('resultPreview'),
     copyBtn: document.getElementById('copyBtn'),
     downloadBtn: document.getElementById('downloadBtn'),
+    downloadDocxBtn: document.getElementById('downloadDocxBtn'),
     resetBtn: document.getElementById('resetBtn'),
     
     // 錯誤
@@ -67,7 +74,9 @@ const elements = {
     modeLockHint: document.getElementById('modeLockHint')
 };
 
-// ===== 初始化 =====
+// ===== 初始化流程：載入設定、檢查服務狀態、綁定按鈕事件 =====
+// 頁面載入後依序完成：讀取設定 → 健康檢查 → 綁定事件
+// 這樣可確保使用者看到的按鈕狀態與後端實際能力一致
 document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     await checkHealth();
@@ -77,7 +86,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     setInterval(checkHealth, 30000);
 });
 
-// ===== API 函數 =====
+// ===== 與後端 API 溝通的函式 =====
+// 讀取後端設定：例如檔案大小上限、允許副檔名、雲端模式可用性
 async function loadConfig() {
     try {
         const response = await fetch('/api/config');
@@ -102,6 +112,7 @@ async function loadConfig() {
     }
 }
 
+// 健康檢查：更新「系統狀態/GPU/排隊數」與模式可用性（本地/雲端）
 async function checkHealth() {
     try {
         // v3.5.4: 使用 quick 模式，避免 GPU 滿載時阻塞
@@ -192,7 +203,8 @@ async function checkHealth() {
     }
 }
 
-// 上傳檔案
+// 上傳檔案：送出使用者選擇的音訊/影片，並建立任務開始追蹤進度
+// 成功後進入「排隊/進度追蹤」；失敗則進入統一錯誤顯示
 async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
@@ -223,7 +235,7 @@ async function uploadFile(file) {
         // 顯示排隊狀態
         showQueueStatus(result);
         
-        // 連接 WebSocket
+        // 連接 WebSocket：後續所有進度、排隊位置、完成/失敗訊息都由此接收
         connectWebSocket(result.task_id);
         
     } catch (error) {
@@ -234,6 +246,7 @@ async function uploadFile(file) {
 }
 
 // 🔒 鎖定/解鎖模式選擇
+// 目的：任務提交後避免使用者在中途改模式，造成「顯示模式」與「實際處理模式」不一致
 function lockModeSelection(locked) {
     state.modeLocked = locked;
     
@@ -268,6 +281,7 @@ function lockModeSelection(locked) {
 }
 
 // 顯示錯誤訊息（支援重試）
+// 錯誤顯示邏輯：只保留錯誤區塊，隱藏排隊/進度/結果，避免畫面資訊互相衝突
 function showError(message) {
     if (elements.errorSection) {
         elements.errorSection.style.display = 'block';
@@ -318,10 +332,39 @@ async function downloadResult() {
     }
 }
 
+async function downloadDocxResult() {
+    if (!state.taskId) return;
+    
+    try {
+        const response = await fetch(`/api/tasks/${state.taskId}/result?format=docx`);
+        if (!response.ok) {
+            throw new Error('DOCX 下載失敗');
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `會議記錄_${state.taskId}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+    } catch (error) {
+        console.error('DOCX 下載失敗:', error);
+        alert('Word 文件下載失敗，請重試');
+    }
+}
+
 // WebSocket 心跳 - 使用獨立的 interval ID 以便清理
+// 目的：長任務時維持連線活性，降低閒置斷線機率
 let heartbeatIntervalId = null;
 
-// ===== WebSocket =====
+// ===== WebSocket 即時進度通道 =====
+// WebSocket 任務通道：
+// - onmessage: 交給 handleProgressUpdate 更新畫面
+// - onclose/onerror: 紀錄狀態並清理心跳資源
 function connectWebSocket(taskId) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/tasks/${taskId}`;
@@ -361,7 +404,8 @@ function connectWebSocket(taskId) {
     }, 30000);
 }
 
-// 更新排隊顯示狀態
+// 更新排隊顯示狀態（讓使用者知道自己目前在隊列中的位置）
+// 將畫面切換為「排隊模式」，並呈現目前位置與總排隊數
 function updateQueueDisplay(position, total, statusMessage) {
     if (elements.queueSection) {
         elements.queueSection.style.display = 'block';
@@ -385,7 +429,7 @@ function handleProgressUpdate(message) {
     const progress = message.progress || 0;
     const status = message.status;
     
-    // 如果任務在排隊中，顯示排隊狀態
+    // 如果任務在排隊中，維持排隊畫面，先不顯示進度條
     if (status === 'queued' && message.queue_position) {
         // 修正：使用 queue_position 作為當前排隊人數（而非 total_queued）
         const totalQueued = message.queue_total || 0;
@@ -393,12 +437,12 @@ function handleProgressUpdate(message) {
         return;
     }
     
-    // 如果任務不在排隊中（已開始處理），隱藏排隊區塊
+    // 任務開始處理後，切換到進度畫面
     if (elements.queueSection && status !== 'queued') {
         elements.queueSection.style.display = 'none';
     }
     
-    // 更新進度條
+    // 更新進度條與文字說明（由後端訊息驅動畫面）
     if (elements.progressBar) {
         elements.progressBar.style.width = `${progress}%`;
     }
@@ -423,7 +467,7 @@ function handleProgressUpdate(message) {
         stage.classList.remove('active', 'completed');
     });
     
-    // 根據進度決定當前階段
+    // 根據百分比推估當前階段（純 UI 呈現，不影響後端真實任務狀態）
     let currentStage = 0;
     if (progress < 30) {
         currentStage = 0;
@@ -441,17 +485,18 @@ function handleProgressUpdate(message) {
         }
     });
     
-    // 如果完成，顯示結果
+    // 任務完成：顯示結果區塊（可複製/下載）
     if (message.status === 'completed') {
         showResult(message);
     }
     
-    // 如果失敗，顯示錯誤
+    // 任務失敗：導向統一錯誤顯示邏輯
     if (message.status === 'failed') {
         showError(message.message || '處理失敗，請重試');
     }
 }
 
+// 首次上傳成功時先顯示排隊資訊，後續由 WebSocket 持續更新
 function showQueueStatus(result) {
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
@@ -473,7 +518,7 @@ async function showResult(message) {
     }
     
     if (elements.resultPreview) {
-        // 如果有預覽內容，顯示前 2000 字
+        // 只預覽前 2000 字，避免一次渲染過大內容影響可讀性
         if (message.preview) {
             const maxLength = 2000;
             const preview = message.preview.length > maxLength 
@@ -500,7 +545,7 @@ function resetUI() {
         heartbeatIntervalId = null;
     }
     
-    // 重置所有區塊
+    // 重置所有區塊（回到一開始可再次上傳的畫面）
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'block';
     }
@@ -547,7 +592,8 @@ function resetUI() {
     checkHealth();
 }
 
-// ===== 事件處理 =====
+// ===== 事件處理：滑鼠點擊、拖拉上傳、按鈕操作 =====
+// 將使用者操作（點擊/拖放/按鈕）轉成對應流程函式
 function setupEventListeners() {
     // 模式選擇
     if (elements.modeLocal) {
@@ -583,6 +629,9 @@ function setupEventListeners() {
     if (elements.downloadBtn) {
         elements.downloadBtn.addEventListener('click', downloadResult);
     }
+    if (elements.downloadDocxBtn) {
+        elements.downloadDocxBtn.addEventListener('click', downloadDocxResult);
+    }
     if (elements.resetBtn) {
         elements.resetBtn.addEventListener('click', resetUI);
     }
@@ -604,7 +653,7 @@ function selectMode(mode) {
         elements.modeCloud.classList.toggle('selected', mode === 'cloud');
     }
     
-    // 更新頁尾
+    // 更新頁尾說明：讓使用者隨時確認目前資料處理路徑
     if (elements.footerMode) {
         if (mode === 'local') {
             elements.footerMode.textContent = '🔒 本地模式：完全離線，資料不外傳';
@@ -644,14 +693,14 @@ function handleFileSelect(e) {
 }
 
 function handleFile(file) {
-    // 驗證檔案大小
+    // 驗證檔案大小（在前端先擋下過大檔案，減少無效等待）
     const maxSize = (state.config?.max_file_size_mb || 100) * 1024 * 1024;
     if (file.size > maxSize) {
         showError(`檔案過大，上限: ${state.config?.max_file_size_mb || 100}MB`);
         return;
     }
     
-    // 驗證檔案類型
+    // 驗證檔案類型（僅接受後端允許的副檔名）
     const allowedExtensions = state.config?.allowed_extensions || [];
     const fileExt = '.' + file.name.split('.').pop().toLowerCase();
     if (!allowedExtensions.includes(fileExt)) {
@@ -659,13 +708,14 @@ function handleFile(file) {
         return;
     }
     
-    // 上傳檔案
+    // 通過檢查後才正式呼叫上傳 API
     uploadFile(file);
 }
 
 function copyResult() {
     if (elements.resultPreview) {
         const text = elements.resultPreview.textContent;
+        // 使用瀏覽器剪貼簿 API，成功/失敗都給使用者明確回饋
         navigator.clipboard.writeText(text).then(() => {
             alert('已複製到剪貼板');
         }).catch(err => {
@@ -673,5 +723,3 @@ function copyResult() {
         });
     }
 }
-
-

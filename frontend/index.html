@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/css/style.css?v=20241202">
 </head>
 <body>
+    <!-- 主畫面容器：所有流程區塊都在這裡，由 JS 依任務狀態切換顯示/隱藏 -->
     <div class="container">
         <!-- 標題區 -->
         <header class="header">
@@ -14,7 +15,7 @@
             <p class="subtitle">將會議錄音轉換為結構化會議記錄</p>
         </header>
 
-        <!-- 系統狀態 -->
+        <!-- 系統狀態列：顯示健康檢查結果、GPU 可用性與目前排隊量 -->
         <div class="status-bar" id="statusBar">
             <div class="status-item">
                 <span class="status-label">系統狀態</span>
@@ -30,7 +31,7 @@
             </div>
         </div>
 
-        <!-- 模式選擇 -->
+        <!-- 模式選擇區：決定資料走本地或雲端流程；開始處理後會鎖定避免中途切換 -->
         <section class="section mode-section">
             <h2 class="section-title">選擇處理模式</h2>
             <div class="mode-selector">
@@ -55,13 +56,13 @@
                     <div class="mode-model" id="cloudModelInfo">使用：Gemini API</div>
                 </div>
             </div>
-            <!-- 模式鎖定提示 -->
+            <!-- 模式鎖定提示：任務送出後顯示，提醒目前模式不可再改 -->
             <div class="mode-lock-hint" id="modeLockHint" style="display: none;">
                 🔒 處理中，模式已鎖定
             </div>
         </section>
 
-        <!-- 檔案上傳 -->
+        <!-- 檔案上傳區：支援拖放/點擊選檔，前端先驗證大小與格式再呼叫上傳 API -->
         <section class="section upload-section">
             <div class="upload-area" id="uploadArea">
                 <div class="upload-icon">📁</div>
@@ -72,7 +73,7 @@
             </div>
         </section>
 
-        <!-- 排隊狀態 -->
+        <!-- 排隊狀態區：任務尚未開始執行時顯示，資料來源為 WebSocket 即時更新 -->
         <section class="section queue-section" id="queueSection" style="display: none;">
             <h2 class="section-title">📊 排隊狀態</h2>
             <div class="queue-info">
@@ -92,7 +93,7 @@
             </div>
         </section>
 
-        <!-- 處理進度 -->
+        <!-- 處理進度區：任務開始後顯示，展示當前階段、百分比與文字狀態 -->
         <section class="section progress-section" id="progressSection" style="display: none;">
             <h2 class="section-title">處理進度</h2>
             <div class="progress-stages">
@@ -123,18 +124,19 @@
             <div class="device-info" id="deviceInfo"></div>
         </section>
 
-        <!-- 處理結果 -->
+        <!-- 處理結果區：任務完成後顯示，可複製預覽、下載完整檔案或重置流程 -->
         <section class="section result-section" id="resultSection" style="display: none;">
             <h2 class="section-title">處理結果</h2>
             <div class="result-preview" id="resultPreview"></div>
             <div class="result-actions">
                 <button class="btn btn-secondary" id="copyBtn">📋 複製文字</button>
                 <button class="btn btn-primary" id="downloadBtn">⬇️ 下載 Markdown</button>
+                <button class="btn btn-primary" id="downloadDocxBtn">📄 下載 Word</button>
                 <button class="btn btn-outline" id="resetBtn">🔄 重新開始</button>
             </div>
         </section>
 
-        <!-- 錯誤訊息 -->
+        <!-- 錯誤區：API 或 WebSocket 發生問題時統一顯示，避免使用者看不到失敗原因 -->
         <section class="section error-section" id="errorSection" style="display: none;">
             <div class="error-box">
                 <div class="error-icon">❌</div>
@@ -144,7 +146,7 @@
             </div>
         </section>
 
-        <!-- 頁尾 -->
+        <!-- 頁尾：持續提示目前模式與版本資訊，方便確認執行環境 -->
         <footer class="footer">
             <div class="footer-mode" id="footerMode">
                 🔒 本地模式：完全離線，資料不外傳
@@ -153,8 +155,10 @@
         </footer>
     </div>
 
-    <!-- Mammoth.js for Word document parsing -->
+    <!-- 腳本載入順序說明：先載入第三方函式庫，再載入 app.js，避免初始化時找不到相依功能 -->
+    <!-- 外部函式庫：Mammoth.js（供文件解析相關流程使用） -->
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    <!-- 前端主腳本：負責上傳互動、進度更新、錯誤顯示與結果操作 -->
     <script src="/static/js/app.js?v=20241205"></script>
 </body>
 </html>

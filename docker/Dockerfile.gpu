@@ -1,6 +1,6 @@
 # ============================================
 # MeetingScribe - GPU 加速版 Docker 映像
-# v3.4.3 - 使用 NVIDIA CUDA 12 + cuDNN 8 + cuDNN 9
+# v4.0 - 新增 DOCX 下載功能 + NVIDIA CUDA 12 + cuDNN 8 + cuDNN 9
 # ============================================
 # 
 # 重要：Whisper 語音識別需要 cuDNN 8
