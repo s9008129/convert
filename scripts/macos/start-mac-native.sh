@@ -278,7 +278,7 @@ show_success() {
     echo "   • 查看狀態: ps aux | grep uvicorn"
     echo "   • 查看日誌: tail -f logs/app.log"
     echo "   • 停止服務: kill \$(cat .server.pid)"
-    echo "   • 重啟服務: ./scripts/restart-mac-native.sh"
+    echo "   • 重啟服務: ./scripts/macos/restart-mac-native.sh"
     echo ""
     
     # 自動開啟瀏覽器

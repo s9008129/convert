@@ -52,6 +52,7 @@ yarn-error.log*
 data/uploads/*
 data/outputs/*
 data/cache/*
+data/logs/*
 !data/.gitkeep
 
 # 臨時檔案
@@ -59,6 +60,7 @@ temp/
 tmp/
 *.tmp
 .cache/
+.server.pid
 
 # Docker
 .docker/
@@ -97,10 +99,27 @@ coverage.xml
 *.cover
 *.py,cover
 
-# 其他
-.env.example (備份)
+# 圖片檔案（不納入版控，以連結或外部儲存管理）
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.ico
+*.svg
+
+# 測試音檔
+tests/test_audio/
+
+# 備份檔案
 *.bak
 *.backup
+
+# 空目錄佔位
+models/
+
+# 其他
+.env.example (備份)
 .env.local
 
 # MAC 舊版 Docker 部署方案（已廢棄，改用原生服務模式）
