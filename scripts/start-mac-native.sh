@@ -3,6 +3,11 @@
 # MeetingScribe - macOS 原生服務啟動腳本
 # v3.5.0 - 原生模式（使用 MPS 加速，不使用 Docker）
 # ============================================================
+# 使用者導覽（給非技術同仁）：
+# - 環境檢查：會確認 Python、FFmpeg、Ollama 與 conda 環境是否就緒。
+# - 啟停流程：通過檢查後才啟動 API，並持續輪詢健康端點直到可用。
+# - 清理步驟：啟動前會建立必要資料夾，避免執行時缺路徑。
+# - 安全注意：若環境驗證失敗會立即中止，避免在半套環境強行啟動。
 
 # 顏色定義
 RED='\033[0;31m'
@@ -47,7 +52,7 @@ error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
-# 檢查 Python
+# 步驟 1：檢查 Python 是否可用（服務啟動的基本條件）
 check_python() {
     info "檢查 Python 環境..."
     
@@ -61,7 +66,7 @@ check_python() {
     success "Python 版本: $PYTHON_VERSION"
 }
 
-# 檢查 FFmpeg
+# 步驟 2：檢查 FFmpeg（音訊轉檔需要）
 check_ffmpeg() {
     info "檢查 FFmpeg..."
     
@@ -80,7 +85,7 @@ check_ffmpeg() {
     fi
 }
 
-# 檢查 Ollama
+# 步驟 3：檢查 Ollama 與模型（本地 AI 推論需要）
 check_ollama() {
     info "檢查 Ollama 服務..."
     
@@ -136,7 +141,7 @@ check_ollama() {
     fi
 }
 
-# 設置 conda 環境（v3.5.5 修正：統一使用 conda meetingscribe 環境）
+# 步驟 4：設置 conda 環境（統一使用 meetingscribe）
 setup_conda_env() {
     info "檢查 conda meetingscribe 環境..."
     
@@ -174,7 +179,7 @@ setup_conda_env() {
     success "環境配置完成"
 }
 
-# 建立資料目錄
+# 步驟 5：建立必要資料夾，避免執行時找不到路徑
 create_dirs() {
     info "建立資料目錄..."
     mkdir -p "$PROJECT_ROOT/data/uploads"
@@ -185,7 +190,7 @@ create_dirs() {
     success "資料目錄已建立"
 }
 
-# 檢查環境變數
+# 步驟 6：確認 .env 設定檔存在
 check_env() {
     info "檢查環境變數..."
     
@@ -201,7 +206,7 @@ check_env() {
     fi
 }
 
-# 啟動服務
+# 步驟 7：啟動 FastAPI 服務並等待就緒
 start_service() {
     info "啟動 MeetingScribe 原生服務..."
     info "⚡ 使用 Apple MPS 加速"
@@ -214,7 +219,7 @@ start_service() {
     export OLLAMA_BASE_URL=http://localhost:11434
     export DATA_DIR="$PROJECT_ROOT/data"
     
-    # 啟動服務（使用 conda 環境的 Python）
+    # 步驟 7：啟動 FastAPI 服務並等待就緒（使用 conda 環境的 Python）
     info "正在啟動 FastAPI 服務..."
     "$CONDA_ENV_PATH/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
     
@@ -282,7 +287,7 @@ show_success() {
     open "http://localhost:9527"
 }
 
-# 主程式
+# 主程式：按照建議順序依次檢查與啟動
 main() {
     check_python
     check_ffmpeg

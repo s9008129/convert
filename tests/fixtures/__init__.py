@@ -1,7 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Tests fixtures package
+測試固定資料（fixtures）匯出入口。
+統一提供常見會議逐字稿樣本，讓測試情境一致且可重現。
+
+流程說明：
+- 測試案例可直接從這裡拿到標準化逐字稿，不必各自重建資料。
+
+錯誤情境說明：
+- 若 fixture 欄位缺漏，相關測試會快速失敗，提醒補齊測試資料。
 """
 from tests.fixtures.mock_transcripts import (
     MockTranscript,

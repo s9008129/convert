@@ -1,7 +1,8 @@
 """
-MeetingScribe Whisper 轉錄服務
-支援多後端：MLX-Whisper (macOS MPS)、Faster-Whisper (CUDA/CPU)
-v3.5.0: 平台自動偵測，macOS 使用 MLX-Whisper 加速
+語音轉文字服務。
+
+依平台自動選擇合適後端：macOS 以 MLX-Whisper 為主，
+Windows / Linux 以 Faster-Whisper 為主，並在完成後釋放資源。
 """
 
 import os
@@ -32,6 +33,7 @@ class TranscriptionService:
     """
     
     def __init__(self):
+        """初始化模型與裝置狀態，供每次轉錄前後安全切換與釋放資源。"""
         self._model = None
         self._device: Optional[DeviceType] = None
         self._compute_type: str = "int8"
@@ -352,7 +354,7 @@ class TranscriptionService:
         return transcript, total_duration
     
     def get_device_info(self) -> dict:
-        """取得目前使用的裝置資訊"""
+        """提供目前轉錄使用的裝置與精度資訊，方便前端或維運排查效能問題。"""
         return {
             "device": self._device.value if self._device else "not_loaded",
             "compute_type": self._compute_type,

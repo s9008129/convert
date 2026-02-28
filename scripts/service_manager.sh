@@ -4,6 +4,11 @@
 # MeetingScribe 服務管理快速指南
 # v3.5.4 - macOS 原生模式
 # ============================================
+# 使用者導覽（給非技術同仁）：
+# - 環境檢查：透過 /api/health 讀取版本與排隊資訊，確認服務是否在線。
+# - 啟停流程：可從選單執行啟動/停止/重啟，並於每次操作後重新檢查狀態。
+# - 清理步驟：停止與重啟都會先結束舊進程，避免同時存在多個服務實例。
+# - 安全注意：SERVICE_NAME 請保持精準，避免匹配過廣導致誤關閉其他程序。
 
 PROJECT_DIR="/Users/hsiaojohnny/dev/convert"
 SERVICE_NAME="uvicorn backend.main:app"
@@ -62,7 +67,7 @@ show_restart_guide() {
     echo ""
 }
 
-# 主選單
+# 主選單（提供常見維運操作，給非工程使用者快速選擇）
 echo ""
 echo "請選擇操作："
 echo "1) 查看服務狀態"
@@ -75,12 +80,14 @@ echo "7) 退出"
 echo ""
 read -p "請輸入選項 (1-7): " choice
 
+# 依照使用者輸入執行對應操作
 case $choice in
     1)
         check_status
         ;;
     2)
         echo ""
+        # 步驟：切到專案目錄後背景啟動服務
         echo "🚀 啟動服務..."
         cd "$PROJECT_DIR"
         ./start_service.sh &
@@ -89,14 +96,18 @@ case $choice in
         ;;
     3)
         echo ""
+        # 步驟：先停止目前服務，再回報最新狀態
         echo "🛑 停止服務..."
+        # 安全提醒：僅依 SERVICE_NAME 目標停用對應服務進程。
         pkill -f "$SERVICE_NAME"
         sleep 1
         check_status
         ;;
     4)
         echo ""
+        # 步驟：先停再啟，確保服務用新設定啟動
         echo "🔄 重啟服務..."
+        # 安全提醒：先關閉舊進程再啟動，避免埠號衝突與重複服務。
         pkill -f "$SERVICE_NAME"
         sleep 1
         cd "$PROJECT_DIR"

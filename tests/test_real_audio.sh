@@ -1,6 +1,12 @@
 #!/bin/bash
-# 使用真實音檔測試 MLX-Whisper 修復
+# 使用真實音檔做端到端驗證，確認修復在實務情境也有效
+# 測試目的：驗證真實會議音檔在雲端轉錄模式下可成功完成，避免僅在小樣本測試通過卻在真實情境失敗。
+# Given：API 服務可連線，且 TEST_FILES 內音檔存在且可讀取。
+# When：逐一上傳音檔、取得 task_id，並輪詢任務進度與最終狀態。
+# Then：每個檔案都應回報 completed 並產生轉錄片段；若出現 failed 或上傳失敗，最終 exit code 需為 1。
+# 關鍵 mock/assertion 意義：此腳本為真實整合流程，不使用 mock；以 success_count、失敗統計與 exit code 驗證品質風險。
 
+# 任一步驟失敗就停止，避免後續測試混淆結果
 set -e
 
 BASE_URL="http://localhost:9527"
@@ -17,6 +23,7 @@ echo ""
 test_count=0
 success_count=0
 
+# 逐一測試每個真實音檔
 for TEST_FILE in "${TEST_FILES[@]}"; do
     test_count=$((test_count + 1))
     TEST_NAME=$(basename "$TEST_FILE")
@@ -40,7 +47,7 @@ for TEST_FILE in "${TEST_FILES[@]}"; do
     echo "✅ 任務已建立: $TASK_ID"
     echo "⏳ 等待處理..."
     
-    # 輪詢狀態 (最多 120秒)
+    # 每 2 秒查一次任務狀態，最多等待 120 秒
     for i in {1..60}; do
         sleep 2
         STATUS=$(curl -s "$BASE_URL/api/tasks/$TASK_ID")

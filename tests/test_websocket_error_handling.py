@@ -1,6 +1,7 @@
 """
-測試 WebSocket 錯誤處理（包括 Broken Pipe）
-v3.5.4 - 修復 Errno 32 Broken pipe 錯誤
+這份測試專注在 WebSocket 異常情境的穩定性。
+它會驗證連線中斷、Broken pipe 等錯誤發生時，
+系統是否能平順清理並維持正確狀態。
 """
 
 import pytest

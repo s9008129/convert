@@ -1,33 +1,32 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-3.5.5-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
-[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](doc/v3.5.5_系統修復驗證報告.md)
+[![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 
-> 將會議錄音自動轉換為結構化會議記錄的智能系統
+> 將會議錄音自動轉換為結構化會議記錄的智能系統，支援 Markdown 與 Word (DOCX) 雙格式下載
 
-## 🆕 v3.5.5 系統修復版本（2025-12-18）
+## 🆕 v4.0 重大更新（2026-02-28）
 
-### 🔧 環境統一與日誌系統升級
+### 📄 新增 DOCX (Word) 下載功能
 
-**修復內容**：
-- ✅ 解決 `No module named 'av'` 持續性錯誤
-- ✅ 統一所有啟動腳本使用 conda meetingscribe 環境
-- ✅ 新增環境驗證腳本 `scripts/verify_env.py`
-- ✅ 升級日誌系統至 v2.0（檔案輪轉 + JSON 結構化）
-- ✅ 新增完整管線測試 `scripts/test_full_pipeline.py`
+- ✅ 會議記錄支援下載為 **Word (.docx) 格式**，相容 Office 2024 / M365
+- ✅ 專業排版：A4 頁面、CJK 字型（微軟正黑體標題 + 新細明體內文）
+- ✅ **完整表格框線**：待辦事項表格含標題灰底、所有框線精準顯示
+- ✅ API 擴展：`GET /api/tasks/{task_id}/result?format=docx`（向後相容）
+- ✅ 前端按鈕：結果頁面新增「📄 下載 Word」按鈕
+- ✅ 快取機制：首次轉換後快取，後續下載直接回傳
+- ✅ 28 項單元測試全數通過
 
 **快速啟動**：
 ```bash
 # 使用環境驗證確保一切正常
-/opt/anaconda3/envs/meetingscribe/bin/python scripts/verify_env.py
+/Users/hsiaojohnny/miniconda3/envs/meetingscribe/bin/python scripts/verify_env.py
 
 # 啟動服務
 ./start_service.sh
 ```
-
-詳見：[v3.5.5 系統修復驗證報告](doc/v3.5.5_系統修復驗證報告.md)
 
 ---
 
@@ -45,6 +44,7 @@
 ### 📋 功能完整
 - 支援多種音訊格式（MP3、MP4、WAV、M4A、MKV、WebM 等）
 - 自動生成會議記錄（決議事項、行動項目等）
+- **雙格式下載**：Markdown (.md) 與 Word (.docx)
 - 實時轉錄進度顯示
 - RESTful API + WebSocket 支援
 
@@ -265,7 +265,7 @@ http://localhost:9527
    - 實時進度顯示
    - 逐字稿轉錄
    - 會議記錄生成
-   - 結果下載
+   - 結果下載（Markdown 或 Word 格式）
 
 ### API 使用
 
@@ -278,7 +278,7 @@ curl http://localhost:9527/api/health
 ```json
 {
   "status": "healthy",
-  "version": "3.5.0",
+  "version": "4.0",
   "gpu_available": true,
   "gpu_name": "Apple MPS (Metal Performance Shaders)",
   "ollama_available": false,
@@ -427,23 +427,26 @@ cat data/logs/app.log
 - **功能**: 拖放上傳、實時進度、結果預覽
 
 ### 環境支援
-- **Python**: 3.8+
-- **OS**: macOS 12+, Windows 10+, Ubuntu 20.04+
+- **Python**: 3.10+
+- **OS**: macOS 12+ (含 iOS 26 相關 macOS)、Windows 10/11、Ubuntu 20.04+
 - **GPU**: Apple MPS, CUDA, ROCm, CPU
+- **Office 相容性**: Office 2024, M365 (DOCX 輸出)
 
 ## 📝 版本歷史
 
-### [v3.5.0] - 2025-12-06
-- ✅ macOS Native 部署支援
-- ✅ GPU 路徑修復（DATA_DIR）
-- ✅ Ollama 完全移除
-- ✅ 版本號同步至 3.5.0
+### [v4.0] - 2026-02-28
+- ✅ 新增 DOCX (Word) 下載功能，相容 Office 2024 / M365
+- ✅ 專業 CJK 排版（微軟正黑體標題、新細明體內文）
+- ✅ 完整表格框線與標題灰底
+- ✅ API 向後相容（`?format=docx`）
+- ✅ 28 項單元測試全數通過
 
-### [v3.4.6] - 2025-12-05
-- 優化 system prompt
+### [v3.5.5] - 2025-12-18
+- ✅ 環境統一與日誌系統升級
+- ✅ 解決 `No module named 'av'` 問題
 
-### [v2.3.6] - 2025-12-01
-- FastAPI 整合
+### [v3.5.4-stable] - 2025-12-07
+- GPU 滿載修復、統一版本號管理、服務管理工具
 
 [查看完整歷史](CHANGELOG.md)
 
@@ -472,4 +475,4 @@ cat data/logs/app.log
 
 **Made with ❤️ by the MeetingScribe Team**
 
-Last updated: 2025-12-06
+Last updated: 2026-02-28

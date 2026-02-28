@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Unit Tests for WhisperTranscriber Module
+這份測試會確認語音轉錄模組在各種情境下都能穩定運作。
+包含初始化、檔案檢查、轉錄結果、快取與錯誤處理，
+確保使用者送入音檔後能獲得一致且可預期的輸出。
 
-This module contains comprehensive unit tests covering:
-- TranscriptionResult dataclass properties
-- WhisperTranscriber initialization
-- File validation
-- Transcription with mocked faster-whisper backend
-- Caching functionality
-- Integration workflow with full mock chain
+測試流程（給非技術同仁快速理解）：
+1) 先確認模型初始化與裝置偵測是否符合預期。
+2) 再驗證檔案合法性、轉錄結果與進度回報。
+3) 最後驗證快取命中/失效與例外情境處理。
+
+關鍵分支與錯誤情境：
+- 音檔不存在、格式不支援時應回傳清楚錯誤。
+- 快取檔損毀或模型版本不一致時，應自動略過快取。
+- 模型呼叫失敗時，錯誤應向上拋出，避免靜默失敗。
 """
 import json
 import logging
@@ -21,7 +25,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
-# Add parent directory to path for imports
+# 加入專案根目錄，讓測試可直接載入應用程式模組。
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.whisper_transcriber import (

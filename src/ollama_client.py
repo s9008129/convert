@@ -9,6 +9,10 @@ Ollama 本地 LLM 客戶端
 - 支援串流回應以提升使用者體驗
 - 完整的上下文視窗管理
 - 自動重試機制
+
+白話說明：
+這個模組像「翻譯員」，把程式需求轉成 Ollama API 請求，
+再把模型回覆整理成乾淨的文字，並處理連線失敗與逾時情況。
 """
 import httpx
 import json
@@ -125,7 +129,8 @@ class OllamaClient:
         stream: bool = False
     ) -> httpx.Response:
         """
-        發送 HTTP 請求（帶重試機制）
+        發送 HTTP 請求（含重試機制）。
+        如果服務暫時不可用，會自動再試幾次，避免一次失敗就中斷。
         
         Args:
             endpoint: API 端點
@@ -184,7 +189,8 @@ class OllamaClient:
         on_token: Optional[Callable[[str], None]] = None
     ) -> str:
         """
-        生成文字回應
+        產生單次文字回應（最常用）。
+        可選擇一般模式或串流模式。
         
         Args:
             prompt: 使用者提示詞
@@ -197,12 +203,12 @@ class OllamaClient:
         Returns:
             生成的文字
         """
-        # 組合完整提示詞
+        # 把 system prompt 與使用者 prompt 組成最終輸入
         full_prompt = prompt
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
         
-        # 對於多語言模型（如 Gemma3），強制使用極低溫度以確保語言一致性
+        # 對多語言模型限制溫度，降低語言混雜機率
         # 若 temperature > 0.15，自動降低至 0.1
         effective_temperature = min(temperature, 0.15) if temperature > 0.15 else temperature
         
@@ -235,7 +241,7 @@ class OllamaClient:
             return self._generate_sync(payload, start_time)
     
     def _generate_sync(self, payload: Dict[str, Any], start_time: float) -> str:
-        """同步生成"""
+        """同步生成：等待完整回覆後一次回傳。"""
         response = self._make_request("/api/generate", payload)
         result = response.json()
         
@@ -263,7 +269,7 @@ class OllamaClient:
         payload: Dict[str, Any],
         on_token: Optional[Callable[[str], None]]
     ) -> str:
-        """串流生成"""
+        """串流生成：邊收到 token 邊交給回呼函式。"""
         url = "%s/api/generate" % self.base_url
         full_response = []
         
@@ -296,7 +302,7 @@ class OllamaClient:
         on_token: Optional[Callable[[str], None]] = None
     ) -> str:
         """
-        聊天 API（推薦用於多輪對話）
+        聊天 API（適合多輪對話，保留角色訊息）。
         
         Args:
             messages: 訊息列表 [{"role": "system/user/assistant", "content": "..."}]
@@ -327,7 +333,7 @@ class OllamaClient:
             return self._chat_sync(payload)
     
     def _chat_sync(self, payload: Dict[str, Any]) -> str:
-        """同步聊天"""
+        """同步聊天：等待整段回答完成。"""
         response = self._make_request("/api/chat", payload)
         result = response.json()
         return result.get("message", {}).get("content", "")
@@ -337,7 +343,7 @@ class OllamaClient:
         payload: Dict[str, Any],
         on_token: Optional[Callable[[str], None]]
     ) -> str:
-        """串流聊天"""
+        """串流聊天：逐步輸出內容，適合即時顯示。"""
         url = "%s/api/chat" % self.base_url
         full_response = []
         
@@ -362,7 +368,7 @@ class OllamaClient:
         return "".join(full_response)
     
     def is_running(self) -> bool:
-        """檢查 Ollama 服務是否運行"""
+        """快速檢查 Ollama 服務是否在線。"""
         try:
             with self._get_client() as client:
                 client._timeout = httpx.Timeout(5)  # 覆蓋為短超時
@@ -373,7 +379,8 @@ class OllamaClient:
     
     def wait_for_service(self, timeout: int = 30, interval: float = 1.0) -> bool:
         """
-        等待 Ollama 服務啟動
+        等待 Ollama 服務啟動。
+        常用在程式剛啟動、服務可能尚未就緒的情境。
         
         Args:
             timeout: 最長等待時間（秒）
@@ -390,7 +397,7 @@ class OllamaClient:
         return False
     
     def list_models(self) -> List[str]:
-        """列出可用的模型"""
+        """列出目前 Ollama 可使用的模型名稱。"""
         try:
             with self._get_client() as client:
                 client._timeout = httpx.Timeout(10)
@@ -403,7 +410,7 @@ class OllamaClient:
             return []
     
     def has_model(self, model_name: Optional[str] = None) -> bool:
-        """檢查模型是否存在"""
+        """檢查目標模型是否已可用（含部分名稱比對）。"""
         model = model_name or self.model
         models = self.list_models()
         
@@ -422,7 +429,7 @@ class OllamaClient:
         return False
     
     def get_model_info(self, model_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """取得模型詳細資訊"""
+        """取得指定模型的詳細資訊（若失敗回傳 None）。"""
         model = model_name or self.model
         
         try:
@@ -444,7 +451,7 @@ class OllamaClient:
         on_progress: Optional[Callable[[str, float], None]] = None
     ) -> bool:
         """
-        下載模型
+        下載模型，並可透過回呼回報目前進度。
         
         Args:
             model_name: 模型名稱
@@ -490,7 +497,7 @@ class OllamaClient:
     
     def estimate_tokens(self, text: str) -> int:
         """
-        估算文字的 token 數量
+        估算文字 token 數量（粗估，用於容量判斷）。
         
         中文約 1.5-2 字元/token
         英文約 4 字元/token
@@ -503,7 +510,7 @@ class OllamaClient:
     
     def can_fit_context(self, text: str, safety_margin: float = 0.8) -> bool:
         """
-        檢查文字是否能放入上下文視窗
+        檢查文字是否能放進模型上下文視窗。
         
         Args:
             text: 要檢查的文字

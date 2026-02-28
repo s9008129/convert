@@ -1,5 +1,7 @@
 """
-MeetingScribe 主應用程式
+MeetingScribe 後端主程式。
+
+負責啟動 API 服務、背景任務處理器與檔案清理排程，並在關閉時做完整收尾。
 v3.5.4 - 統一版本號管理 + 請求超時控制
 """
 
@@ -20,7 +22,7 @@ from backend.services import task_processor, device_detector, file_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """應用程式生命週期管理"""
+    """管理服務啟動與關閉流程，確保背景任務與清理器都能正常啟停。"""
     log.info("=" * 50)
     log.info(f"🚀 MeetingScribe v{__version__} 啟動中...")
     log.info("=" * 50)

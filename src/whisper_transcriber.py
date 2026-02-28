@@ -9,6 +9,10 @@ Windows/跨平台 Whisper 轉錄器
 2. CUDA 優先，自動回退到 CPU
 3. 智能快取避免重複轉錄
 4. 進度回報支援
+
+白話說明：
+這個模組的工作很單純：把音訊/影片內容轉成文字。
+它會自動挑選可用的後端與裝置，並用快取減少重複等待時間。
 """
 import subprocess
 import logging
@@ -130,8 +134,8 @@ class WhisperTranscriber:
         logger.info("[Whisper] 語言: %s", language)
     
     def _detect_backend(self, exe_path: Optional[str]) -> str:
-        """檢測可用的後端"""
-        # Windows 優先使用獨立執行檔
+        """決定要用哪種轉錄後端（exe 或 Python 套件）。"""
+        # Windows 先嘗試獨立執行檔（通常安裝最直覺）
         if platform.system() == "Windows":
             if exe_path and Path(exe_path).exists():
                 return "exe"
@@ -145,14 +149,14 @@ class WhisperTranscriber:
                 if p.exists():
                     return "exe"
         
-        # 嘗試使用 Python 套件
+        # 其餘情況改用 Python 套件
         try:
             import faster_whisper
             return "python"
         except ImportError:
             pass
         
-        # Windows 時回退到 exe
+        # Windows 最後仍回退到 exe 方案
         if platform.system() == "Windows":
             return "exe"
         
@@ -162,7 +166,7 @@ class WhisperTranscriber:
         )
     
     def _detect_device(self, device: str) -> str:
-        """檢測運算裝置"""
+        """決定使用 GPU 或 CPU。"""
         if device != "auto":
             return device
         
@@ -210,7 +214,7 @@ class WhisperTranscriber:
         )
     
     def _get_cache_path(self, audio_path: Path) -> Optional[Path]:
-        """取得快取檔案路徑"""
+        """根據音檔內容建立快取檔名，避免重複轉錄。"""
         if not self.cache_dir:
             return None
         
@@ -221,7 +225,7 @@ class WhisperTranscriber:
         return self.cache_dir / cache_name
     
     def _calculate_file_hash(self, file_path: Path) -> str:
-        """計算檔案 hash（使用 SHA256 確保安全性）"""
+        """計算檔案內容雜湊值，當作快取識別碼。"""
         hasher = hashlib.sha256()
         
         # 讀取整個檔案以確保 hash 準確性
@@ -234,7 +238,7 @@ class WhisperTranscriber:
         return hasher.hexdigest()
     
     def _load_cache(self, cache_path: Path) -> Optional[TranscriptionResult]:
-        """載入快取"""
+        """嘗試讀取舊的轉錄結果，讀到就可直接回傳。"""
         if not cache_path or not cache_path.exists():
             return None
         
@@ -267,7 +271,7 @@ class WhisperTranscriber:
             return None
     
     def _save_cache(self, cache_path: Path, result: TranscriptionResult):
-        """儲存快取"""
+        """把本次轉錄結果寫入快取，供下次重用。"""
         if not cache_path:
             return
         
@@ -301,7 +305,8 @@ class WhisperTranscriber:
         on_progress: Optional[Callable[[str, float], None]] = None
     ) -> TranscriptionResult:
         """
-        轉錄音訊檔案
+        轉錄音訊/影片檔案。
+        流程：驗證檔案 -> 查快取 -> 執行轉錄 -> 回存快取。
         
         Args:
             audio_path: 音訊/視訊檔案路徑
@@ -336,7 +341,7 @@ class WhisperTranscriber:
         return result
     
     def _validate_file(self, audio_path: Path) -> None:
-        """驗證輸入檔案"""
+        """檢查檔案是否存在且副檔名在支援清單中。"""
         if not audio_path.exists():
             raise AudioFileNotFoundError("找不到檔案: %s" % audio_path)
         
@@ -351,7 +356,7 @@ class WhisperTranscriber:
         audio_path: Path,
         on_progress: Optional[Callable[[str, float], None]]
     ) -> TranscriptionResult:
-        """使用獨立執行檔轉錄"""
+        """使用 Windows 獨立執行檔進行轉錄。"""
         output_dir = audio_path.parent
         
         # 取得檔案資訊
@@ -398,7 +403,7 @@ class WhisperTranscriber:
                 error_msg = result.stderr or result.stdout or "未知錯誤"
                 raise TranscriptionError("轉錄失敗: %s" % error_msg)
             
-            # 讀取輸出
+            # 讀取輸出：優先 JSON（含分段資訊），否則讀純文字
             json_file = output_dir / f"{audio_path.stem}.json"
             txt_file = output_dir / f"{audio_path.stem}.txt"
             
@@ -445,7 +450,7 @@ class WhisperTranscriber:
         audio_path: Path,
         on_progress: Optional[Callable[[str, float], None]]
     ) -> TranscriptionResult:
-        """使用 Python 套件轉錄"""
+        """使用 faster-whisper 套件進行轉錄。"""
         try:
             from faster_whisper import WhisperModel
         except ImportError:
@@ -511,7 +516,7 @@ class WhisperTranscriber:
         )
     
     def get_gpu_info(self) -> Optional[Dict[str, Any]]:
-        """取得 GPU 資訊"""
+        """讀取 GPU 基本資訊（若無 GPU 或查詢失敗則回傳 None）。"""
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.total,memory.free,utilization.gpu",

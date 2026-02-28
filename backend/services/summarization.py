@@ -32,6 +32,7 @@ class SummarizationService:
     """
     
     def __init__(self):
+        """準備各種 LLM 客戶端與健康檢查快取，減少重複連線成本。"""
         self._ollama_client: Optional[httpx.AsyncClient] = None
         self._lmstudio_client: Optional[OpenAI] = None
         self._gemini_client: Optional[OpenAI] = None

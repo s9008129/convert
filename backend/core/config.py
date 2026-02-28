@@ -163,14 +163,17 @@ class Settings(BaseSettings):
     
     @property
     def uploads_dir(self) -> str:
+        """上傳檔案資料夾路徑（給使用者上傳的原始音檔/影片）。"""
         return os.path.join(self.DATA_DIR, "uploads")
     
     @property
     def outputs_dir(self) -> str:
+        """輸出結果資料夾路徑（摘要與逐字稿完成後會放在這裡）。"""
         return os.path.join(self.DATA_DIR, "outputs")
     
     @property
     def cache_dir(self) -> str:
+        """快取資料夾路徑（避免重複轉錄同一份檔案）。"""
         return os.path.join(self.DATA_DIR, "cache")
     
     class Config:
