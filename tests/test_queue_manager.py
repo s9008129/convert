@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Unit Tests for TaskQueueManager
+這份測試會確認任務排隊系統是否依規則運作。
+它驗證新增、取件、取消、等待時間與併行限制等行為，
+確保多個使用者同時送件時，流程仍公平且可預測。
 
-This module contains comprehensive unit tests covering:
-- Task queue management (add, get, cancel)
-- FIFO ordering
-- Queue position tracking
-- Wait time estimation
-- Concurrent task limiting
-- Queue status reporting
+測試流程（給非技術同仁快速理解）：
+1) 先建立乾淨佇列，再模擬多筆任務送件。
+2) 驗證先進先出（FIFO）、排隊位置變化與等待時間估算。
+3) 驗證完成、失敗、取消後，系統是否正確更新狀態。
+
+關鍵分支與錯誤情境：
+- 佇列滿載時應拒絕新任務。
+- 任務處理中時不得被取消。
+- 查詢不存在任務或更新不存在任務時，系統應平穩處理不崩潰。
 """
 import os
 import sys
@@ -21,10 +25,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-# Set DATA_DIR before importing backend modules
+# 使用暫存資料夾隔離測試，避免寫入正式資料目錄。
 os.environ['DATA_DIR'] = tempfile.mkdtemp()
 
-# Add parent directory to path for imports
+# 加入專案根目錄到匯入路徑，確保可直接載入 backend 模組。
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.models.schemas import TaskStatus, ProcessingMode, TaskInfo

@@ -3,10 +3,16 @@
 """
 會議轉錄工具核心模組
 
-提供：
-- OllamaClient: 本地 LLM 客戶端
-- WhisperTranscriber: 語音轉錄器
-- MeetingSummarizer: 會議摘要生成器
+這個套件是「核心零件集合」，方便其他程式直接匯入：
+- OllamaClient：負責和本地 LLM 溝通。
+- WhisperTranscriber：負責把音訊轉成文字。
+- MeetingSummarizer：負責把逐字稿整理成重點摘要。
+
+流程說明：
+- 其他程式由此統一匯入核心類別，串成「轉錄 → 摘要」的主要流程。
+
+錯誤情境說明：
+- 若底層服務連線失敗或模型不可用，會由各模組拋出對應錯誤，供上層顯示友善訊息。
 """
 
 from .ollama_client import (
@@ -39,7 +45,7 @@ from .summarizer import (
 
 __version__ = "1.0.0"
 __all__ = [
-    # Ollama
+    # 本地 LLM 連線與文字生成能力
     "OllamaClient",
     "OllamaError",
     "OllamaConnectionError", 
@@ -48,7 +54,7 @@ __all__ = [
     "create_client",
     "quick_generate",
     
-    # Whisper
+    # 音訊轉文字（Whisper）相關能力
     "WhisperTranscriber",
     "TranscriptionResult",
     "TranscriptionError",
@@ -56,7 +62,7 @@ __all__ = [
     "UnsupportedFormatError",
     "transcribe_audio",
     
-    # Summarizer
+    # 逐字稿摘要整理能力
     "MeetingSummarizer",
     "SummaryResult",
     "MarkdownFormatter",

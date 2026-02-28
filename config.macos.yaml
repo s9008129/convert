@@ -28,7 +28,7 @@ llm:
   cloud:
     provider: gemini
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-    model: gemini-2.5-flash-lite
+    model: gemini-3-flash-preview
     # API key 從環境變數 GEMINI_API_KEY 讀取
     timeout: 60
     max_tokens: 8192
@@ -42,7 +42,7 @@ whisper:
   
   # MLX-Whisper 設定
   mlx:
-    model: mlx-community/whisper-medium
+    model: mlx-community/whisper-large-v3-turbo
     device: mps  # Apple Metal Performance Shaders
     fp16: true
     language: zh

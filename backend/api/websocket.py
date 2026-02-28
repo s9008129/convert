@@ -1,5 +1,7 @@
 """
-MeetingScribe WebSocket 進度推送
+MeetingScribe WebSocket 即時進度推送。
+
+當使用者上傳檔案後，前端會透過這裡即時收到排隊、轉錄、摘要與完成通知。
 """
 
 import asyncio
@@ -15,7 +17,9 @@ from backend.services import task_queue
 
 def _get_result_preview(task_id: str, original_filename: str) -> Optional[str]:
     """
-    從結果檔案讀取預覽內容
+    讀取任務結果的前段預覽文字。
+
+    若檔案尚未產生或讀取失敗，會安全地回傳 None，避免中斷整個 WebSocket 流程。
     """
     try:
         base_name = os.path.splitext(os.path.basename(original_filename))[0]
@@ -41,10 +45,11 @@ class ConnectionManager:
     """
     
     def __init__(self):
+        """初始化連線池，依任務編號分組保存目前連線中的前端頁面。"""
         self._connections: Dict[str, Set[WebSocket]] = {}  # task_id -> WebSocket 集合
         
     async def connect(self, websocket: WebSocket, task_id: str):
-        """接受新的 WebSocket 連接"""
+        """接受新的 WebSocket 連接，讓前端能持續收到該任務的進度。"""
         await websocket.accept()
         
         if task_id not in self._connections:
@@ -54,7 +59,7 @@ class ConnectionManager:
         log.debug(f"WebSocket 連接建立: {task_id}")
     
     def disconnect(self, websocket: WebSocket, task_id: str):
-        """移除 WebSocket 連接"""
+        """移除中斷或離線的 WebSocket 連接，避免保留失效連線。"""
         if task_id in self._connections:
             self._connections[task_id].discard(websocket)
             if not self._connections[task_id]:
@@ -202,4 +207,3 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         log.error(f"WebSocket 處理時發生未預期錯誤: {e}")
     finally:
         connection_manager.disconnect(websocket, task_id)
-

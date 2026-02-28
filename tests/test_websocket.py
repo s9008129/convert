@@ -1,14 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Unit Tests for WebSocket Functionality
+這份測試會確認前端即時進度通知是否可靠。
+重點是驗證連線建立、訊息推送、心跳回應與斷線清理，
+確保使用者在畫面上看到的任務狀態是正確且即時的。
 
-This module contains comprehensive unit tests covering:
-- WebSocket connection management
-- Progress message sending
-- Heartbeat mechanism
-- Connection cleanup
-- Queue update broadcasting
+測試流程（給非技術同仁快速理解）：
+1) 建立模擬 WebSocket 連線，驗證初始狀態是否正確送出。
+2) 模擬多連線同時訂閱同一任務，確認廣播行為一致。
+3) 模擬心跳與斷線，確認系統能自動清理與回收連線。
+
+關鍵分支與錯誤情境：
+- 任務不存在或沒有訂閱者時，不應拋出未處理錯誤。
+- 死亡連線（已中斷）應被剔除，避免重複送訊息。
+- 任務完成後應關閉連線，避免前端持續等待。
 """
 import os
 import sys
@@ -20,10 +25,10 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-# Set DATA_DIR before importing backend modules
+# 測試使用獨立資料夾，避免影響本機實際資料。
 os.environ['DATA_DIR'] = tempfile.mkdtemp()
 
-# Add parent directory to path for imports
+# 加入專案根目錄到匯入路徑，確保可直接載入 backend 模組。
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.models.schemas import TaskStatus, TaskInfo, ProgressMessage, QueueStatus, ProcessingMode

@@ -1,6 +1,7 @@
 """
-MeetingScribe 任務排隊管理器
-v2.1 - FIFO 排隊系統
+任務排隊管理器。
+
+使用先進先出（FIFO）管理任務，避免同時處理過多檔案而造成記憶體或 GPU 壓力過高。
 """
 
 import asyncio
@@ -21,6 +22,7 @@ class TaskQueueManager:
     """
     
     def __init__(self):
+        """初始化排隊資料結構，確保任務依先進先出順序被處理。"""
         self._queue: deque[str] = deque()  # 排隊中的任務 ID
         self._tasks: Dict[str, TaskInfo] = {}  # 所有任務資訊
         self._processing: set[str] = set()  # 正在處理的任務 ID
@@ -36,8 +38,9 @@ class TaskQueueManager:
         user_prompt: Optional[str] = None
     ) -> Optional[TaskInfo]:
         """
-        添加新任務到佇列
-        
+        新增任務到排隊系統。
+
+        若排隊已滿會回傳 None，呼叫端可立即回覆「稍後再試」，避免使用者長時間等待。
         Returns:
             TaskInfo 如果成功加入佇列，None 如果佇列已滿
         """

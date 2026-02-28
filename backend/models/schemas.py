@@ -1,6 +1,7 @@
 """
-MeetingScribe 資料模型
-v2.1 - 包含排隊系統和 User Prompt 支援
+MeetingScribe API 資料模型定義。
+
+統一描述任務狀態、進度訊息與 API 回應格式，讓前端顯示與後端輸出可以一致。
 """
 
 from datetime import datetime

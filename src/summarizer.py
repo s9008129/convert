@@ -9,6 +9,10 @@
 2. 可自訂提示詞模板
 3. 支援多種輸出格式
 4. 品質驗證機制
+
+白話說明：
+本模組會把「很長的逐字稿」整理成「可直接閱讀的會議重點」。
+若內容太長，會先切段摘要，再把段落結果整合成一份完整記錄。
 """
 import logging
 import re
@@ -186,7 +190,8 @@ class MeetingSummarizer:
         custom_prompt: Optional[str] = None
     ) -> SummaryResult:
         """
-        生成會議摘要
+        生成會議摘要（核心流程）。
+        會自動判斷是否需要分段處理，最後再做基本品質檢查。
         
         Args:
             transcript: 逐字稿文字
@@ -206,12 +211,12 @@ class MeetingSummarizer:
         
         logger.info("[摘要] 輸入長度: %d 字元", len(transcript))
         
-        # 檢查是否需要分段處理
+        # 先估算長度，判斷可否一次處理
         estimated_tokens = self._estimate_tokens(transcript)
         system_prompt = custom_prompt or self.system_prompt
         
         if estimated_tokens <= self.max_input_tokens:
-            # 單次處理
+            # 文字不長：一次完成摘要
             summary = self._generate_summary(
                 transcript, 
                 system_prompt,
@@ -220,7 +225,7 @@ class MeetingSummarizer:
             )
             chunks_processed = 1
         else:
-            # 分段處理
+            # 文字過長：改走分段摘要流程
             logger.info("[摘要] 文本過長，啟用分段處理")
             summary = self._summarize_long_text(
                 transcript,
@@ -232,7 +237,7 @@ class MeetingSummarizer:
         
         elapsed = time.time() - start_time
         
-        # 驗證輸出
+        # 產出後做基本品質檢查（太短、像錯誤訊息、英文比例過高等）
         if not self._validate_summary(summary):
             logger.warning("[摘要] 輸出品質警告：摘要可能不完整")
         
@@ -258,7 +263,7 @@ class MeetingSummarizer:
         stream: bool,
         on_token: Optional[Callable[[str], None]]
     ) -> str:
-        """生成單段摘要"""
+        """針對單段逐字稿產生摘要。"""
         prompt = f"""請整理以下會議逐字稿：
 
 === 逐字稿開始 ===
@@ -282,14 +287,14 @@ class MeetingSummarizer:
         stream: bool,
         on_token: Optional[Callable[[str], None]]
     ) -> str:
-        """處理長文本（分段摘要後合併）"""
+        """處理長文本：先分段摘要，再把段落摘要合併。"""
         # 計算每段最大字元數
         max_chars = self._tokens_to_chars(self.max_input_tokens - 2000)  # 預留空間
         chunks = self._split_text(transcript, max_chars)
         
         logger.info("[摘要] 分為 %d 段處理", len(chunks))
         
-        # 第一階段：各段摘要
+        # 第一階段：每一段先各自摘要
         chunk_summaries = []
         for i, chunk in enumerate(chunks, 1):
             logger.info("[摘要] 處理第 %d/%d 段", i, len(chunks))
@@ -311,7 +316,7 @@ class MeetingSummarizer:
             )
             chunk_summaries.append(summary)
         
-        # 第二階段：合併摘要
+        # 第二階段：整合所有段落摘要為最終版本
         logger.info("[摘要] 合併各段摘要")
         
         combined = "\n\n---\n\n".join([
@@ -334,12 +339,12 @@ class MeetingSummarizer:
         )
     
     def _count_chunks(self, transcript: str) -> int:
-        """計算需要的分段數"""
+        """估算這份逐字稿需要切成幾段。"""
         max_chars = self._tokens_to_chars(self.max_input_tokens - 2000)
         return (len(transcript) + max_chars - 1) // max_chars
     
     def _validate_summary(self, summary: str) -> bool:
-        """驗證摘要品質"""
+        """做快速品質檢查，避免輸出明顯異常內容。"""
         if not summary:
             return False
         
@@ -372,7 +377,7 @@ class MeetingSummarizer:
         return has_structure and not has_error
     
     def _count_english_words(self, text: str) -> int:
-        """計算文本中的英文單詞數量"""
+        """計算英文單字數，用來檢查語言一致性。"""
         import re
         # 匹配英文單詞（連續的英文字母）
         english_pattern = r'\b[a-zA-Z]+\b'
@@ -407,7 +412,7 @@ class MeetingSummarizer:
 
 
 class MarkdownFormatter:
-    """Markdown 格式化工具"""
+    """把摘要與逐字稿組合成固定格式的 Markdown 文件。"""
     
     # 常見英文詞彙黑名單（如果在正體中文會議記錄中出現，應視為錯誤）
     ENGLISH_BLACKLIST = {
@@ -469,7 +474,7 @@ class MarkdownFormatter:
     @staticmethod
     def _sanitize_text_language(text: str) -> str:
         """
-        淨化文本中的英文詞彙
+        淨化文本中的英文詞彙（應急替換）
         
         用中文替代常見英文詞彙，用於應急修正
         """
@@ -513,7 +518,7 @@ class MarkdownFormatter:
         metadata: Dict[str, Any]
     ) -> str:
         """
-        格式化為完整的會議記錄 Markdown
+        輸出完整會議記錄 Markdown（含摘要、來源資訊與逐字稿）。
         
         Args:
             summary: 會議摘要
@@ -526,10 +531,10 @@ class MarkdownFormatter:
         """
         from pathlib import Path
         
-        # 步驟 1：淨化英文
+        # 步驟 1：先清除英文比例過高的段落
         cleaned_summary = MarkdownFormatter._remove_english_segments(summary)
         
-        # 步驟 2：應急修正英文詞彙
+        # 步驟 2：若仍有過多英文，做常見詞替換
         if MarkdownFormatter._has_excessive_english(cleaned_summary):
             logger.warning("[修正] 偵測到英文混入，執行詞彙替換...")
             cleaned_summary = MarkdownFormatter._sanitize_text_language(cleaned_summary)

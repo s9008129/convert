@@ -3,6 +3,11 @@
 # MeetingScribe - macOS 原生服務停止腳本
 # v3.5.0 - 原生模式
 # ============================================================
+# 使用者導覽（給非技術同仁）：
+# - 環境檢查：先回到專案目錄，確保操作的是目前專案服務。
+# - 啟停流程：優先依 .server.pid 停止，再用進程名稱作為備援。
+# - 清理步驟：停止後會刪除 .server.pid，避免下次讀到舊資訊。
+# - 安全注意：僅在一般停止無效時才使用強制終止。
 
 # 顏色定義
 RED='\033[0;31m'
@@ -21,7 +26,7 @@ cd "$PROJECT_ROOT"
 echo ""
 echo -e "${BLUE}[INFO]${NC} 正在停止 MeetingScribe 服務..."
 
-# 停止服務
+# 步驟 1：優先依 PID 檔案停止正確的服務程序
 if [ -f ".server.pid" ]; then
     PID=$(cat .server.pid)
     if ps -p $PID > /dev/null 2>&1; then
@@ -31,6 +36,7 @@ if [ -f ".server.pid" ]; then
         # 確認是否停止
         if ps -p $PID > /dev/null 2>&1; then
             echo -e "${YELLOW}[⚠️]${NC} 服務未完全停止，強制終止..."
+            # 安全提醒：kill -9 屬於最後手段，只在必要時使用。
             kill -9 $PID
         fi
         
@@ -42,7 +48,7 @@ if [ -f ".server.pid" ]; then
     fi
 else
     echo -e "${YELLOW}[⚠️]${NC} 找不到 .server.pid 檔案"
-    # 嘗試使用 pkill
+    # 備援步驟：若沒有 PID 檔案，改用名稱嘗試停止
     echo -e "${BLUE}[INFO]${NC} 嘗試使用進程名稱停止服務..."
     pkill -f "uvicorn backend.main:app"
     sleep 2

@@ -3,6 +3,11 @@
 # MeetingScribe - macOS 原生服務重啟腳本
 # v3.5.0 - 原生模式安全重啟
 # ============================================================
+# 使用者導覽（給非技術同仁）：
+# - 環境檢查：使用專案目錄與既有設定，確保在正確位置重啟。
+# - 啟停流程：先停止舊服務，再啟動新服務並檢查健康端點。
+# - 清理步驟：會同步更新 .server.pid，避免殘留舊 PID 記錄。
+# - 安全注意：若舊程序無法正常停止，才會進入強制終止流程。
 
 # 顏色定義
 RED='\033[0;31m'
@@ -45,7 +50,7 @@ error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
-# 停止服務
+# 步驟 1：先停止舊服務，避免新舊程序同時佔用資源
 stop_service() {
     info "正在停止 MeetingScribe 服務..."
     
@@ -77,7 +82,7 @@ stop_service() {
     fi
 }
 
-# 啟動服務
+# 步驟 2：再啟動新服務，套用目前設定
 start_service() {
     info "正在啟動 MeetingScribe 服務..."
     
@@ -91,7 +96,7 @@ start_service() {
     export KMP_DUPLICATE_LIB_OK=TRUE
     export DATA_DIR="$PROJECT_ROOT/data"
     
-    # 啟動服務（使用 conda 環境）
+    # 步驟 2：再啟動新服務，套用目前設定（使用 conda 環境）
     "$CONDA_ENV_PATH/bin/python" -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
     
     SERVER_PID=$!
@@ -135,7 +140,7 @@ show_success() {
     echo ""
 }
 
-# 主程式
+# 主流程：依序停用 → 啟動 → 顯示完成訊息
 main() {
     stop_service
     echo ""

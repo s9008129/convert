@@ -11,6 +11,11 @@ Windows 版本（也支援 macOS/Linux）
     python main.py --config custom_config.yaml
     python main.py --verbose
     python main.py --help
+
+白話說明：
+1) 讀取設定檔，確認資料夾與輸入檔案。
+2) 先把語音轉成文字，再請本地 LLM 做摘要。
+3) 最後輸出成好閱讀的 Markdown 會議記錄。
 """
 import sys
 import os
@@ -30,7 +35,7 @@ import yaml
 
 
 def setup_logging(verbose: bool = False, log_dir: Optional[Path] = None) -> logging.Logger:
-    """設定日誌系統"""
+    """設定畫面與檔案日誌，方便查看目前進度與錯誤。"""
     level = logging.DEBUG if verbose else logging.INFO
     
     # 格式化器
@@ -61,7 +66,7 @@ def setup_logging(verbose: bool = False, log_dir: Optional[Path] = None) -> logg
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
-    """載入配置檔"""
+    """讀取 YAML 設定檔，回傳程式執行所需參數。"""
     config_file = Path(config_path)
     
     if not config_file.exists():
@@ -74,7 +79,7 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
 
 
 def print_banner():
-    """顯示程式標題"""
+    """在終端機顯示工具標題，讓使用者確認程式已啟動。"""
     print()
     print("=" * 60)
     print("          會議轉錄工具 - 本地 AI 版")
@@ -84,7 +89,7 @@ def print_banner():
 
 
 def format_duration(seconds: float) -> str:
-    """格式化時間"""
+    """把秒數轉成較好讀的文字（秒/分/小時）。"""
     if seconds < 60:
         return f"{seconds:.1f} 秒"
     elif seconds < 3600:
@@ -98,7 +103,7 @@ def format_duration(seconds: float) -> str:
 
 
 def format_size(bytes_size: int) -> str:
-    """格式化檔案大小"""
+    """把位元組大小轉成 B/KB/MB 等常見單位。"""
     for unit in ['B', 'KB', 'MB', 'GB']:
         if bytes_size < 1024:
             return f"{bytes_size:.1f} {unit}"
@@ -107,7 +112,7 @@ def format_size(bytes_size: int) -> str:
 
 
 def scan_input_files(input_dir: Path) -> List[Path]:
-    """掃描輸入目錄中的音訊/視訊檔案"""
+    """掃描輸入資料夾，找出支援的音訊與影片檔案。"""
     extensions = {'.mp3', '.mp4', '.wav', '.m4a', '.mkv', '.webm', 
                   '.flac', '.ogg', '.wma', '.aac', '.avi', '.mov', '.opus'}
     
@@ -120,7 +125,18 @@ def scan_input_files(input_dir: Path) -> List[Path]:
 
 
 def main():
-    """主程式"""
+    """
+    主流程控制：
+    - 解析參數、讀設定、初始化模型
+    - 逐檔執行轉錄與摘要
+    - 將結果輸出為 Markdown 並回報統計
+
+    主要分支與例外：
+    - --dry-run：只預覽不執行，適合上線前確認檔案清單。
+    - --file：只處理單一檔案，方便臨時補跑。
+    - 任何初始化失敗（設定/Ollama/Whisper）都會提早結束，避免產生半成品。
+    - 單檔處理失敗時，是否繼續由 continue_on_error 決定。
+    """
     # 解析命令列參數
     parser = argparse.ArgumentParser(
         description="會議轉錄工具 - 本地 AI 版",
@@ -146,7 +162,7 @@ def main():
     
     print_banner()
     
-    # 載入配置
+    # 載入配置：若這裡失敗，代表流程所需路徑與模型參數都不可靠，直接停止。
     try:
         config = load_config(args.config)
     except FileNotFoundError as e:
@@ -163,7 +179,7 @@ def main():
     
     logger.info("配置檔: %s", args.config)
     
-    # 準備目錄
+    # 準備必要資料夾，避免後續讀寫失敗
     input_dir = Path(config["paths"]["input"]).resolve()
     output_dir = Path(config["paths"]["output"]).resolve()
     temp_dir = Path(config["paths"]["temp"]).resolve()
@@ -171,7 +187,7 @@ def main():
     for d in [input_dir, output_dir, temp_dir]:
         d.mkdir(parents=True, exist_ok=True)
     
-    # 掃描輸入檔案
+    # 決定要處理哪一些檔案（單檔或整批）
     if args.file:
         file_path = Path(args.file)
         if not file_path.exists():
@@ -189,7 +205,7 @@ def main():
     
     logger.info("找到 %d 個待處理檔案", len(files))
     
-    # 預覽模式
+    # 預覽模式：只顯示「會處理什麼」，不真的呼叫轉錄與摘要。
     if args.dry_run:
         print("\n[預覽模式] 將處理以下檔案:")
         for f in files:
@@ -197,7 +213,7 @@ def main():
             print("  • %s (%s)" % (f.name, size))
         return 0
     
-    # 載入模組
+    # 延後載入核心模組：可先完成參數與設定檢查，再啟動較重元件
     try:
         from src.ollama_client import OllamaClient
         from src.whisper_transcriber import WhisperTranscriber
@@ -207,7 +223,7 @@ def main():
         logger.error("請確認 src 目錄中有必要的 Python 檔案")
         return 1
     
-    # 初始化 Ollama
+    # 初始化本地 LLM 連線
     ollama_config = config["llm"]["ollama"]
     
     logger.info("初始化 Ollama 客戶端...")
@@ -218,7 +234,7 @@ def main():
         timeout=ollama_config.get("timeout", 600)
     )
     
-    # 檢查 Ollama 服務
+    # 先確認 Ollama 服務有啟動，避免後續摘要步驟失敗
     if not ollama.is_running():
         logger.error("Ollama 服務未運行！")
         logger.error("請啟動 Ollama：")
@@ -226,7 +242,7 @@ def main():
         logger.error("  macOS/Linux: ollama serve")
         return 1
     
-    # 檢查模型
+    # 檢查指定模型是否可用
     models = ollama.list_models()
     logger.info("Ollama 可用模型: %s", ', '.join(models) if models else '(無)')
     
@@ -234,7 +250,7 @@ def main():
         logger.warning("模型 %s 可能未下載", ollama.model)
         logger.warning("請執行: ollama pull %s", ollama.model)
     
-    # 初始化 Whisper
+    # 初始化語音轉文字模組
     whisper_config = config["whisper"]
     
     logger.info("初始化 Whisper 轉錄器...")
@@ -251,7 +267,7 @@ def main():
         logger.error("初始化 Whisper 失敗: %s", e)
         return 1
     
-    # 初始化摘要器
+    # 初始化摘要器（負責把逐字稿轉成會議摘要）
     system_prompt = config.get("system_prompt", "")
     summarizer = MeetingSummarizer(
         ollama_client=ollama,
@@ -270,17 +286,17 @@ def main():
     else:
         logger.error("[錯誤] 未設定系統提示詞，可能導致輸出語言混亂")
     
-    # 處理設定
+    # 讀取進階選項
     use_cache = config.get("advanced", {}).get("use_cache", True)
     continue_on_error = config.get("advanced", {}).get("continue_on_error", True)
     include_transcript = config.get("advanced", {}).get("include_transcript", True)
     
-    # 統計
+    # 用於最後摘要報告的統計數字
     success_count = 0
     fail_count = 0
     total_start = time.time()
     
-    # 處理每個檔案
+    # 主迴圈：逐一處理每個檔案
     for i, file_path in enumerate(files, 1):
         print()
         logger.info("=" * 50)
@@ -291,7 +307,7 @@ def main():
         file_start = time.time()
         
         try:
-            # === 步驟 1：語音轉錄 ===
+            # === 步驟 1：語音轉錄（音訊 -> 文字）===
             logger.info("[步驟 1/3] 語音轉錄...")
             
             result = transcriber.transcribe(
@@ -313,7 +329,7 @@ def main():
                 fail_count += 1
                 continue
             
-            # === 步驟 2：LLM 摘要 ===
+            # === 步驟 2：LLM 摘要（文字 -> 重點）===
             logger.info("[步驟 2/3] LLM 摘要生成...")
             
             summary_result = summarizer.summarize(transcript)
@@ -322,7 +338,7 @@ def main():
             logger.info("摘要完成: %d 字", summary_result.summary_length)
             logger.info("壓縮比: %.1fx", summary_result.compression_ratio)
             
-            # === 步驟 3：生成輸出 ===
+            # === 步驟 3：生成輸出（重點 -> Markdown）===
             logger.info("[步驟 3/3] 生成 Markdown...")
             
             file_elapsed = time.time() - file_start
@@ -350,10 +366,12 @@ def main():
             success_count += 1
             
         except KeyboardInterrupt:
+            # 人為中斷：保留已完成成果並安全離開。
             logger.warning("使用者中斷")
             break
             
         except Exception as e:
+            # 單檔案錯誤保護：記錄失敗後可選擇繼續處理下一檔。
             logger.error("[錯誤] %s", e)
             fail_count += 1
             

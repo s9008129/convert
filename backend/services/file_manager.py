@@ -1,5 +1,7 @@
 """
-MeetingScribe 檔案管理服務
+檔案管理服務。
+
+負責上傳檔案檢查、儲存、快取、結果輸出與排程清理，確保資料可追蹤且磁碟空間可控。
 """
 
 import os
@@ -31,6 +33,7 @@ class FileManagerService:
     CACHE_RETENTION_DAYS = 30       # 快取保留 30 天
     
     def __init__(self):
+        """建立必要資料夾並準備背景清理工作，避免磁碟空間被舊檔占滿。"""
         # 確保目錄存在
         os.makedirs(settings.uploads_dir, exist_ok=True)
         os.makedirs(settings.outputs_dir, exist_ok=True)
@@ -39,8 +42,9 @@ class FileManagerService:
     
     def validate_file(self, file: UploadFile) -> Tuple[bool, str]:
         """
-        驗證上傳的檔案
-        
+        驗證上傳檔案是否安全且符合規格。
+
+        會檢查檔名、路徑字元與副檔名，提早阻擋不合法或可疑輸入。
         Returns:
             (是否有效, 錯誤訊息或空字串)
         """

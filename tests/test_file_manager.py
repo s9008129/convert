@@ -1,15 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Unit Tests for FileManagerService
+這份測試會確認檔案上傳與管理流程是否安全、穩定。
+內容包含檔案格式與大小檢查、儲存與刪除行為，以及快取機制，
+確保使用者上傳資料時能被正確處理並避免風險。
 
-This module contains comprehensive unit tests covering:
-- File validation (format, security checks)
-- File size validation
-- File upload and storage
-- File hash calculation
-- Cache management
-- File deletion with security restrictions
+測試流程（給非技術同仁快速理解）：
+1) 先建立暫存資料夾，確保測試不會碰到正式資料。
+2) 驗證檔案檢查、上傳儲存、快取讀寫、結果檔寫入與刪除。
+3) 逐一確認安全保護是否生效（例如路徑檢查與雜湊檢查）。
+
+關鍵分支與錯誤情境：
+- 檔名空值、附檔名不支援、檔案超過大小上限。
+- 夾帶路徑穿越字元（../）或 Null Byte 注入攻擊。
+- 嘗試刪除允許目錄外檔案時應被拒絕。
 """
 import os
 import sys
@@ -20,10 +24,10 @@ from io import BytesIO
 
 import pytest
 
-# Set DATA_DIR before importing backend modules
+# 測試使用暫存資料夾，避免污染正式環境目錄。
 os.environ['DATA_DIR'] = tempfile.mkdtemp()
 
-# Add parent directory to path for imports
+# 加入專案根目錄到匯入路徑，確保可直接載入 backend 模組。
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import UploadFile

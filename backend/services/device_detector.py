@@ -1,6 +1,8 @@
 """
-MeetingScribe 智能裝置偵測器
-自動偵測最佳運算裝置（CUDA/MPS/CPU），並支援動態降級
+運算裝置偵測服務。
+
+啟動時會優先使用較快的 GPU（CUDA 或 MPS），若不符合條件則自動改用 CPU，
+在穩定性與效能間取得平衡。
 """
 
 import subprocess
@@ -23,6 +25,7 @@ class DeviceDetector:
     """
     
     def __init__(self):
+        """初始化偵測結果快取，讓後續服務能共用同一份裝置資訊。"""
         self.current_device: Optional[DeviceType] = None
         self.current_compute_type: str = "int8"
         self.fallback_count: int = 0
@@ -31,8 +34,9 @@ class DeviceDetector:
         
     def detect_best_device(self) -> Tuple[DeviceType, str]:
         """
-        偵測並回傳最佳可用裝置
-        
+        偵測並回傳目前最適合的運算裝置。
+
+        會依序嘗試 CUDA、MPS、CPU；若前一種不可用就自動降級，避免服務無法啟動。
         Returns:
             (裝置類型, 計算精度)
         """

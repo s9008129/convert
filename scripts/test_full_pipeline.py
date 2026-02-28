@@ -3,6 +3,23 @@
 MeetingScribe 完整管線測試 v1.0
 測試從上傳到結果生成的完整流程
 
+用途（給非技術使用者）：
+    一次檢查「服務是否可用、上傳是否成功、任務是否能完成、日誌是否有產生」，
+    適合在部署後快速確認整體流程是否正常。
+
+主要流程：
+    1) 呼叫健康檢查與配置 API，確認服務可回應
+    2) 上傳測試音檔並取得 task_id
+    3) 輪詢任務狀態直到完成/失敗/超時
+    4) 檢查 app 與 JSON 日誌是否存在且格式正常
+    5) 輸出摘要並將測試報告存檔
+
+常見錯誤情境：
+    - 服務未啟動（無法連線 API）
+    - 測試音檔不存在或上傳失敗
+    - 任務執行失敗（status=failed）或等待超時
+    - 日誌檔不存在或 JSON 格式錯誤
+
 使用方式：
     python scripts/test_full_pipeline.py
 
@@ -215,7 +232,8 @@ def test_task_completion(result: TestResult, task_id: str) -> bool:
                     return False
                     
         except Exception as e:
-            pass  # 忽略暫時性錯誤
+            # 這裡保留重試機制：暫時性網路波動不立即判定失敗，交由下一輪重試。
+            pass
         
         time.sleep(2)
     
@@ -263,7 +281,12 @@ def test_log_files(result: TestResult):
 
 
 def run_all_tests() -> int:
-    """執行所有測試"""
+    """
+    依序執行完整管線測試並回傳退出碼。
+
+    回傳 0 代表所有檢查通過；回傳 1 代表至少一項失敗，
+    常見原因包含服務未啟動、任務失敗或日誌異常。
+    """
     print(f"""
 {Colors.CYAN}╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║

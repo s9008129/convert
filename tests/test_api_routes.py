@@ -1,17 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Unit Tests for API Routes
+這份測試會檢查 API 對外服務是否如預期回應。
+重點包含健康檢查、檔案上傳、任務查詢與排隊資訊，
+確保前端或外部系統呼叫時能得到正確且一致的結果。
 
-This module contains comprehensive unit tests covering:
-- GET /api/health - Health check
-- GET /api/config - System configuration
-- POST /api/upload - File upload
-- GET /api/tasks/{task_id} - Task status query
-- GET /api/tasks/{task_id}/result - Get processing result
-- DELETE /api/tasks/{task_id} - Cancel task
-- GET /api/queue/status - Queue status
-- GET /api/queue/position/{task_id} - Queue position query
+測試流程（給非技術同仁快速理解）：
+1) 先模擬後端依賴服務，避免測試誤傷真實環境。
+2) 依序驗證健康檢查、設定讀取、上傳、查詢、取消等端點。
+3) 對每個端點同時驗證「正常回應」與「失敗回應」。
+
+關鍵分支與錯誤情境：
+- 上傳檔案格式不支援、檔案過大、處理模式錯誤。
+- 雲端模式未配置 Gemini 金鑰。
+- 任務不存在、任務尚未完成、佇列滿載無法收件。
 """
 import os
 import sys
@@ -24,10 +26,10 @@ import pytest
 from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
-# Set DATA_DIR before importing backend modules
+# 每次測試使用獨立資料夾，避免互相污染。
 os.environ['DATA_DIR'] = tempfile.mkdtemp()
 
-# Add parent directory to path for imports
+# 加入專案根目錄到匯入路徑，確保可直接載入 backend/src 模組。
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.models.schemas import (

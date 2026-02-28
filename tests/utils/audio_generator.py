@@ -1,10 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Audio Generation Utility for Testing
+測試音檔產生工具。
 
-This module provides utilities to generate synthetic WAV audio files
-for deterministic testing of the Whisper transcription system.
+此模組用來建立可重現的 WAV 測試音訊（例如純音、靜音與白噪音），
+讓語音轉錄流程能在固定輸入下進行穩定驗證。
+
+流程說明（給非技術同仁快速理解）：
+1) 先依指定類型產生音訊樣本（tone/silence/noise/mixed）。
+2) 再把樣本封裝成 WAV 檔，提供測試直接使用。
+3) 透過 AudioGenerator 自動清除暫存檔，避免測試殘留。
+
+關鍵分支與錯誤情境：
+- content_type 支援 tone、silence、noise、mixed。
+- 若傳入未知 content_type，會明確拋出 ValueError。
+- 雜訊採固定亂數種子，確保每次測試結果可重現。
 """
 import math
 import random
@@ -39,7 +49,7 @@ def generate_sine_wave(
     for i in range(num_samples):
         t = i / sample_rate
         value = amplitude * math.sin(2 * math.pi * frequency * t)
-        # Convert to 16-bit integer
+        # 轉成 16-bit 整數，符合常見 WAV 儲存格式。
         sample = int(value * 32767)
         samples.append(sample)
     
@@ -77,7 +87,7 @@ def generate_white_noise(
     Returns:
         List of 16-bit integer samples
     """
-    # Use fixed seed for deterministic testing
+    # 固定亂數種子，讓測試每次產生相同白噪音內容。
     rng = random.Random(42)
     
     num_samples = int(duration * sample_rate)
@@ -139,9 +149,9 @@ def create_test_wav_file(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Generate samples based on content type
+    # 依指定內容類型建立樣本資料。
     if content_type == "tone":
-        # Generate 440Hz sine wave (A4 note)
+        # 產生 440Hz 純音（A4）作為標準訊號。
         samples = generate_sine_wave(440, duration, sample_rate)
     elif content_type == "silence":
         samples = generate_silence(duration, sample_rate)
@@ -157,17 +167,17 @@ def create_test_wav_file(
     else:
         raise ValueError(f"Unknown content_type: {content_type}")
     
-    # Write WAV file
+    # 將音訊樣本寫入 WAV 檔案。
     with wave.open(str(output_path), 'wb') as wav_file:
         wav_file.setnchannels(channels)
         wav_file.setsampwidth(sample_width)
         wav_file.setframerate(sample_rate)
         
-        # Pack samples as bytes
+        # 把整數樣本打包成二進位資料後寫入檔案。
         if channels == 1:
             packed_samples = struct.pack(f'<{len(samples)}h', *samples)
         else:
-            # For stereo, duplicate samples to both channels
+            # 雙聲道時，把同一批樣本複製到左右聲道。
             stereo_samples = []
             for s in samples:
                 stereo_samples.extend([s, s])
@@ -237,12 +247,12 @@ class AudioGenerator:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Clean up all generated files
+        # 清理本次產生的測試音檔。
         for file_path in self.generated_files:
             if file_path.exists():
                 file_path.unlink()
         
-        # Clean up temp directory if we created one
+        # 若本類別建立了暫存資料夾，也一併移除。
         if self._temp_dir and Path(self._temp_dir).exists():
             import shutil
             shutil.rmtree(self._temp_dir, ignore_errors=True)

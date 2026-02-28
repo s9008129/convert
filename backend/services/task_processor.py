@@ -1,6 +1,8 @@
 """
-MeetingScribe 任務處理器
-整合轉錄和摘要服務，執行完整處理流程
+任務處理協調器。
+
+負責把「上傳檔案 → 轉錄 → 摘要 → 儲存結果」串成完整流程，
+並將進度即時推送到前端畫面。
 """
 
 import asyncio
@@ -27,6 +29,7 @@ class TaskProcessor:
     """
     
     def __init__(self):
+        """初始化處理器狀態，記錄目前是否運行與當前正在處理的任務。"""
         self._running = False
         self._current_task: Optional[TaskInfo] = None
         
@@ -81,7 +84,7 @@ class TaskProcessor:
         log.info("任務處理器已停止")
     
     async def _process_task(self, task: TaskInfo):
-        """處理單一任務"""
+        """處理單一任務的完整生命週期，並在失敗時回寫錯誤狀態給前端。"""
         start_time = time.time()
         file_path = None
         
@@ -283,7 +286,7 @@ class TaskProcessor:
         return False
 
     def _format_result(self, task: TaskInfo, transcript: str, summary: str = None) -> str:
-        """格式化最終結果（含英文清理機制）"""
+        """整理最終輸出內容（含語言清理與結構保護），讓結果更容易閱讀。"""
         # 確保設備偵測已執行，避免顯示 unknown
         if not device_detector.current_device:
             device_detector.detect_best_device()

@@ -1,32 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-COSTAR-X Framework System Prompt 驗證測試
-
-針對 Gemma 3 27B QAT 4-bit 模型進行完整測試與優化。
-
-驗證項目：
-1. System Prompt 結構完整性
-   - XML 標籤配對正確性
-   - 必要標籤存在性
-   - 三明治夾擊法實作
-
-2. 針對 Gemma 3 27B QAT 4-bit 的優化
-   - 推理步驟清晰度 (Analyze → Filter → Structure → Refine)
-   - 輸出格式範例具體性
-   - Markdown 表格範例完整性
-
-3. 台灣政府機關公文風格
-   - 角色設定正確性
-   - 語氣約束正確性
-   - 繁體中文要求明確性
-
-4. 輸出品質驗證
-   - 會議概況區塊完整性
-   - 執行摘要字數限制
-   - 議題與決議結構正確性
-   - 待辦事項表格格式正確性
-   - 其他備註區塊存在性
+這份測試會確認摘要系統提示詞是否清楚、完整且一致。
+重點包含格式結構、語氣要求與輸出欄位規範，
+讓最終會議摘要更穩定貼近台灣公務文件使用情境。
 """
 import re
 import sys
