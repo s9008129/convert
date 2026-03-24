@@ -412,6 +412,7 @@ class TestTaskResultEndpoint:
             
             assert response.status_code == 200
             assert response.headers["content-type"] == "text/markdown; charset=utf-8"
+            assert response.headers["content-disposition"] == 'attachment; filename="test_audio_test1234.md"'
         finally:
             # Cleanup
             if os.path.exists(result_file):
@@ -457,6 +458,7 @@ class TestTaskResultEndpoint:
             assert response.headers["content-type"].startswith(
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
+            assert response.headers["content-disposition"] == 'attachment; filename="test_audio_test1234.docx"'
             assert os.path.exists(docx_file)
             fake_converter.convert.assert_called_once()
         finally:

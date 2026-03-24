@@ -106,8 +106,8 @@ services:
       - ../data/outputs:/app/data/outputs
       - ../data/cache:/app/data/cache
       - meetingscribe-whisper-models:/app/models
-      # 開發模式：前端檔案即時同步
-      - ../frontend:/app/frontend
+      # 部署模式：前端由映像提供，避免與後端/依賴版本漂移
+      # 需要即時同步前後端程式碼時，請改用 docker-compose.yml + override.yml
     
     # 允許連接主機網路（存取 Ollama）
     extra_hosts:

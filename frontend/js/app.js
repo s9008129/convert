@@ -73,6 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadConfig();
     await checkHealth();
     setupEventListeners();
+    setDownloadButtonsEnabled(false);
     
     // 定期檢查健康狀態
     setInterval(checkHealth, 30000);
@@ -278,56 +279,75 @@ function showError(message) {
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
     }
+
+    if (elements.resultSection) {
+        elements.resultSection.dataset.taskId = '';
+    }
+    setDownloadButtonsEnabled(false);
 }
 
-async function downloadResult() {
-    if (!state.taskId) return;
-    
-    try {
-        const response = await fetch(`/api/tasks/${state.taskId}/result`);
-        if (!response.ok) {
-            throw new Error('下載失敗');
+function setDownloadButtonsEnabled(enabled) {
+    [elements.downloadBtn, elements.downloadDocxBtn].forEach(button => {
+        if (button) {
+            button.disabled = !enabled;
         }
-        
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `會議記錄_${state.taskId}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        
+    });
+}
+
+function getActiveTaskId(actionLabel) {
+    const taskId = state.taskId || elements.resultSection?.dataset.taskId || '';
+    if (taskId) {
+        return taskId;
+    }
+
+    console.warn(`${actionLabel}失敗: taskId 未設定`);
+    alert('目前找不到可下載的任務，請重新整理頁面或重新處理檔案後再試。');
+    return null;
+}
+
+function buildTaskResultUrl(taskId, format = 'md') {
+    const query = format === 'docx' ? '?format=docx' : '';
+    return `/api/tasks/${encodeURIComponent(taskId)}/result${query}`;
+}
+
+function triggerTaskDownload(url) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.rel = 'noopener';
+    link.style.display = 'none';
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function downloadTaskResult(format = 'md') {
+    const isDocx = format === 'docx';
+    const actionLabel = isDocx ? 'DOCX 下載' : '下載';
+    const failurePrefix = isDocx ? 'DOCX 下載失敗' : '下載失敗';
+    const taskId = getActiveTaskId(actionLabel);
+    if (!taskId) {
+        return;
+    }
+
+    try {
+        // 直接交給瀏覽器請求下載端點，避免 await fetch 後失去使用者觸發下載權限。
+        setDownloadButtonsEnabled(false);
+        triggerTaskDownload(buildTaskResultUrl(taskId, format));
     } catch (error) {
-        console.error('下載失敗:', error);
-        alert('下載失敗，請重試');
+        console.error(`${failurePrefix}:`, error);
+        alert(error.message || `${failurePrefix}，請重試`);
+    } finally {
+        setDownloadButtonsEnabled(Boolean(state.taskId || elements.resultSection?.dataset.taskId));
     }
 }
 
-async function downloadDocxResult() {
-    if (!state.taskId) return;
+function downloadResult() {
+    downloadTaskResult('md');
+}
 
-    try {
-        const response = await fetch(`/api/tasks/${state.taskId}/result?format=docx`);
-        if (!response.ok) {
-            throw new Error('DOCX 下載失敗');
-        }
-
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `會議記錄_${state.taskId}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-
-    } catch (error) {
-        console.error('DOCX 下載失敗:', error);
-        alert('DOCX 下載失敗，請重試');
-    }
+function downloadDocxResult() {
+    downloadTaskResult('docx');
 }
 
 // WebSocket 心跳 - 使用獨立的 interval ID 以便清理
@@ -460,14 +480,23 @@ function showQueueStatus(result) {
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
     }
+    if (elements.resultSection) {
+        elements.resultSection.dataset.taskId = '';
+    }
+    setDownloadButtonsEnabled(false);
     
     const minutes = Math.ceil((result.estimated_wait_seconds || 0) / 60);
     updateQueueDisplay(result.queue_position, null, `預計等待: ${minutes} 分鐘`);
 }
 
 async function showResult(message) {
+    if (message && message.task_id) {
+        state.taskId = message.task_id;
+    }
+
     if (elements.resultSection) {
         elements.resultSection.style.display = 'block';
+        elements.resultSection.dataset.taskId = state.taskId || '';
     }
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
@@ -488,6 +517,8 @@ async function showResult(message) {
             elements.resultPreview.textContent = '已完成，請下載檔案查看詳細內容。';
         }
     }
+
+    setDownloadButtonsEnabled(Boolean(state.taskId));
 }
 
 function resetUI() {
@@ -516,10 +547,12 @@ function resetUI() {
     }
     if (elements.resultSection) {
         elements.resultSection.style.display = 'none';
+        elements.resultSection.dataset.taskId = '';
     }
     if (elements.errorSection) {
         elements.errorSection.style.display = 'none';
     }
+    setDownloadButtonsEnabled(false);
     
     // 重置進度
     if (elements.progressBar) {
@@ -667,6 +700,7 @@ function handleFile(file) {
     }
     
     // 上傳檔案
+    setDownloadButtonsEnabled(false);
     uploadFile(file);
 }
 

@@ -103,7 +103,8 @@ if exist "docker-compose-windows-gpu.yml" (
     nvidia-smi >nul 2>&1
     if not errorlevel 1 (
         echo [INFO] Starting with GPU support...
-        docker compose -f docker-compose-windows-gpu.yml up -d
+        echo [INFO] Rebuilding GPU image to keep frontend/backend/dependencies in sync...
+        docker compose -f docker-compose-windows-gpu.yml up -d --build
     ) else (
         echo [INFO] Starting without GPU...
         docker compose up -d
