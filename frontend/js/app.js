@@ -47,6 +47,7 @@ const elements = {
     resultPreview: document.getElementById('resultPreview'),
     copyBtn: document.getElementById('copyBtn'),
     downloadBtn: document.getElementById('downloadBtn'),
+    downloadDocxBtn: document.getElementById('downloadDocxBtn'),
     resetBtn: document.getElementById('resetBtn'),
     
     // 錯誤
@@ -301,6 +302,31 @@ async function downloadResult() {
     } catch (error) {
         console.error('下載失敗:', error);
         alert('下載失敗，請重試');
+    }
+}
+
+async function downloadDocxResult() {
+    if (!state.taskId) return;
+
+    try {
+        const response = await fetch(`/api/tasks/${state.taskId}/result?format=docx`);
+        if (!response.ok) {
+            throw new Error('DOCX 下載失敗');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `會議記錄_${state.taskId}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('DOCX 下載失敗:', error);
+        alert('DOCX 下載失敗，請重試');
     }
 }
 
@@ -560,6 +586,9 @@ function setupEventListeners() {
     }
     if (elements.downloadBtn) {
         elements.downloadBtn.addEventListener('click', downloadResult);
+    }
+    if (elements.downloadDocxBtn) {
+        elements.downloadDocxBtn.addEventListener('click', downloadDocxResult);
     }
     if (elements.resetBtn) {
         elements.resetBtn.addEventListener('click', resetUI);

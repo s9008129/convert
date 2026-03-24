@@ -145,10 +145,17 @@ async def get_task(task_id: str):
 
 
 @router.get("/tasks/{task_id}/result")
-async def get_task_result(task_id: str):
+async def get_task_result(task_id: str, format: str = "md"):
     """
-    取得處理結果（Markdown 檔案）
+    取得處理結果（支援 Markdown / DOCX）
     """
+    format = format.lower()
+    if format not in ("md", "docx"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支援的格式: {format}，僅支援 md 或 docx"
+        )
+
     task = task_queue.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"找不到任務: {task_id}")
@@ -168,11 +175,37 @@ async def get_task_result(task_id: str):
     
     if not os.path.exists(result_path):
         raise HTTPException(status_code=404, detail="結果檔案不存在")
-    
+
+    if format == "md":
+        return FileResponse(
+            result_path,
+            media_type="text/markdown",
+            filename=result_filename
+        )
+
+    from backend.services.docx_converter import docx_converter
+
+    docx_filename = f"{safe_base_name}_{task_id}.docx"
+    docx_path = os.path.join(settings.outputs_dir, docx_filename)
+
+    if not os.path.exists(docx_path) or (
+        os.path.getmtime(docx_path) < os.path.getmtime(result_path)
+    ):
+        try:
+            with open(result_path, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+            docx_converter.convert(md_content, docx_path)
+        except Exception as e:
+            log.error(f"[DOCX] 轉換失敗: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"DOCX 轉換失敗: {str(e)}"
+            )
+
     return FileResponse(
-        result_path,
-        media_type="text/markdown",
-        filename=result_filename
+        docx_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=docx_filename
     )
 
 

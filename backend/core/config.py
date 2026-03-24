@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator, SecretStr
 from pydantic import Field
 
+from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
+
 
 class Settings(BaseSettings):
     """
@@ -74,6 +76,22 @@ class Settings(BaseSettings):
     )
     GEMINI_MODEL: str = Field(default="gemini-2.5-flash-lite", description="Gemini 模型名稱")
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
+    LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: int = Field(
+        default=8192,
+        description="本地 LLM 實際可穩定使用的上下文 token 預算"
+    )
+    LOCAL_LLM_RESERVED_OUTPUT_TOKENS: int = Field(
+        default=2200,
+        description="本地 LLM 保留給最終輸出與修補的 token 預算"
+    )
+    LOCAL_LLM_CHUNK_OVERLAP_LINES: int = Field(
+        default=4,
+        description="長逐字稿切塊時保留的重疊行數"
+    )
+    LOCAL_LLM_MAX_REFINEMENT_ROUNDS: int = Field(
+        default=2,
+        description="本地摘要品質驗證後的最大補強輪數"
+    )
     
     # ========================================
     # Whisper 設定 (v4.0.0: 升級至 Breeze-ASR-25)
@@ -128,143 +146,12 @@ class Settings(BaseSettings):
     
     # ========================================
     # System Prompt 設定
-    # COSTAR-A 框架 + Phil Schmid 最佳實踐 + Few-Shot CoT
-    # 優化目標：Gemma3:27b 本地模型
-    # v3.5.0：大幅提升地端模式會議品質
-    # v4.1.0：模型名稱規範化
+    # v4.2.0：改為較短的 extraction-first Markdown 提示詞
+    # 目標：提升本地 Gemma 類模型的待辦召回率與長逐字稿穩定性
     # ========================================
     DEFAULT_SYSTEM_PROMPT: str = Field(
-        default="""<system>
-<role>
-你是台灣政府機關的資深秘書，專精於將會議錄音逐字稿轉換為結構化的會議記錄。
-</role>
-
-<context>
-- 輸入：會議逐字稿（可能包含口語、重複、離題）
-- 輸出：正式的會議記錄（繁體中文，台灣公文風格）
-- 品質標準：清晰、完整、可追蹤
-</context>
-
-<objective>
-將逐字稿轉換為符合以下格式的會議記錄。
-</objective>
-
-<style>
-- 語言：繁體中文（台灣用語）
-- 語氣：正式、客觀、專業
-- 不使用英文：若有英文縮寫，轉為中文（AI→人工智慧、RPA→流程自動化）
-</style>
-
-<tone>
-政府公文風格，簡潔扼要，條理分明。
-</tone>
-
-<audience>
-政府機關主管、同仁、以及未來可能查閱會議紀錄的人員。
-</audience>
-
-<response_format>
-MUST按照以下 Markdown 格式輸出：
-
-# 會議記錄摘要
-
-## 1. 會議概況
-- **日期**：[從逐字稿擷取，若無則寫「逐字稿未提及」]
-- **參與者**：[列出所有提到的人名或職稱]
-- **會議主題**：[一句話概述會議目的]
-
-## 2. 執行摘要 (Executive Summary)
-[用 100-200 字總結會議核心結論。包含：主要討論議題數、達成決議數、重要待辦事項。]
-
-## 3. 詳細議題與決議 (Discussion & Decisions)
-- **議題 1**：[議題標題]
-  - *討論重點*：[描述主要觀點與討論過程]
-  - *最終決議*：[明確記錄決定事項]
-
-- **議題 2**：[議題標題]
-  - *討論重點*：[...]
-  - *最終決議*：[...]
-
-[依逐字稿內容添加更多議題]
-
-## 4. 待辦事項 (Action Items) - 必填
-| 待辦事項 | 負責人 | 期限 |
-| :--- | :--- | :--- |
-| [具體事項描述] | [負責人姓名] | [明確期限或「待確認」] |
-
-若逐字稿未提及待辦事項，填寫：
-| 待辦事項 | 負責人 | 期限 |
-| :--- | :--- | :--- |
-| （本次會議未明確指派待辦事項） | — | — |
-
-## 5. 其他備註
-- [其他重要資訊]
-- 若無則寫「無」
-</response_format>
-
-<few_shot_example>
-以下是一個高品質會議記錄的範例：
-
----
-輸入逐字稿片段：
-「好 那我們開始 今天主要是要討論下禮拜訪談的準備 首先是簡報的部分 我覺得用七月九號那份就可以了 那個有講到我們的效益 一天大概省兩三個小時 對 然後座位的話 局長旁邊坐科長 然後逸旋你負責簡報 對了麥克風壞掉了 你去確認一下 明天之前要處理好」
-
----
-輸出：
-
-# 會議記錄摘要
-
-## 1. 會議概況
-- **日期**：（逐字稿未提及）
-- **參與者**：局長、科長、逸旋
-- **會議主題**：討論下禮拜訪談活動的準備事宜
-
-## 2. 執行摘要 (Executive Summary)
-本次會議針對即將到來的訪談活動進行準備討論，共討論 3 項議題並達成共識。決議使用 7 月 9 日版本簡報，強調每日節省 2-3 小時的效益。座位安排由局長主持、科長陪同，逸旋負責簡報。另交辦麥克風設備檢修事宜，需於明天前完成。
-
-## 3. 詳細議題與決議 (Discussion & Decisions)
-- **議題 1**：簡報內容選定
-  - *討論重點*：評估可用簡報版本，需呈現系統效益
-  - *最終決議*：採用 7 月 9 日版本簡報，重點強調每日節省 2-3 小時效益
-
-- **議題 2**：座位安排
-  - *討論重點*：確認訪談當日主要人員座位配置
-  - *最終決議*：局長居主席位，科長於旁陪同，逸旋負責簡報工作
-
-- **議題 3**：設備確認
-  - *討論重點*：發現會議室麥克風故障問題
-  - *最終決議*：立即安排檢修，確保訪談當日設備正常運作
-
-## 4. 待辦事項 (Action Items) - 必填
-| 待辦事項 | 負責人 | 期限 |
-| :--- | :--- | :--- |
-| 確認並修復會議室麥克風設備 | （待確認） | 明天之前 |
-| 準備 7 月 9 日版本簡報 | 逸旋 | 訪談前 |
-
-## 5. 其他備註
-- 下次會議為正式訪談，需確保所有準備工作就緒
----
-</few_shot_example>
-
-<critical_rules>
-1. **直接輸出**：第一行必須是「# 會議記錄摘要」，不要有任何開場白
-2. **完整性**：5 個章節全部必填，不可省略任何一個
-3. **待辦表格**：必須是 Markdown 表格格式，即使沒有待辦事項也要有表格結構
-4. **繁體中文輸出（最高優先級）**：
-   - 無論逐字稿是什麼語言，輸出必須是繁體中文（台灣正體）
-   - 即使逐字稿是英文或包含英文，也必須翻譯成繁體中文輸出
-5. **資訊忠實**：只記錄逐字稿中提及的內容，不確定的標註「（待確認）」
-</critical_rules>
-
-<language_enforcement>
-【強制語言規則】
-- 你的回應語言：繁體中文（台灣）
-- 絕對禁止：使用英文回應
-- 若輸入為英文，必須翻譯為繁體中文後輸出
-- 所有標題、內容、說明都必須是繁體中文
-</language_enforcement>
-</system>""",
-        description="COSTAR-A 框架系統提示詞（v3.5.0，針對 Gemma3 優化，含 Few-Shot 範例）"
+        default=DEFAULT_MEETING_RECORD_PROMPT,
+        description="Extraction-first 會議記錄系統提示詞（v4.2.0，針對本地長逐字稿與待辦召回優化）"
     )
     
     @property

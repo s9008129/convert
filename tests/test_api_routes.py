@@ -16,6 +16,7 @@ This module contains comprehensive unit tests covering:
 import os
 import sys
 import io
+import types
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -415,6 +416,82 @@ class TestTaskResultEndpoint:
             # Cleanup
             if os.path.exists(result_file):
                 os.remove(result_file)
+
+    def test_get_result_invalid_format(self, test_client):
+        """Test getting result with unsupported format."""
+        response = test_client.get("/api/tasks/test1234/result?format=pdf")
+
+        assert response.status_code == 400
+        assert "不支援的格式" in response.json()["detail"]
+
+    def test_get_result_docx_success(self, test_client, mock_services, sample_task_info):
+        """Test successful DOCX result retrieval."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        fake_module = types.ModuleType("backend.services.docx_converter")
+        fake_converter = MagicMock()
+
+        def fake_convert(md_content, output_path):
+            assert "# 會議記錄" in md_content
+            with open(output_path, 'wb') as f:
+                f.write(b"fake docx")
+            return output_path
+
+        fake_converter.convert.side_effect = fake_convert
+        fake_module.docx_converter = fake_converter
+
+        try:
+            with patch.dict(sys.modules, {"backend.services.docx_converter": fake_module}):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            assert os.path.exists(docx_file)
+            fake_converter.convert.assert_called_once()
+        finally:
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_get_result_docx_conversion_failure(self, test_client, mock_services, sample_task_info):
+        """Test DOCX conversion failure is reported as 500."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        fake_module = types.ModuleType("backend.services.docx_converter")
+        fake_converter = MagicMock()
+        fake_converter.convert.side_effect = RuntimeError("boom")
+        fake_module.docx_converter = fake_converter
+
+        try:
+            with patch.dict(sys.modules, {"backend.services.docx_converter": fake_module}):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 500
+            assert "DOCX 轉換失敗" in response.json()["detail"]
+        finally:
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
 
 
 # =============================================================================

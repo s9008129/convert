@@ -40,6 +40,9 @@ loguru==0.7.2
 # 音訊處理
 ffmpeg-python==0.2.0
 
+# DOCX 文件生成
+python-docx>=0.8.11
+
 # CUDA 支援（如果可用）
 # nvidia-cublas-cu12
 # nvidia-cudnn-cu12

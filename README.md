@@ -52,6 +52,7 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 - ✅ **Whisper 轉錄層優化**：修正 `initial_prompt` 污染問題，避免指令混入逐字稿
 - ✅ **Prompt Engineering 重構**：移除 XML 標籤，改用 Markdown 格式，提升地端模型遵循度
 - ✅ **Ollama API 參數優化**：擴大上下文視窗、增加重複懲罰、設定停止標記
+- ✅ **DOCX 下載功能**：處理完成後可下載 Markdown 或 DOCX 版本會議記錄
 - ✅ **輸出後處理機制**：清理 LLM 無用前綴，確保結構完整性
 - ✅ **完整品質比對報告**：詳見 [地端雲端會議記錄品質比對報告](doc/地端雲端會議記錄品質比對報告.md)
 
@@ -302,7 +303,7 @@ bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 | `/api/config` | GET | 取得系統配置 | 無 |
 | `/api/upload` | POST | 上傳音訊/視訊檔案 | 無 |
 | `/api/tasks/{task_id}` | GET | 查詢任務狀態 | 無 |
-| `/api/tasks/{task_id}/result` | GET | 下載結果（Markdown） | 無 |
+| `/api/tasks/{task_id}/result` | GET | 下載結果（預設 Markdown，支援 `?format=docx`） | 無 |
 | `/api/queue/status` | GET | 排隊狀態 | 無 |
 | `/api/storage/stats` | GET | 儲存空間使用統計 | 無 |
 | `/api/storage/cleanup` | POST | 手動觸發檔案清理 | 無 |

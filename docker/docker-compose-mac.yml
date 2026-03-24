@@ -76,7 +76,7 @@ services:
       # Whisper 轉錄設定
       # macOS Docker 不支援 MPS，使用 CPU 模式
       # ========================================
-      - WHISPER_MODEL=medium
+      - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
       - WHISPER_DEVICE=cpu
       
       # ========================================
