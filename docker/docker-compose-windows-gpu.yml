@@ -74,9 +74,10 @@ services:
       
       # ========================================
       # 本地模式設定（Ollama - 連接主機）
+      # v4.1.0: 使用標準模型名稱，支援舊別名自動解析
       # ========================================
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LOCAL_LLM_MODEL=gemma3:27b-it-qat
+      - LOCAL_LLM_MODEL=gemma3:27b
       
       # ========================================
       # Whisper 轉錄設定 (v4.0.0: Breeze-ASR-25)
@@ -139,14 +140,25 @@ services:
 networks:
   meetingscribe-network:
     driver: bridge
-    external: true
+    name: meetingscribe-network
+    # 獨立的 IP 範圍，避免與其他專案衝突
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.0.0/16
+          gateway: 172.30.0.1
+    labels:
+      - "com.meetingscribe.project=meetingscribe"
 
 # ========================================
 # 持久化存儲
 # ========================================
 volumes:
   meetingscribe-whisper-models:
-    external: true
+    driver: local
+    name: meetingscribe-whisper-models
+    labels:
+      - "com.meetingscribe.project=meetingscribe"
 
 # ============================================================
 # Windows RTX 4090 部署檢查清單：

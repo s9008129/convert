@@ -137,10 +137,10 @@ ollama --version
 5. **下載推薦模型**（一次性，首次啟動時自動進行）：
 
 ```powershell
-ollama pull gemma3:27b-it-qat
+ollama pull gemma3:27b
 ```
 
-> 💡 **什麼是 Gemma3:27b-it-qat？**
+> 💡 **什麼是 Gemma3:27b？**
 > - 這是一個針對繁體中文優化的 AI 模型
 > - 下載大小約 16GB（需要約 20GB+ 硬碟空間）
 > - 首次下載需要 15-30 分鐘（取決於網路速度）
@@ -209,7 +209,7 @@ Copy-Item .env.example .env
 | `MAX_CONCURRENT_TASKS` | 1 | 同時處理的任務數 | ✅ 按 GPU 記憶體調整 |
 | `QUEUE_MAX_SIZE` | 50 | 排隊佇列最大長度 | ❌ 通常保留 50 |
 | `OLLAMA_BASE_URL` | http://host.docker.internal:11434 | Ollama 連接地址 | ❌ Windows 預設正確 |
-| `LOCAL_LLM_MODEL` | gemma3:27b-it-qat | 使用的 LLM 模型 | ❌ 推薦保留 |
+| `LOCAL_LLM_MODEL` | gemma3:27b | 使用的 LLM 模型 | ❌ 推薦保留 |
 
 **推薦配置（RTX 4090）：**
 
@@ -220,7 +220,7 @@ ENABLE_BATCH_UPLOAD=false
 MAX_CONCURRENT_TASKS=1
 QUEUE_MAX_SIZE=50
 OLLAMA_BASE_URL=http://host.docker.internal:11434
-LOCAL_LM_MODEL=gemma3:27b-it-qat
+LOCAL_LM_MODEL=gemma3:27b
 LOG_LEVEL=INFO
 DEFAULT_MODE=local
 WHISPER_MODEL=medium
@@ -451,7 +451,7 @@ $response
 下載模型：
 
 ```powershell
-ollama pull gemma3:27b-it-qat
+ollama pull gemma3:27b
 ```
 
 ### 問題 4️⃣：檔案上傳失敗

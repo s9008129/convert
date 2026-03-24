@@ -40,7 +40,10 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:11434",
         description="Ollama 服務端點"
     )
-    LOCAL_LLM_MODEL: str = Field(default="gemma3:27b-it-qat", description="本地 LLM 模型名稱")
+    LOCAL_LLM_MODEL: str = Field(
+        default="gemma3:27b",
+        description="本地 LLM 模型名稱 (v4.1.0: 移除 -it-qat 後綴，使用標準模型名)"
+    )
     
     # LM Studio 設定（OpenAI 相容 API）
     LMSTUDIO_BASE_URL: str = Field(
@@ -126,8 +129,9 @@ class Settings(BaseSettings):
     # ========================================
     # System Prompt 設定
     # COSTAR-A 框架 + Phil Schmid 最佳實踐 + Few-Shot CoT
-    # 優化目標：Gemma3:27b-it-qat 本地模型
+    # 優化目標：Gemma3:27b 本地模型
     # v3.5.0：大幅提升地端模式會議品質
+    # v4.1.0：模型名稱規範化
     # ========================================
     DEFAULT_SYSTEM_PROMPT: str = Field(
         default="""<system>

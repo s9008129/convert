@@ -62,6 +62,7 @@ def mock_services():
         
         # Setup summarization_service mock
         mock_summary.check_ollama_health = AsyncMock(return_value=True)
+        mock_summary.check_lmstudio_health = AsyncMock(return_value=False)
         mock_summary.check_gemini_available.return_value = False
         
         # Setup task_queue mock

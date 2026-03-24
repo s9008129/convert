@@ -52,13 +52,20 @@ try {
     $ollamaResponse = Invoke-RestMethod -Uri "http://localhost:11434/api/tags" -TimeoutSec 5 2>$null
     Write-Host "   ✅ Ollama 運行中" -ForegroundColor Green
     
-    # 檢查 Gemma3:12B 模型
-    $hasGemma = $ollamaResponse.models | Where-Object { $_.name -like "*gemma*" }
-    if ($hasGemma) {
-        Write-Host "   ✅ Gemma 模型已安裝" -ForegroundColor Green
+    # v4.1.0: 檢查可用模型並驗證配置模型
+    $models = $ollamaResponse.models | ForEach-Object { $_.name }
+    $hasGemma3 = $models | Where-Object { $_ -like "gemma3:*" }
+    
+    if ($hasGemma3) {
+        Write-Host "   ✅ Gemma3 模型已安裝: $($hasGemma3 -join ', ')" -ForegroundColor Green
     } else {
-        Write-Host "   ⚠️ Gemma 模型未安裝" -ForegroundColor Yellow
-        Write-Host "      執行：ollama pull gemma3:12b" -ForegroundColor Gray
+        Write-Host "   ⚠️ Gemma3 模型未安裝" -ForegroundColor Yellow
+        Write-Host "      執行：ollama pull gemma3:27b" -ForegroundColor Gray
+    }
+    
+    # 顯示所有可用模型
+    if ($models) {
+        Write-Host "      可用模型: $($models -join ', ')" -ForegroundColor Gray
     }
 } catch {
     Write-Host "   ❌ Ollama 未啟動或無法連接" -ForegroundColor Red

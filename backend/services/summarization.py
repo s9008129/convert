@@ -38,6 +38,10 @@ class SummarizationService:
             "ttl_seconds": 86400  # 24 小時快取
         }
         
+        # v4.1.0: 模型解析結果與錯誤暫存
+        self._resolved_model: Optional[str] = None
+        self._ollama_model_error: Optional[str] = None
+        
     async def _get_ollama_client(self) -> httpx.AsyncClient:
         """取得 Ollama HTTP 客戶端"""
         if not self._ollama_client:
@@ -161,6 +165,9 @@ class SummarizationService:
             log.info("使用 LM Studio 本地模式")
             return await self._summarize_with_lmstudio(system_prompt, user_message, progress_callback)
         
+        if self._ollama_model_error:
+            raise RuntimeError(self._ollama_model_error)
+        
         # 都不可用，拋出錯誤
         raise RuntimeError("本地 LLM 不可用：請確認 Ollama 或 LM Studio 已啟動")
     
@@ -196,10 +203,14 @@ class SummarizationService:
             # - top_k 64: Google 官方推薦
             # - repeat_penalty 1.1: 減少重複輸出
             # - keep_alive "0": 生成完成後立即卸載模型，釋放 VRAM
+            # v4.1.0: 使用解析後的有效模型名稱
+            effective_model = self._get_effective_model()
+            log.info(f"使用模型: {effective_model}")
+            
             response = await client.post(
                 "/api/chat",
                 json={
-                    "model": settings.LOCAL_LLM_MODEL,
+                    "model": effective_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
@@ -234,12 +245,38 @@ class SummarizationService:
                 log.warning("Ollama 摘要生成結果為空")
                 raise RuntimeError("摘要生成失敗：結果為空")
             
-            log.info(f"Ollama 摘要生成成功，模型: {settings.LOCAL_LLM_MODEL}，VRAM 將自動釋放")
+            log.info(f"Ollama 摘要生成成功，模型: {effective_model}，VRAM 將自動釋放")
             return summary
             
         except httpx.ConnectError:
             log.error("無法連接到 Ollama 服務，請確認 Ollama 是否正在運行")
             raise RuntimeError("Ollama 服務不可用，請確認 Ollama 是否正在運行")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                # 模型未找到 - 提供詳細錯誤訊息
+                effective_model = self._get_effective_model()
+                error_msg = f"模型 '{effective_model}' 未找到。"
+                
+                # 嘗試取得可用模型列表
+                try:
+                    tags_response = await client.get("/api/tags")
+                    if tags_response.status_code == 200:
+                        data = tags_response.json()
+                        available_models = [model.get("name") for model in data.get("models", [])]
+                        if available_models:
+                            error_msg += f"\n\n可用模型: {', '.join(available_models)}"
+                            error_msg += f"\n\n建議執行: {self._build_ollama_pull_command(settings.LOCAL_LLM_MODEL)}"
+                        else:
+                            error_msg += "\n\n目前沒有已安裝的模型。"
+                            error_msg += f"\n\n建議執行: {self._build_ollama_pull_command(settings.LOCAL_LLM_MODEL)}"
+                except:
+                    pass
+                
+                log.error(error_msg)
+                raise RuntimeError(error_msg)
+            else:
+                log.error(f"Ollama API 錯誤: HTTP {e.response.status_code}")
+                raise
         except Exception as e:
             log.error(f"Ollama 摘要生成失敗: {e}")
             raise
@@ -367,13 +404,175 @@ class SummarizationService:
             raise
     
     async def check_ollama_health(self) -> bool:
-        """檢查 Ollama 服務是否可用"""
+        """
+        檢查 Ollama 服務是否可用
+        v4.1.0: 增強檢查 - 同時驗證配置的模型是否存在
+        """
         try:
             client = await self._get_ollama_client()
             response = await client.get("/api/tags")
-            return response.status_code == 200
-        except Exception:
+            if response.status_code != 200:
+                self._ollama_model_error = None
+                return False
+            
+            # v4.1.0: 驗證配置的模型是否真實存在
+            data = response.json()
+            models = data.get("models", [])
+            
+            # 取得可用模型名稱列表
+            available_models = [model.get("name") for model in models if model.get("name")]
+            
+            # 檢查配置的模型是否存在
+            configured_model = settings.LOCAL_LLM_MODEL
+            if configured_model not in available_models:
+                log.warning(f"配置的模型 '{configured_model}' 未找到")
+                log.info(f"可用模型: {', '.join(available_models)}")
+                
+                # 嘗試自動解析相容模型
+                resolved_model = self._resolve_compatible_model(configured_model, available_models)
+                if resolved_model:
+                    log.info(f"自動解析到相容模型: {resolved_model}")
+                    # 暫存解析結果（不修改配置文件）
+                    self._resolved_model = resolved_model
+                    self._ollama_model_error = None
+                    return True
+                else:
+                    self._resolved_model = None
+                    self._ollama_model_error = self._build_missing_model_message(
+                        configured_model,
+                        available_models
+                    )
+                    log.error(self._ollama_model_error)
+                    return False
+            
+            # 模型存在，清除任何舊的解析結果
+            self._resolved_model = None
+            self._ollama_model_error = None
+            return True
+            
+        except Exception as e:
+            log.error(f"Ollama 健康檢查失敗: {e}")
+            self._ollama_model_error = None
             return False
+    
+    @staticmethod
+    def _canonicalize_ollama_model_name(model_name: str) -> str:
+        """將舊別名或常見變體正規化為較穩定的模型名稱。"""
+        model_name = model_name.strip()
+        if not model_name:
+            return model_name
+        
+        if model_name.endswith(":latest"):
+            model_name = model_name[:-7]
+        
+        if ":" not in model_name:
+            return model_name
+        
+        family, variant = model_name.split(":", 1)
+        variant = re.sub(r"-it-(qat|q\d+(?:_\d+)?)$", "", variant)
+        variant = re.sub(r"-(q\d+(?:_\d+)?|fp\d+)$", "", variant)
+        return f"{family}:{variant}"
+    
+    def _resolve_compatible_model(self, configured_model: str, available_models: list) -> Optional[str]:
+        """
+        智能解析相容模型
+        
+        規則：
+        1. gemma3:27b-it-qat → gemma3:27b（移除量化後綴）
+        2. gemma3:* → gemma3:27b 或 gemma3:latest（優先選擇相同基礎模型）
+        3. 回退到任何可用的 gemma3 變體
+        
+        Args:
+            configured_model: 配置的模型名稱
+            available_models: 可用模型列表
+            
+        Returns:
+            解析到的模型名稱，若無則返回 None
+        """
+        configured_model = configured_model.strip()
+        actual_models = [model.strip() for model in available_models if model]
+        if not configured_model or not actual_models:
+            return None
+        
+        normalized_to_actual = {
+            self._canonicalize_ollama_model_name(model): model
+            for model in actual_models
+        }
+        
+        normalized_configured = self._canonicalize_ollama_model_name(configured_model)
+        if normalized_configured in normalized_to_actual:
+            resolved = normalized_to_actual[normalized_configured]
+            log.info(f"解析策略 1 成功: {configured_model} → {resolved}")
+            return resolved
+        
+        if ":" in normalized_configured:
+            family, variant = normalized_configured.split(":", 1)
+        else:
+            family, variant = normalized_configured, ""
+        
+        # 策略 2: 相同家族 + 相同基礎模型前綴
+        base_candidate = f"{family}:{variant}" if variant else family
+        prefix_matches = [
+            model for model in actual_models
+            if self._canonicalize_ollama_model_name(model).startswith(base_candidate)
+        ]
+        if prefix_matches:
+            resolved = sorted(prefix_matches, key=len)[0]
+            log.info(f"解析策略 2 成功: {configured_model} → {resolved}")
+            return resolved
+        
+        # 策略 3: 同家族 latest 是安全的通用回退
+        latest_candidate = f"{family}:latest"
+        if latest_candidate in actual_models:
+            log.info(f"解析策略 3 成功: {configured_model} → {latest_candidate}")
+            return latest_candidate
+        
+        # 策略 4: 找到任何同家族的模型（優先選擇參數接近的）
+        family_models = [m for m in actual_models if self._canonicalize_ollama_model_name(m).startswith(f"{family}:")]
+        if family_models:
+            # 優先選擇參數量接近的模型
+            if "27b" in variant or "20b" in variant:
+                for model in family_models:
+                    if "27b" in model or "20b" in model or "32b" in model:
+                        log.info(f"解析策略 4 成功: {configured_model} → {model}")
+                        return model
+            
+            # 回退到第一個同家族模型
+            log.info(f"解析策略 4 (回退) 成功: {configured_model} → {family_models[0]}")
+            return family_models[0]
+        
+        # 無法解析
+        log.warning(f"無法解析 {configured_model}，無相容模型")
+        return None
+    
+    def _build_ollama_pull_command(self, configured_model: str) -> str:
+        """為錯誤訊息提供較安全、可執行的模型安裝指令。"""
+        canonical_model = self._canonicalize_ollama_model_name(configured_model)
+        if canonical_model.startswith("gemma3:"):
+            return "ollama pull gemma3:27b"
+        return f"ollama pull {canonical_model}"
+    
+    def _build_missing_model_message(self, configured_model: str, available_models: list[str]) -> str:
+        """建立清楚的模型不存在錯誤訊息。"""
+        lines = [f"設定的 Ollama 模型 '{configured_model}' 不存在。"]
+        if available_models:
+            lines.append("")
+            lines.append(f"可用模型: {', '.join(available_models)}")
+            lines.append("")
+            lines.append("建議處理方式：")
+            lines.append(f"1. 將 LOCAL_LLM_MODEL 改為現有模型（例如 {available_models[0]}）")
+            lines.append(f"2. 或在主機執行：{self._build_ollama_pull_command(configured_model)}")
+        else:
+            lines.append("")
+            lines.append("目前 Ollama 尚未安裝任何模型。")
+            lines.append(f"建議先在主機執行：{self._build_ollama_pull_command(configured_model)}")
+        return "\n".join(lines)
+    
+    def _get_effective_model(self) -> str:
+        """
+        取得有效的模型名稱（若有解析結果則使用解析結果）
+        """
+        return getattr(self, '_resolved_model', None) or settings.LOCAL_LLM_MODEL
     
     async def check_lmstudio_health(self) -> bool:
         """檢查 LM Studio 服務是否可用"""

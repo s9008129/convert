@@ -115,7 +115,7 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
    ```bash
-   ollama pull gemma3:27b-it-qat
+   ollama pull gemma3:27b
    ```
 3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
 
@@ -134,6 +134,14 @@ deploy.bat up
 # 3. 開啟瀏覽器
 # 訪問 http://localhost:9527
 ```
+
+> 💡 **GPU 自動偵測**：
+> 
+> `deploy.bat` 會自動偵測您的系統是否有 NVIDIA GPU：
+> - **有 GPU**：自動使用 `docker-compose-windows-gpu.yml` 進行 CUDA 加速
+> - **無 GPU**：使用標準 `docker-compose.yml`，以 CPU 模式運行
+> 
+> 無需手動選擇，一個指令即可完成！
 
 > ⚠️ **Windows PowerShell 執行策略問題**？
 > 
@@ -225,7 +233,7 @@ services:
 | `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
 | `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
 | `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
-| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b-it-qat | ollama 支援的任何模型 |
+| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b | ollama 支援的任何模型 |
 
 ### 服務管理腳本
 
@@ -241,8 +249,14 @@ scripts\restart-service.ps1
 # 健康檢查
 scripts\health-check.bat
 
-# 部署工具
+# 部署工具（自動偵測 GPU）
 scripts\deploy.bat [build|up|down|restart|status|logs]
+
+# GPU 偵測說明：
+# - deploy.bat 會自動檢測 NVIDIA GPU
+# - 有 GPU：自動使用 GPU 加速版本
+# - 無 GPU：自動使用 CPU 版本
+# - 無需手動指定配置文件
 ```
 
 #### Windows （PowerShell - 舊版本）
