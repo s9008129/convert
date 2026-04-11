@@ -15,6 +15,10 @@ NC='\033[0m' # No Color
 # 取得腳本所在目錄
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ENV_LOCAL_PATH="$PROJECT_ROOT/.env.local"
+DEFAULT_OLLAMA_MODEL="gemma4:31b"
+MAC_OLLAMA_MODEL="$DEFAULT_OLLAMA_MODEL"
+MAC_MODEL_OVERRIDE_SOURCE=""
 
 # 專案名稱（確保隔離）
 export COMPOSE_PROJECT_NAME="meetingscribe"
@@ -48,6 +52,52 @@ error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
+# 移除 .env 類設定中常見的包覆引號，避免模型名稱夾帶字面引號
+strip_wrapping_quotes() {
+    local value="$1"
+
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+        value="${value#\"}"
+        value="${value%\"}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+        value="${value#\'}"
+        value="${value%\'}"
+    fi
+
+    printf '%s' "$value"
+}
+
+# 載入 macOS 本地覆蓋設定，確保 compose 重新啟動時沿用 LOCAL_LLM_MODEL_MAC
+load_local_overrides() {
+    if [ -n "${LOCAL_LLM_MODEL_MAC:-}" ]; then
+        MAC_OLLAMA_MODEL="$LOCAL_LLM_MODEL_MAC"
+        MAC_MODEL_OVERRIDE_SOURCE="環境變數 LOCAL_LLM_MODEL_MAC"
+        return
+    fi
+
+    if [ -f "$ENV_LOCAL_PATH" ]; then
+        info "載入 macOS 本地覆蓋設定 (.env.local)..."
+        while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+            line="${raw_line%$'\r'}"
+            case "$line" in
+                ''|'#'*) continue ;;
+            esac
+
+            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                value="${BASH_REMATCH[2]}"
+                value="$(strip_wrapping_quotes "$value")"
+                export "$key=$value"
+            fi
+        done < "$ENV_LOCAL_PATH"
+    fi
+
+    if [ -n "${LOCAL_LLM_MODEL_MAC:-}" ]; then
+        MAC_OLLAMA_MODEL="$LOCAL_LLM_MODEL_MAC"
+        MAC_MODEL_OVERRIDE_SOURCE=".env.local"
+    fi
+}
+
 # 顯示其他 Docker 服務狀態
 show_other_services() {
     info "其他 Docker 服務狀態（不會受到影響）："
@@ -63,6 +113,12 @@ safe_restart() {
     echo ""
     
     show_other_services
+    if [ -n "$MAC_MODEL_OVERRIDE_SOURCE" ]; then
+        info "使用 macOS 覆蓋模型: $MAC_OLLAMA_MODEL ($MAC_MODEL_OVERRIDE_SOURCE)"
+    else
+        info "使用預設 Gemma4 模型: $MAC_OLLAMA_MODEL"
+    fi
+    echo ""
     
     info "正在停止 MeetingScribe 服務..."
     docker compose -p meetingscribe -f docker/docker-compose-mac.yml down
@@ -125,6 +181,7 @@ safe_restart() {
 
 # 主程式
 main() {
+    load_local_overrides
     safe_restart
 }
 

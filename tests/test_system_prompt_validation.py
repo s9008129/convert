@@ -87,6 +87,9 @@ class TestPromptContract:
         assert "（待確認）" in prompt, f"[{source_name}] 應要求模糊資訊標示為（待確認）"
         assert "不得補寫" in prompt or "不得捏造" in prompt, \
             f"[{source_name}] 應明確要求忠於逐字稿"
+        assert "簡體中文" in prompt, f"[{source_name}] 應明確禁止簡體中文漂移"
+        assert "<think>" in prompt or "<thought>" in prompt, \
+            f"[{source_name}] 應明確禁止 thought tag 洩漏"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_contains_required_sections(self, source_name: str, prompt: str):
@@ -152,6 +155,7 @@ class TestPromptConsistency:
             "再整理",
             "專有名詞",
             "（待確認）",
+            "簡體中文",
             "# 會議記錄摘要",
             "## 4. 待辦事項 (Action Items) - 必填",
         ]

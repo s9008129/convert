@@ -495,6 +495,48 @@ class TestTaskResultEndpoint:
                 if os.path.exists(path):
                     os.remove(path)
 
+    def test_get_result_docx_import_failure(self, test_client, mock_services, sample_task_info):
+        """Test DOCX import failure (missing python-docx) is reported as 500."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        # Simulate the module being missing entirely so the import inside
+        # the route handler raises ImportError.
+        import importlib
+        saved = sys.modules.pop("backend.services.docx_converter", None)
+
+        def _raise_import(name, *a, **kw):
+            if name == "backend.services.docx_converter":
+                raise ImportError("No module named 'docx'")
+            return original_import(name, *a, **kw)
+
+        import builtins
+        original_import = builtins.__import__
+
+        try:
+            # Remove cached module so the in-function import re-executes
+            sys.modules.pop("backend.services.docx_converter", None)
+            with patch("builtins.__import__", side_effect=_raise_import):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 500
+            body = response.json()
+            assert "python-docx" in body["detail"] or "DOCX" in body["detail"]
+        finally:
+            if saved is not None:
+                sys.modules["backend.services.docx_converter"] = saved
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
+
 
 # =============================================================================
 # Cancel Task Endpoint Tests

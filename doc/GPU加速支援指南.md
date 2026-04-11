@@ -105,8 +105,8 @@ RUN apt-get update && \
 **問題二：VRAM 資源競爭**
 
 ```
-Whisper medium 模型需要 ~3GB VRAM
-Ollama gemma3:27b 模型需要 ~18GB VRAM
+Whisper Breeze-ASR-25 模型需要 ~2-3GB VRAM
+Ollama gemma4:31b（或相容 q4 標籤）模型需要約 ~20GB VRAM
 RTX 4090 總共 24GB VRAM
 
 如果兩者同時載入，VRAM 不足導致：

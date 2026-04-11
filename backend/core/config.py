@@ -43,8 +43,8 @@ class Settings(BaseSettings):
         description="Ollama 服務端點"
     )
     LOCAL_LLM_MODEL: str = Field(
-        default="gemma3:27b",
-        description="本地 LLM 模型名稱 (v4.1.0: 移除 -it-qat 後綴，使用標準模型名)"
+        default="gemma4:31b",
+        description="本地 LLM 模型名稱（預設 gemma4 家族；必要時可由環境變數覆蓋為較小或量化變體）"
     )
     
     # LM Studio 設定（OpenAI 相容 API）
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
         description="本地 LLM 實際可穩定使用的上下文 token 預算"
     )
     LOCAL_LLM_RESERVED_OUTPUT_TOKENS: int = Field(
-        default=2200,
+        default=3072,
         description="本地 LLM 保留給最終輸出與修補的 token 預算"
     )
     LOCAL_LLM_CHUNK_OVERLAP_LINES: int = Field(

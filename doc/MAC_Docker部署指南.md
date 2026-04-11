@@ -140,10 +140,12 @@ Ollama 安裝完成後，我們需要下載會議摘要使用的 AI 模型。
 打開 **終端機**，輸入以下指令：
 
 ```bash
-ollama pull gemma3:12b
+ollama pull gemma4:31b
 ```
 
-> ⏳ **請耐心等待**：這個模型大約 8GB，下載時間視您的網路速度而定（可能需要 10-30 分鐘）
+> ⏳ **請耐心等待**：`gemma4:31b` 約 19GB，下載時間視您的網路速度而定（可能需要 15-40 分鐘）
+>
+> 💡 **小記憶體 Mac 建議**：若記憶體不足，可先在專案根目錄建立 `.env.local`，加入 `LOCAL_LLM_MODEL_MAC=gemma4:26b`（或其他較小 Gemma4 標籤），再執行 `ollama pull` 下載該標籤。`start-mac.sh` / `restart-mac.sh` 會自動讀取此設定。
 
 ### ✅ 驗證安裝
 
@@ -153,7 +155,7 @@ ollama pull gemma3:12b
 ollama list
 ```
 
-您應該會看到 `gemma3:12b` 出現在列表中。
+您應該會看到 `gemma4:31b`，或您在 `.env.local` 指定的 `gemma4:*` 標籤出現在列表中。
 
 ---
 
@@ -248,9 +250,11 @@ docker ps
 
 4. **下載結果**
    - 處理完成後，您可以：
-   - 直接在網頁上檢視會議記錄
-   - 複製文字到剪貼簿
    - 下載 Markdown 檔案
+   - 下載 DOCX 檔案
+   - 點擊「重新開始」處理下一份檔案
+
+> ℹ️ 目前結果頁不再內嵌預覽；若下載失敗，頁面會直接顯示錯誤原因。
 
 ### 💡 使用技巧
 
@@ -290,7 +294,8 @@ docker ps
 
 1. 確認 Ollama 正在運行（狀態列有圖示）
 2. 在終端機執行 `ollama list` 確認模型已下載
-3. 如果沒有模型，執行 `ollama pull gemma3:12b`
+3. 如果沒有模型，執行 `ollama pull gemma4:31b`
+4. 若 Mac 記憶體較小，改在 `.env.local` 設定 `LOCAL_LLM_MODEL_MAC=gemma4:26b`（或其他較小 Gemma4 標籤），並下載同一標籤
 
 ### ❓ Q4: 處理速度很慢？
 

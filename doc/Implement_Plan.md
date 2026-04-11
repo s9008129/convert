@@ -24,6 +24,8 @@
 | 會議記錄格式遵從性 | 格式不一致 | 100% 遵循指定格式 | 5 次測試格式完全正確 |
 | 跨平台參數化 | 設定分散 | 一個設定檔，全平台通用 | 設定檔驗證通過 |
 
+> **2026-04 現況補充**：本地預設模型已改為 `gemma4:31b`，並以 `tests\亞洲無人機AI創新應用研發中心.m4a` 完成 Windows 11 + RTX 4090 + Ollama 的 E2E 驗證；macOS 透過 `LOCAL_LLM_MODEL_MAC` 保留較小 Gemma4 標籤的覆寫路徑，前端結果頁則改為僅保留 Markdown / DOCX 下載。
+
 ---
 
 ## 🏗️ 技術架構總覽
@@ -48,9 +50,9 @@
     │                                   │
     ▼                                   ▼
 ┌─────────────────┐              ┌─────────────────┐
-│ Gemma3-27B      │              │ Gemma3-27B      │  ← 優化！8-bit + 參數調整
-│ (4-bit QAT)     │              │ (8-bit 非 QAT)  │
-│ temp: 0.1       │              │ temp: 0.7       │
+│ Gemma3-27B      │              │ Gemma4-31B      │  ← 現況：Gemma4 + Gemma4 標籤自動解析
+│ (歷史配置)      │              │ (預設 / q4 相容)│
+│ temp: 0.1       │              │ temp: 0.2       │
 └─────────────────┘              └─────────────────┘
     │                                   │
     ▼                                   ▼
@@ -131,16 +133,17 @@ no_speech_threshold: float = 0.6
 
 | 項目 | 現況 | 升級後 |
 |------|------|--------|
-| 模型 | `gemma3:27b-it-qat` | `gemma3:27b-it-qat` (維持) |
-| 量化 | 4-bit QAT | 4-bit QAT (維持) |
-| temperature | 0.1 | 0.5 |
+| 模型 | `gemma3:27b-it-qat` | `gemma4:31b` |
+| 量化 | 4-bit QAT | 依已安裝 Gemma4 標籤自動解析 |
+| temperature | 0.1 | 0.2（最終摘要） |
 | top_k | 未設定 | 64 |
 | top_p | 未設定 | 0.95 |
-| repeat_penalty | 未設定 | 1.1 |
-| num_ctx | 32768 | 32768 |
+| repeat_penalty | 未設定 | 1.08 |
+| num_ctx | 32768 | 8192 |
+| max_output_tokens | 未設定 | 3072 |
 | VRAM 需求 | ~20GB | ~20GB |
 
-> ⚠️ **深度檢查發現**：8-bit 版本 (gemma3:27b-it-q8_0) 需要 ~30GB VRAM，超過 RTX 4090 的 24GB。維持 QAT 版本是正確選擇，問題在於參數設定而非量化方式。
+> ⚠️ **現況修正**：專案已統一改為 `gemma4:31b`，Windows / RTX 4090 可直接驗證；若 Ollama 實際安裝的是 `gemma4:31b-it-q4_K_M` 等 Gemma4 標籤，後端會自動解析並使用，macOS 則可透過 `LOCAL_LLM_MODEL_MAC` 覆寫較小模型。
 
 ### 2.2 程式碼變更
 
@@ -151,11 +154,13 @@ no_speech_threshold: float = 0.6
 ```yaml
 llm:
   ollama:
-    model: "gemma3:27b-it-qat"     # 維持 QAT 版本
-    temperature: 0.5                # 從 0.1 調整
-    top_k: 64                       # 新增
-    top_p: 0.95                     # 新增
-    repeat_penalty: 1.1             # 新增
+    model: "gemma4:31b"
+    num_ctx: 8192
+    temperature: 0.2                # 最終摘要；程式內另有 extraction / merge / refine 低溫控制
+    top_k: 64
+    top_p: 0.95
+    repeat_penalty: 1.08
+    max_output_tokens: 3072
 ```
 
 #### `backend/services/summarization.py`
@@ -190,7 +195,7 @@ config/
 │   ├── asr/
 │   │   └── breeze-asr-25.yaml
 │   └── llm/
-│       └── gemma3-27b.yaml
+│       └── gemma4-31b.yaml
 └── prompts/
     └── meeting_summary.yaml
 ```
@@ -341,7 +346,7 @@ Week 4: 整合測試與上線
 | 元件 | VRAM 需求 | 運行時機 |
 |------|-----------|----------|
 | Breeze-ASR-25 (INT8) | ~2GB | 轉錄階段 |
-| Gemma3-27B (QAT, Q4_0) | ~20GB | 摘要階段 |
+| Gemma4-31B（預設 / 相容 q4 標籤） | ~20GB | 摘要階段 |
 | 系統保留 | ~2GB | 持續 |
 | **總計** | ~22GB | - |
 | **剩餘** | ~2GB | 緩衝空間 |

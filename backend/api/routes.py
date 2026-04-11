@@ -183,8 +183,6 @@ async def get_task_result(task_id: str, format: str = "md"):
             filename=result_filename
         )
 
-    from backend.services.docx_converter import docx_converter
-
     docx_filename = f"{safe_base_name}_{task_id}.docx"
     docx_path = os.path.join(settings.outputs_dir, docx_filename)
 
@@ -192,9 +190,17 @@ async def get_task_result(task_id: str, format: str = "md"):
         os.path.getmtime(docx_path) < os.path.getmtime(result_path)
     ):
         try:
+            from backend.services.docx_converter import docx_converter
+
             with open(result_path, 'r', encoding='utf-8') as f:
                 md_content = f.read()
             docx_converter.convert(md_content, docx_path)
+        except ImportError as e:
+            log.error(f"[DOCX] python-docx 未安裝或匯入失敗: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="DOCX 轉換功能無法使用（缺少 python-docx 套件）"
+            )
         except Exception as e:
             log.error(f"[DOCX] 轉換失敗: {e}")
             raise HTTPException(

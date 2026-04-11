@@ -44,8 +44,6 @@ const elements = {
     
     // 結果
     resultSection: document.getElementById('resultSection'),
-    resultPreview: document.getElementById('resultPreview'),
-    copyBtn: document.getElementById('copyBtn'),
     downloadBtn: document.getElementById('downloadBtn'),
     downloadDocxBtn: document.getElementById('downloadDocxBtn'),
     resetBtn: document.getElementById('resetBtn'),
@@ -310,18 +308,7 @@ function buildTaskResultUrl(taskId, format = 'md') {
     return `/api/tasks/${encodeURIComponent(taskId)}/result${query}`;
 }
 
-function triggerTaskDownload(url) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.rel = 'noopener';
-    link.style.display = 'none';
-
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-function downloadTaskResult(format = 'md') {
+async function downloadTaskResult(format = 'md') {
     const isDocx = format === 'docx';
     const actionLabel = isDocx ? 'DOCX 下載' : '下載';
     const failurePrefix = isDocx ? 'DOCX 下載失敗' : '下載失敗';
@@ -330,10 +317,39 @@ function downloadTaskResult(format = 'md') {
         return;
     }
 
+    setDownloadButtonsEnabled(false);
     try {
-        // 直接交給瀏覽器請求下載端點，避免 await fetch 後失去使用者觸發下載權限。
-        setDownloadButtonsEnabled(false);
-        triggerTaskDownload(buildTaskResultUrl(taskId, format));
+        const url = buildTaskResultUrl(taskId, format);
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            let errorMsg = `${failurePrefix}（HTTP ${response.status}）`;
+            try {
+                const errJson = await response.json();
+                if (errJson.detail) {
+                    errorMsg = errJson.detail;
+                }
+            } catch (_) { /* non-JSON error body */ }
+            alert(errorMsg);
+            return;
+        }
+
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+        const filename = filenameMatch
+            ? filenameMatch[1]
+            : (isDocx ? 'result.docx' : 'result.md');
+
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
     } catch (error) {
         console.error(`${failurePrefix}:`, error);
         alert(error.message || `${failurePrefix}，請重試`);
@@ -343,11 +359,11 @@ function downloadTaskResult(format = 'md') {
 }
 
 function downloadResult() {
-    downloadTaskResult('md');
+    return downloadTaskResult('md');
 }
 
 function downloadDocxResult() {
-    downloadTaskResult('docx');
+    return downloadTaskResult('docx');
 }
 
 // WebSocket 心跳 - 使用獨立的 interval ID 以便清理
@@ -504,19 +520,6 @@ async function showResult(message) {
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
     }
-    
-    if (elements.resultPreview) {
-        // 如果有預覽內容，顯示前 2000 字
-        if (message.preview) {
-            const maxLength = 2000;
-            const preview = message.preview.length > maxLength 
-                ? message.preview.substring(0, maxLength) + '...\n\n（更多內容請下載完整檔案）'
-                : message.preview;
-            elements.resultPreview.textContent = preview;
-        } else {
-            elements.resultPreview.textContent = '已完成，請下載檔案查看詳細內容。';
-        }
-    }
 
     setDownloadButtonsEnabled(Boolean(state.taskId));
 }
@@ -614,9 +617,6 @@ function setupEventListeners() {
     }
     
     // 操作按鈕
-    if (elements.copyBtn) {
-        elements.copyBtn.addEventListener('click', copyResult);
-    }
     if (elements.downloadBtn) {
         elements.downloadBtn.addEventListener('click', downloadResult);
     }
@@ -702,17 +702,6 @@ function handleFile(file) {
     // 上傳檔案
     setDownloadButtonsEnabled(false);
     uploadFile(file);
-}
-
-function copyResult() {
-    if (elements.resultPreview) {
-        const text = elements.resultPreview.textContent;
-        navigator.clipboard.writeText(text).then(() => {
-            alert('已複製到剪貼板');
-        }).catch(err => {
-            console.error('複製失敗:', err);
-        });
-    }
 }
 
 

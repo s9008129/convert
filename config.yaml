@@ -11,14 +11,14 @@ llm:
     # Ollama 服務位址（預設本地）
     base_url: "http://localhost:11434"
     
-    # 使用的模型 (v4.1.0: 使用標準模型名稱)
+    # 使用的模型（預設切換為 gemma4 家族；mac 可在 compose / .env.local 覆蓋較小標籤）
     # 推薦選項：
-    #   - gemma3:27b         台灣繁體中文優化，推薦首選
-    #   - gemma3:latest      最新版本
+    #   - gemma4:31b         共用預設，若只安裝 q4 變體可交由後端自動解析
+    #   - gemma4:31b-it-q4_K_M  Windows / RTX 4090 常見實用安裝變體
     #   - mistral-small3.2:latest  小型高效模型
     #   - qwen2.5:7b         中文優化
     #   - llama3.1:8b        平衡速度與品質
-    model: "gemma3:27b"
+    model: "gemma4:31b"
     
     # 有效上下文視窗大小（token 數）
     # Gemma 類本地模型實測以 8192 較穩定；更長逐字稿應交由分塊流程處理
@@ -29,12 +29,12 @@ llm:
     # 長逐字稿需要更多時間處理
     timeout: 600
     
-    # 生成參數 (v4.2.0 優化)
-    temperature: 0.2       # 偏低溫度，提高抽取穩定性
+    # 生成參數（Gemma4 建議值；實際 extraction / merge / refine 由後端流程分階段控制）
+    temperature: 0.2       # 最終摘要建議溫度
     top_k: 64              # v4.0.0 新增 - Google 推薦
     top_p: 0.95            # v4.0.0 新增 - Google 推薦
-    repeat_penalty: 1.1    # v4.0.0 新增 - 減少重複
-    max_output_tokens: 4096   # 最終輸出預留長度
+    repeat_penalty: 1.08   # Gemma4 本地摘要降低重複
+    max_output_tokens: 3072   # 最終輸出 / refine 預留長度
 
 # ===== Whisper 語音轉錄設定 (v4.0.0 升級至 Breeze-ASR-25) =====
 whisper:
@@ -93,6 +93,7 @@ system_prompt: |
   - 輸出以繁體中文（台灣用語）為主，語氣正式、客觀、精準。
   - 專有名詞、產品名、英文縮寫若影響準確性可保留，必要時可附中文說明，不要為了硬性翻譯而犧牲忠實度。
   - 不要輸出任何前言、解釋、推理過程或客套話。
+  - 嚴禁輸出簡體中文、<think> / <thought> / <details>、XML/HTML 標籤或 Markdown code fence。
 
   輸出前請自查：
   - 五個章節都存在且順序正確。

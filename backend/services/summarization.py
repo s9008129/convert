@@ -36,7 +36,7 @@ class LocalContextPlan:
 class SummarizationService:
     """
     LLM 摘要生成服務
-    支援本地模式（Ollama + Gemma3:12B）、LM Studio（gpt-oss-20b）和雲端模式（Gemini API）
+    支援本地模式（Ollama + Gemma4）、LM Studio（gpt-oss-20b）和雲端模式（Gemini API）
     """
 
     LOCAL_EXTRACTION_PROMPT = """你是會議逐字稿資訊萃取助理。你的任務只有一個：盡量完整抽取事實，不要直接寫成最終會議記錄。
@@ -70,7 +70,8 @@ class SummarizationService:
 - 寧可多保留明確資訊，也不要漏掉交辦、期限、數字或責任人。
 - 待辦清單要盡量拆細；設備、人力、場勘、新聞稿、餐盒、飲料、拍照流程等可獨立追蹤的工作請分列，不要合併成籠統大項。
 - 專有名詞、產品名、英文縮寫若影響準確性可保留。
-- 不要加入逐字稿未提及的內容，不要輸出前言。"""
+- 不要加入逐字稿未提及的內容，不要輸出前言。
+- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
 
     LOCAL_NOTES_MERGE_PROMPT = """你要合併多份「萃取筆記」，產出一份資訊最完整、去除重複的整合版筆記。
 
@@ -79,7 +80,8 @@ class SummarizationService:
 - 同一待辦若重複出現可合併，但不同工作項目不可硬併成一列。
 - 若資訊互相矛盾，請保留在「待確認資訊」。
 - 仍然使用原本的「# 萃取筆記」Markdown 結構輸出。
-- 不要寫成最終會議記錄。"""
+- 不要寫成最終會議記錄。
+- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
 
     def __init__(self):
         self._ollama_client: Optional[httpx.AsyncClient] = None
@@ -362,6 +364,12 @@ class SummarizationService:
         if len(cleaned) < 250:
             issues.append("摘要內容過短")
 
+        if self._contains_simplified_chinese(cleaned):
+            issues.append("出現簡體中文漂移")
+
+        if self._contains_non_markdown_leakage(summary) or self._contains_non_markdown_leakage(cleaned):
+            issues.append("包含思考標籤或非 Markdown 洩漏內容")
+
         expected_actions = self._extract_action_item_keys(extracted_notes)
         actual_actions = self._extract_action_item_keys(cleaned)
         missing_actions = expected_actions - actual_actions
@@ -369,6 +377,29 @@ class SummarizationService:
             issues.append(f"待辦事項遺漏 {len(missing_actions)} 項")
 
         return issues
+
+    @staticmethod
+    def _contains_simplified_chinese(text: str) -> bool:
+        """偵測常見簡體字漂移，交由 refine 流程要求重寫。"""
+        if not text:
+            return False
+
+        simplified_only_chars = "为会体们动办务发叶号启实对开当录总应数术样气没点产监着类统网规让议话这进项"
+        return any(char in text for char in simplified_only_chars)
+
+    @staticmethod
+    def _contains_non_markdown_leakage(text: str) -> bool:
+        """偵測思考標籤、HTML/XML 或多餘 code fence。"""
+        if not text:
+            return False
+
+        leakage_patterns = [
+            r"<(?:think|thought|details)\b",
+            r"</(?:think|thought|details)>",
+            r"<[/!]?[A-Za-z][^>]*>",
+            r"```",
+        ]
+        return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in leakage_patterns)
 
     @staticmethod
     def _empty_extraction_notes() -> str:
@@ -427,6 +458,7 @@ class SummarizationService:
 - 不要把多個不同待辦合併成單一籠統項目；可分列追蹤者請拆成多列
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤
 
 萃取筆記：
 {extracted_notes}"""
@@ -448,7 +480,12 @@ class SummarizationService:
 {current_summary}
 
 請重新參考以下萃取筆記，完整重寫最終會議記錄：
-{extracted_notes}"""
+{extracted_notes}
+
+額外要求：
+- 全文必須使用繁體中文（台灣用語）
+- 只能輸出最終 Markdown
+- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence"""
 
     def _build_direct_summary_message(self, transcript: str) -> str:
         """雲端模式直接摘要訊息。"""
@@ -459,6 +496,7 @@ class SummarizationService:
 - 專有名詞、產品名、英文縮寫若影響準確性可保留
 - 不要遺漏明確待辦、日期、責任人、數字與最終決議
 - 只輸出最終 Markdown
+- 不要輸出簡體中文、<think>、<thought>、<details>、XML/HTML 標籤或 code fence
 
 逐字稿：
 {transcript}"""
@@ -674,9 +712,9 @@ class SummarizationService:
         """
         使用 Ollama 本地模式生成摘要
 
-        v4.0.0 改進：
-        - 更新生成參數：temperature 0.5, top_k 64, top_p 0.95
-        - 新增 repeat_penalty 1.1 減少重複
+        v4.2.1 改進：
+        - Gemma4 預設參數：top_k 64、top_p 0.95、repeat_penalty 1.08
+        - 維持 8192 context 預設，避免把高風險視窗擴大成全域預設
         - 維持 keep_alive=0 確保 VRAM 釋放
 
         v3.5.2 改進：
@@ -705,12 +743,12 @@ class SummarizationService:
                     "keep_alive": "0",  # v3.5.2: 關鍵！使用完畢後立即釋放 VRAM
                     "options": {
                         "temperature": temperature,
-                        "top_p": 0.9,
-                        "top_k": 40,
-                        "repeat_penalty": 1.05,
+                        "top_p": 0.95,
+                        "top_k": 64,
+                        "repeat_penalty": 1.08,
                         "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
                         "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                        "stop": ["</details>", "---\n\n---"]  # 停止標記
+                        "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
                     }
                 },
                 timeout=600.0
@@ -770,6 +808,7 @@ class SummarizationService:
         """
         清理模型輸出中的常見問題
         - 移除 LLM 常加的前綴（「好的，我來整理...」）
+        - 移除 Gemma4 可能輸出的 thought blocks / HTML 標籤
         - 移除 Markdown code fence
         - 若模型在前面加了解釋，嘗試定位到第一個標題
         """
@@ -788,9 +827,24 @@ class SummarizationService:
         ]
 
         cleaned = summary.strip()
+        cleaned = re.sub(
+            r"<(?:think|thought|details)\b[^>]*>.*?</(?:think|thought|details)>",
+            "",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        cleaned = re.sub(
+            r"^\s*</?(?:think|thought|details)[^>]*>\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
         for pattern in prefixes_to_remove:
             cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
+        cleaned = re.sub(r"^\s*```(?:markdown)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\n?```$", "", cleaned.strip(), flags=re.IGNORECASE | re.MULTILINE)
+        cleaned = re.sub(r"</?(?:think|thought|details)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
         if not cleaned.startswith("#"):
             match = re.search(r"^#\s", cleaned, re.MULTILINE)
@@ -956,18 +1010,50 @@ class SummarizationService:
             return model_name
 
         family, variant = model_name.split(":", 1)
-        variant = re.sub(r"-it-(qat|q\d+(?:_\d+)?)$", "", variant)
-        variant = re.sub(r"-(q\d+(?:_\d+)?|fp\d+)$", "", variant)
+        variant = re.sub(r"-it-(?:qat|q\d+(?:[_A-Za-z0-9]+)*)$", "", variant, flags=re.IGNORECASE)
+        variant = re.sub(r"-(?:q\d+(?:[_A-Za-z0-9]+)*|fp\d+)$", "", variant, flags=re.IGNORECASE)
         return f"{family}:{variant}"
+
+    def _select_preferred_model(self, configured_model: str, candidates: list[str]) -> Optional[str]:
+        """在候選模型中挑選最接近設定、且對 Gemma4 友善的變體。"""
+        if not candidates:
+            return None
+
+        configured_model = configured_model.strip()
+        normalized_configured = self._canonicalize_ollama_model_name(configured_model)
+        normalized_family = normalized_configured.split(":", 1)[0]
+
+        def score(model_name: str) -> tuple[int, int]:
+            normalized_model = self._canonicalize_ollama_model_name(model_name)
+            score = 0
+            if model_name == configured_model:
+                score += 1000
+            if normalized_model == normalized_configured:
+                score += 700
+            if normalized_model.startswith(normalized_configured):
+                score += 400
+            if normalized_model.startswith(f"{normalized_family}:"):
+                score += 200
+            if model_name.endswith(":latest"):
+                score -= 50
+            if normalized_family == "gemma4" and normalized_configured == "gemma4:31b":
+                lowered = model_name.lower()
+                if lowered == "gemma4:31b-it-q4_k_m":
+                    score += 180
+                elif re.search(r"^gemma4:31b(?:-it)?-q4", lowered):
+                    score += 120
+            return score, -len(model_name)
+
+        return max(candidates, key=score)
 
     def _resolve_compatible_model(self, configured_model: str, available_models: list) -> Optional[str]:
         """
         智能解析相容模型
 
         規則：
-        1. gemma3:27b-it-qat → gemma3:27b（移除量化後綴）
-        2. gemma3:* → gemma3:27b 或 gemma3:latest（優先選擇相同基礎模型）
-        3. 回退到任何可用的 gemma3 變體
+        1. 先正規化量化/別名後綴（例如 gemma4:31b-it-q4_K_M → gemma4:31b）
+        2. 優先選擇同一基礎模型；Gemma4 31B 若有 q4 變體則優先採用
+        3. 其次回退到同家族 latest 或其他同家族變體
 
         Args:
             configured_model: 配置的模型名稱
@@ -981,14 +1067,13 @@ class SummarizationService:
         if not configured_model or not actual_models:
             return None
 
-        normalized_to_actual = {
-            self._canonicalize_ollama_model_name(model): model
-            for model in actual_models
-        }
-
         normalized_configured = self._canonicalize_ollama_model_name(configured_model)
-        if normalized_configured in normalized_to_actual:
-            resolved = normalized_to_actual[normalized_configured]
+        canonical_matches = [
+            model for model in actual_models
+            if self._canonicalize_ollama_model_name(model) == normalized_configured
+        ]
+        if canonical_matches:
+            resolved = self._select_preferred_model(configured_model, canonical_matches)
             log.info(f"解析策略 1 成功: {configured_model} → {resolved}")
             return resolved
 
@@ -1004,7 +1089,7 @@ class SummarizationService:
             if self._canonicalize_ollama_model_name(model).startswith(base_candidate)
         ]
         if prefix_matches:
-            resolved = sorted(prefix_matches, key=len)[0]
+            resolved = self._select_preferred_model(configured_model, prefix_matches)
             log.info(f"解析策略 2 成功: {configured_model} → {resolved}")
             return resolved
 
@@ -1017,16 +1102,9 @@ class SummarizationService:
         # 策略 4: 找到任何同家族的模型（優先選擇參數接近的）
         family_models = [m for m in actual_models if self._canonicalize_ollama_model_name(m).startswith(f"{family}:")]
         if family_models:
-            # 優先選擇參數量接近的模型
-            if "27b" in variant or "20b" in variant:
-                for model in family_models:
-                    if "27b" in model or "20b" in model or "32b" in model:
-                        log.info(f"解析策略 4 成功: {configured_model} → {model}")
-                        return model
-
-            # 回退到第一個同家族模型
-            log.info(f"解析策略 4 (回退) 成功: {configured_model} → {family_models[0]}")
-            return family_models[0]
+            preferred = self._select_preferred_model(configured_model, family_models)
+            log.info(f"解析策略 4 成功: {configured_model} → {preferred}")
+            return preferred
 
         # 無法解析
         log.warning(f"無法解析 {configured_model}，無相容模型")
@@ -1035,8 +1113,8 @@ class SummarizationService:
     def _build_ollama_pull_command(self, configured_model: str) -> str:
         """為錯誤訊息提供較安全、可執行的模型安裝指令。"""
         canonical_model = self._canonicalize_ollama_model_name(configured_model)
-        if canonical_model.startswith("gemma3:"):
-            return "ollama pull gemma3:27b"
+        if canonical_model.startswith("gemma4:"):
+            return "ollama pull gemma4:31b"
         return f"ollama pull {canonical_model}"
 
     def _build_missing_model_message(self, configured_model: str, available_models: list[str]) -> str:

@@ -75,26 +75,26 @@ def _complete_summary() -> str:
 - 無"""
 
 
-def test_resolve_compatible_model_legacy_alias_to_standard_model():
+def test_resolve_compatible_model_prefers_gemma4_q4_variant_for_same_base_model():
     service = SummarizationService()
 
     resolved = service._resolve_compatible_model(
-        "gemma3:27b-it-qat",
-        ["gemma3:27b", "mistral-small3.2:latest"]
+        "gemma4:31b",
+        ["gemma4:31b-it-q4_K_M", "mistral-small3.2:latest"]
     )
 
-    assert resolved == "gemma3:27b"
+    assert resolved == "gemma4:31b-it-q4_K_M"
 
 
 def test_resolve_compatible_model_prefers_same_family_latest():
     service = SummarizationService()
 
     resolved = service._resolve_compatible_model(
-        "gemma3:27b-it-qat",
-        ["gemma3:latest", "mistral-small3.2:latest"]
+        "gemma4:31b",
+        ["gemma4:latest", "mistral-small3.2:latest"]
     )
 
-    assert resolved == "gemma3:latest"
+    assert resolved == "gemma4:latest"
 
 
 @pytest.mark.asyncio
@@ -102,16 +102,16 @@ async def test_check_ollama_health_uses_resolved_model(monkeypatch):
     service = SummarizationService()
     fake_client = Mock()
     fake_client.get = AsyncMock(
-        return_value=_build_tags_response(["gemma3:27b", "mistral-small3.2:latest"])
+        return_value=_build_tags_response(["gemma4:31b-it-q4_K_M", "mistral-small3.2:latest"])
     )
 
-    monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma3:27b-it-qat")
+    monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma4:31b")
     monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=fake_client))
 
     healthy = await service.check_ollama_health()
 
     assert healthy is True
-    assert service._get_effective_model() == "gemma3:27b"
+    assert service._get_effective_model() == "gemma4:31b-it-q4_K_M"
     assert service._ollama_model_error is None
 
 
@@ -123,7 +123,7 @@ async def test_check_ollama_health_reports_clear_model_error(monkeypatch):
         return_value=_build_tags_response(["mistral-small3.2:latest"])
     )
 
-    monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma3:27b-it-qat")
+    monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma4:31b")
     monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=fake_client))
 
     healthy = await service.check_ollama_health()
@@ -131,9 +131,9 @@ async def test_check_ollama_health_reports_clear_model_error(monkeypatch):
     assert healthy is False
     assert service._resolved_model is None
     assert service._ollama_model_error is not None
-    assert "gemma3:27b-it-qat" in service._ollama_model_error
+    assert "gemma4:31b" in service._ollama_model_error
     assert "mistral-small3.2:latest" in service._ollama_model_error
-    assert "ollama pull gemma3:27b" in service._ollama_model_error
+    assert "ollama pull gemma4:31b" in service._ollama_model_error
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ def test_build_local_context_plan_assumes_effective_8192_window(monkeypatch):
     transcript = "王主任：請在下週前完成測試。\n" * 600
 
     monkeypatch.setattr(settings, "LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS", 8192)
-    monkeypatch.setattr(settings, "LOCAL_LLM_RESERVED_OUTPUT_TOKENS", 2200)
+    monkeypatch.setattr(settings, "LOCAL_LLM_RESERVED_OUTPUT_TOKENS", 3072)
 
     plan = service._build_local_context_plan(transcript, settings.DEFAULT_SYSTEM_PROMPT)
 
@@ -210,6 +210,40 @@ def test_validate_summary_quality_accepts_complete_summary():
     issues = service._validate_summary_quality(_complete_summary(), _notes_with_two_actions())
 
     assert issues == []
+
+
+def test_clean_ollama_output_removes_gemma4_thought_block():
+    service = SummarizationService()
+    raw_output = """<think>
+先想一下格式
+</think>
+
+# 會議記錄摘要
+
+## 1. 會議概況
+- **日期**：113年3月1日
+"""
+
+    cleaned = service._clean_ollama_output(raw_output)
+
+    assert "<think>" not in cleaned
+    assert cleaned.startswith("# 會議記錄摘要")
+
+
+def test_validate_summary_quality_flags_simplified_and_non_markdown_leakage():
+    service = SummarizationService()
+    leaked_summary = """<think>推理中</think>
+
+# 会议记录摘要
+
+## 1. 會議概況
+- **日期**：113年3月1日
+"""
+
+    issues = service._validate_summary_quality(leaked_summary, _notes_with_two_actions())
+
+    assert "出現簡體中文漂移" in issues
+    assert "包含思考標籤或非 Markdown 洩漏內容" in issues
 
 
 @pytest.mark.asyncio

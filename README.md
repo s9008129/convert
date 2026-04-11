@@ -1,8 +1,8 @@
-# MeetingScribe v3.4.1
+# MeetingScribe v3.5.0
 
 <div align="center">
 
-![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.4.1-blue?style=for-the-badge)
+![MeetingScribe Logo](https://img.shields.io/badge/MeetingScribe-v3.5.0-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.11+-green?style=flat-square&logo=python)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
@@ -18,6 +18,14 @@
 ## 🎯 簡介
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
+
+### 🆕 近期更新：Gemma4 本地模式 + DOCX 下載修復 + 結果頁精簡
+
+- ✅ **本地模式預設改為 `gemma4:31b`**：Windows / RTX 4090 已完成實機驗證；若只安裝 `gemma4:31b-it-q4_K_M` 等相容標籤，後端會自動解析
+- ✅ **台灣繁體中文摘要再優化**：沿用 extraction → merge → refine 管線，強化繁中約束、移除 thought tags，並降低簡繁體誤判
+- ✅ **DOCX 下載問題根因修復**：前端改用 `fetch` + `blob`，後端補上 `python-docx` ImportError 處理，不再出現只拿到 JSON 錯誤內容
+- ✅ **結果頁改為純下載流程**：移除內嵌 Markdown 預覽與複製按鈕，完成後僅保留下載 Markdown / DOCX
+- ✅ **macOS 路徑保留支援**：可透過 `.env.local` 的 `LOCAL_LLM_MODEL_MAC` 覆寫較小的 Gemma4 標籤
 
 ### 🆕 v3.4.1 簡化設計：完全移除自訂格式功能
 
@@ -87,14 +95,14 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 ### 核心特點
 
 - 🇹🇼 **台灣繁體中文**：轉錄輸出為台灣正體中文，非簡體
-- 🔒 **多種本地 LLM**：支援 Ollama (Gemma3:27b-it-qat)、LM Studio (gpt-oss-20b)，完全離線，資料不外傳
+- 🔒 **多種本地 LLM**：支援 Ollama（預設 `gemma4:31b`，可自動解析已安裝的 Gemma4 相容標籤）、LM Studio (`gpt-oss-20b`)，完全離線，資料不外傳
 - ☁️ **雲端模式**：使用 Gemini API，高品質摘要輸出，適合一般會議
 - 🛡️ **完全隔離**：獨立網路和命名空間，絕對不影響其他 Docker 服務
 - 🖥️ **智能偵測**：自動偵測 CUDA GPU、Apple MPS、CPU，資源不足時自動降級
 - 📊 **排隊系統**：支援多用戶同時使用，FIFO 公平排隊，前端即時顯示進度
 - 🧹 **自動清理**：上傳檔保留 1 天、輸出保留 7 天、快取保留 30 天
 - 🎨 **Apple 風格 UI**：簡約現代的使用者介面
-- 📝 **自訂 Prompt**：使用者可自訂會議記錄格式和內容
+- 📄 **結果下載**：處理完成後提供 Markdown 與 DOCX 下載，結果頁不內嵌預覽
 - 🔐 **企業級安全**：API Key 安全存儲，路徑遍歷防護，XSS 防衛
 
 ---
@@ -116,8 +124,9 @@ MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部�
 1. 安裝 [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 2. 安裝 [Ollama](https://ollama.ai/) 並下載模型：
    ```bash
-   ollama pull gemma3:27b
+   ollama pull gemma4:31b
    ```
+   > 💡 若您只安裝 `gemma4:31b-it-q4_K_M` 等 Gemma4 相容標籤，本專案會自動優先解析已安裝的 Gemma4 模型。
 3. （可選）取得 [Gemini API Key](https://ai.google.dev/) 用於雲端模式
 
 ### 三步驟部署
@@ -152,19 +161,13 @@ deploy.bat up
 > 
 > 詳見：[Windows 批次檔部署指南](./doc/Windows批次檔部署指南.md)
 
-#### 其他系統（macOS / Linux）
+#### macOS（推薦使用專用腳本）
 
 ```bash
-# 1. 建構映像（首次約 10-30 分鐘）
-cd scripts
-./deploy.ps1 build
-
-# 2. 啟動服務
-./deploy.ps1 up
-
-# 3. 開啟瀏覽器
-# 訪問 http://localhost:9527
+./scripts/start-mac.sh
 ```
+
+> 💡 若您的 Mac 記憶體較小，可先在 `.env.local` 設定 `LOCAL_LLM_MODEL_MAC=gemma4:<較小標籤>`，再執行 `ollama pull` 下載對應標籤。
 
 ---
 
@@ -174,15 +177,17 @@ cd scripts
 
 | 模式 | 說明 | 適用場景 | 優點 | 缺點 |
 |------|------|----------|------|------|
-| 🔒 本地模式 | Ollama + Gemma3:12B | 政府、醫療、商業機密 | 資料安全、無延遲 | 品質一般 |
+| 🔒 本地模式 | Ollama + Gemma4:31B 家族 | 政府、醫療、商業機密 | 完全離線、台灣繁中品質佳 | 記憶體需求較高 |
 | ☁️ 雲端模式 | Gemini API | 一般會議、非機敏 | 品質優良 | 需網路、隱私 |
 
-### 📝 自訂 Prompt
+### 📄 結果下載
 
-使用者可自訂會議記錄格式：
-- 指定輸出項目（決議事項、待辦清單、參與者等）
-- 調整摘要長度和風格
-- 新增特殊要求或專業術語
+處理完成後，結果頁提供：
+- Markdown 檔案下載
+- DOCX 檔案下載
+- 重新開始
+
+> 目前結果頁不再內嵌 Markdown 預覽，也不提供複製按鈕；所有下載錯誤都會以明確訊息回報。
 
 ### 📊 智能排隊系統
 
@@ -233,8 +238,9 @@ services:
 | `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
 | `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
 | `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
-| `WHISPER_MODEL` | Whisper 模型 | medium | tiny/base/small/medium/large-v3 |
-| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma3:27b | ollama 支援的任何模型 |
+| `WHISPER_MODEL` | Whisper 模型 | SoybeanMilk/faster-whisper-Breeze-ASR-25 | faster-whisper 支援的任何模型 |
+| `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma4:31b | ollama 支援的任何模型 |
+| `LOCAL_LLM_MODEL_MAC` | macOS 覆寫模型 | （留空） | 小記憶體 Mac 可指定較小 Gemma4 標籤 |
 
 ### 服務管理腳本
 

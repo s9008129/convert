@@ -8,7 +8,7 @@
 #
 # v4.0.0 升級：
 # - ASR 模型升級至 Breeze-ASR-25（台灣專用）
-# - LLM 參數優化（temperature 0.5, top_k 64, top_p 0.95）
+# - Gemma4 預設 + q4 相容解析（4090 若安裝 q4 變體會由後端優先採用）
 # - 模型持久化 Volume 確保不重複下載
 #
 # 重要依賴（參見 INSTRUCTIONS.md）：
@@ -74,10 +74,10 @@ services:
       
       # ========================================
       # 本地模式設定（Ollama - 連接主機）
-      # v4.1.0: 使用標準模型名稱，支援舊別名自動解析
+      # v4.2.1: 預設 gemma4:31b；若主機實際安裝 gemma4:31b-it-q4_K_M，後端會自動解析
       # ========================================
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LOCAL_LLM_MODEL=gemma3:27b
+      - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
       # Whisper 轉錄設定 (v4.0.0: Breeze-ASR-25)

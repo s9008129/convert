@@ -5,6 +5,21 @@
 本檔案遵循 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式，
 本專案遵循 [語義化版本控制](https://semver.org/lang/zh-TW/) 規範。
 
+## [Unreleased]
+
+### 變更 🔄
+
+- 本地模式預設 LLM 改為 `gemma4:31b`，Windows / RTX 4090 已完成實機驗證；若只安裝 Gemma4 相容標籤，後端會自動解析
+- macOS compose 與啟動腳本新增 `LOCAL_LLM_MODEL_MAC` 覆寫路徑，讓小記憶體 Mac 可切換較小的 Gemma4 標籤
+- 結果頁移除 Markdown 預覽與複製按鈕，完成後僅保留 Markdown / DOCX 下載
+- `docker-compose.override.yml` 啟動時改用 root 執行 `pip install`，避免開發容器因權限不足漏裝 `python-docx`
+
+### 修復 🐛
+
+- 修復 DOCX 下載失敗時只看到 JSON 錯誤內容的問題：前端改用 `fetch` + `blob`，後端補上 `python-docx` ImportError 處理
+- 修復 Gemma4 摘要輸出清理與簡繁體誤判：移除 `<think>` 類殘留、正規化 `Stand by` / `\rightarrow`，並排除 `台`、`后` 的誤判
+- 使用 `tests\亞洲無人機AI創新應用研發中心.m4a` 完成端到端驗證，Markdown / DOCX 下載皆通過
+
 ## [4.0.0] - 2025-12-19
 
 ### 重大升級 🚀

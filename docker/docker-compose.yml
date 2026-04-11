@@ -55,10 +55,10 @@ services:
     environment:
       # ========================================
       # 本地模式設定（Ollama - 連接主機）
-      # v4.1.0: 使用標準模型名稱，支援自動解析
+      # v4.2.1: gemma4 共用預設；若主機僅安裝 q4 變體，後端會自動解析
       # ========================================
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LOCAL_LLM_MODEL=gemma3:27b
+      - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
       # 本地模式設定（LM Studio - OpenAI 相容 API）

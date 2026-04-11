@@ -52,15 +52,17 @@ try {
     $ollamaResponse = Invoke-RestMethod -Uri "http://localhost:11434/api/tags" -TimeoutSec 5 2>$null
     Write-Host "   ✅ Ollama 運行中" -ForegroundColor Green
     
-    # v4.1.0: 檢查可用模型並驗證配置模型
+    # v4.2.1: 檢查 Gemma4 家族模型，並保留對量化 / same-family 標籤的相容性
     $models = $ollamaResponse.models | ForEach-Object { $_.name }
-    $hasGemma3 = $models | Where-Object { $_ -like "gemma3:*" }
+    $hasGemma4 = $models | Where-Object { $_ -like "gemma4:*" }
     
-    if ($hasGemma3) {
-        Write-Host "   ✅ Gemma3 模型已安裝: $($hasGemma3 -join ', ')" -ForegroundColor Green
+    if ($hasGemma4) {
+        Write-Host "   ✅ Gemma4 模型已安裝: $($hasGemma4 -join ', ')" -ForegroundColor Green
     } else {
-        Write-Host "   ⚠️ Gemma3 模型未安裝" -ForegroundColor Yellow
-        Write-Host "      執行：ollama pull gemma3:27b" -ForegroundColor Gray
+        Write-Host "   ⚠️ Gemma4 模型未安裝" -ForegroundColor Yellow
+        Write-Host "      預設模型：gemma4:31b" -ForegroundColor Gray
+        Write-Host "      執行：ollama pull gemma4:31b" -ForegroundColor Gray
+        Write-Host "      若您已安裝其他 Gemma4 標籤，也可改用對應的 LOCAL_LLM_MODEL" -ForegroundColor Gray
     }
     
     # 顯示所有可用模型

@@ -15,6 +15,10 @@ NC='\033[0m' # No Color
 # 取得腳本所在目錄
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ENV_LOCAL_PATH="$PROJECT_ROOT/.env.local"
+DEFAULT_OLLAMA_MODEL="gemma4:31b"
+MAC_OLLAMA_MODEL="$DEFAULT_OLLAMA_MODEL"
+MAC_MODEL_OVERRIDE_SOURCE=""
 
 # 專案名稱（確保隔離）
 export COMPOSE_PROJECT_NAME="meetingscribe"
@@ -47,6 +51,52 @@ warn() {
 
 error() {
     echo -e "${RED}[✗]${NC} $1"
+}
+
+# 移除 .env 類設定中常見的包覆引號，避免模型名稱夾帶字面引號
+strip_wrapping_quotes() {
+    local value="$1"
+
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+        value="${value#\"}"
+        value="${value%\"}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+        value="${value#\'}"
+        value="${value%\'}"
+    fi
+
+    printf '%s' "$value"
+}
+
+# 載入 macOS 本地覆蓋設定，讓 docker compose 也能讀到 LOCAL_LLM_MODEL_MAC
+load_local_overrides() {
+    if [ -n "${LOCAL_LLM_MODEL_MAC:-}" ]; then
+        MAC_OLLAMA_MODEL="$LOCAL_LLM_MODEL_MAC"
+        MAC_MODEL_OVERRIDE_SOURCE="環境變數 LOCAL_LLM_MODEL_MAC"
+        return
+    fi
+
+    if [ -f "$ENV_LOCAL_PATH" ]; then
+        info "載入 macOS 本地覆蓋設定 (.env.local)..."
+        while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+            line="${raw_line%$'\r'}"
+            case "$line" in
+                ''|'#'*) continue ;;
+            esac
+
+            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                key="${BASH_REMATCH[1]}"
+                value="${BASH_REMATCH[2]}"
+                value="$(strip_wrapping_quotes "$value")"
+                export "$key=$value"
+            fi
+        done < "$ENV_LOCAL_PATH"
+    fi
+
+    if [ -n "${LOCAL_LLM_MODEL_MAC:-}" ]; then
+        MAC_OLLAMA_MODEL="$LOCAL_LLM_MODEL_MAC"
+        MAC_MODEL_OVERRIDE_SOURCE=".env.local"
+    fi
 }
 
 # 檢查 Docker
@@ -93,19 +143,34 @@ check_ollama() {
     success "Ollama 服務運行中"
     
     # 檢查模型
-    info "檢查 Gemma3:12B 模型..."
-    if ollama list 2>/dev/null | grep -q "gemma3:12b"; then
-        success "Gemma3:12B 模型已安裝"
+    info "檢查 Ollama 模型..."
+    if [ -n "$MAC_MODEL_OVERRIDE_SOURCE" ]; then
+        info "使用 macOS 覆蓋模型: $MAC_OLLAMA_MODEL ($MAC_MODEL_OVERRIDE_SOURCE)"
     else
-        warn "Gemma3:12B 模型未安裝"
-        echo "正在下載模型（約 8GB，請耐心等待）..."
-        ollama pull gemma3:12b
-        if [ $? -eq 0 ]; then
+        info "使用預設 Gemma4 模型: $MAC_OLLAMA_MODEL"
+    fi
+
+    installed_models="$(ollama list 2>/dev/null | tail -n +2 | awk '{print $1}')"
+    gemma4_models="$(printf '%s\n' "$installed_models" | grep '^gemma4:' || true)"
+
+    if printf '%s\n' "$installed_models" | grep -qx "$MAC_OLLAMA_MODEL"; then
+        success "目標模型已安裝: $MAC_OLLAMA_MODEL"
+    elif [[ "$MAC_OLLAMA_MODEL" == gemma4:* ]] && [ -n "$gemma4_models" ]; then
+        success "已找到可相容的 Gemma4 模型: $(echo "$gemma4_models" | paste -sd ', ' -)"
+        echo "      應用程式會自動優先使用已安裝的 Gemma4 標籤"
+    elif [ -n "$MAC_MODEL_OVERRIDE_SOURCE" ]; then
+        warn "尚未安裝覆蓋模型: $MAC_OLLAMA_MODEL"
+        echo "正在下載模型，請耐心等待..."
+        if ollama pull "$MAC_OLLAMA_MODEL"; then
             success "模型下載完成"
         else
             error "模型下載失敗"
-            echo "您可以手動執行: ollama pull gemma3:12b"
+            echo "您可以手動執行: ollama pull $MAC_OLLAMA_MODEL"
         fi
+    else
+        warn "尚未安裝預設模型: $DEFAULT_OLLAMA_MODEL"
+        echo "      若您的 Mac 記憶體較小，請先在 .env.local 設定 LOCAL_LLM_MODEL_MAC 為較小的 gemma4 標籤"
+        echo "      若要使用預設模型，請手動執行: ollama pull $DEFAULT_OLLAMA_MODEL"
     fi
 }
 
@@ -203,6 +268,7 @@ show_success() {
 
 # 主程式
 main() {
+    load_local_overrides
     check_docker
     check_ollama
     create_dirs

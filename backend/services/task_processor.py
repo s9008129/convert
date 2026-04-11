@@ -230,6 +230,10 @@ class TaskProcessor:
             r'\bExecutive Summary\b': '執行摘要',
             r'\bDiscussion & Decisions\b': '詳細議題與決議',
             r'\bAction Items\b': '待辦事項',
+            r'\bStand\s*by\b': '待命',
+            r'\bstand\s*by\b': '待命',
+            r'\$\s*\\rightarrow\s*\$': '→',
+            r'\\rightarrow': '→',
         }
         
         result = text
@@ -271,12 +275,14 @@ class TaskProcessor:
         # 步驟 2：移除高英文比例的段落
         cleaned_summary = self._remove_english_segments(summary)
         
-        # 步驟 3：如果仍有過多英文，執行詞彙替換
+        # 步驟 3：固定清理常見語言與格式瑕疵，避免低比例英文殘留漏網
+        cleaned_summary = self._sanitize_text_language(cleaned_summary)
+
+        # 步驟 4：如果仍有過多英文，保留警示供人工抽查
         if self._has_excessive_english(cleaned_summary):
-            log.warning("[修正] 偵測到英文混入，執行詞彙替換...")
-            cleaned_summary = self._sanitize_text_language(cleaned_summary)
+            log.warning("[品質] 摘要仍含較多英文詞彙，請人工抽查輸出內容")
         
-        # 步驟 4：確保 summary 有適當的結構（針對地端模型輸出品質較差的情況）
+        # 步驟 5：確保 summary 有適當的結構（針對地端模型輸出品質較差的情況）
         cleaned_summary = self._ensure_structure(cleaned_summary)
         
         # 如果 summary 已經有標準 header，就不要再加

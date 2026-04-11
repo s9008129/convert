@@ -4,7 +4,12 @@
 TaskProcessor 結構修補測試。
 """
 
+import importlib
+
+from backend.models.schemas import ProcessingMode, TaskInfo
 from backend.services.task_processor import TaskProcessor
+
+task_processor_module = importlib.import_module("backend.services.task_processor")
 
 
 def test_ensure_structure_inserts_missing_sections_and_converts_action_bullets():
@@ -91,3 +96,34 @@ def test_excessive_english_detection_is_not_triggered_by_mixed_technical_summary
 """
 
     assert processor._has_excessive_english(summary) is False
+
+
+def test_format_result_normalizes_common_local_output_artifacts(monkeypatch):
+    processor = TaskProcessor()
+    task = TaskInfo(
+        task_id="task1234",
+        filename="meeting.mp3",
+        original_filename="測試會議.mp3",
+        file_size=1024,
+        processing_mode=ProcessingMode.LOCAL,
+    )
+    summary = """# 會議記錄摘要
+
+## 2. 執行摘要 (Executive Summary)
+流程順序定為：縣長致詞 $\\rightarrow$ 簡報。
+現場教官需 Stand by。
+"""
+
+    monkeypatch.setattr(task_processor_module.device_detector, "current_device", "cpu")
+    monkeypatch.setattr(
+        task_processor_module.device_detector,
+        "get_device_info",
+        lambda: {"current_device": "cpu", "gpu_available": False, "mps_available": False},
+    )
+
+    result = processor._format_result(task, "逐字稿內容", summary)
+
+    assert "$\\rightarrow$" not in result
+    assert "Stand by" not in result
+    assert "→" in result
+    assert "待命" in result

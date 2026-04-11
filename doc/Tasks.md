@@ -39,34 +39,21 @@
 - 支援 INT8 量化，VRAM 需求約 2GB
 - 使用方式：`WhisperModel("SoybeanMilk/faster-whisper-Breeze-ASR-25")`
 
-#### LLM 模型：Gemma3
+#### LLM 模型：Gemma4
 
 | 驗證項目 | 結果 | 詳情 |
 |----------|------|------|
-| **現有模型** | gemma3:27b-it-qat | 已安裝，18GB，Q4_0 量化 |
-| **8-bit 版本可用性** | ✅ 可下載 | `ollama pull gemma3:27b-it-q8_0` |
-| **8-bit 版本大小** | ~30GB | 需要下載 |
-| **QAT 版本效能** | ⚠️ 需評估 | 目前使用中的版本 |
+| **預設模型** | `gemma4:31b` | 後端 / Docker / 設定檔已統一 |
+| **Windows RTX 4090 實測** | ✅ 通過 | 指定音檔 E2E 驗證成功 |
+| **相容標籤解析** | ✅ 啟用 | 若只安裝 `gemma4:31b-it-q4_K_M` 等標籤，後端會自動解析 |
+| **macOS 覆寫** | ✅ 支援 | 可用 `.env.local` 的 `LOCAL_LLM_MODEL_MAC` 指定較小 Gemma4 標籤 |
+| **生成策略** | ✅ 已落地 | extraction → merge → refine、num_ctx 8192、reserved_output 3072 |
 
-**⚠️ 重要發現：VRAM 需求修正**
+**補充說明**
 
-原計畫假設 8-bit 版本需要 ~16GB VRAM，但實際上：
-- `gemma3:27b-it-q8_0`：檔案大小 ~30GB，VRAM 需求約 **32GB**（超過 RTX 4090）
-- `gemma3:27b-it-qat`：檔案大小 ~18GB，VRAM 需求約 **20GB**（可運行）
-
-**第一性原理重新分析**：
-
-```
-問題：8-bit 版本 VRAM 超過 24GB
-  ↓ 為什麼？
-Gemma3-27B 有 27.4B 參數，8-bit 需要約 27.4GB
-  ↓ 這意味著什麼？
-無法使用純 8-bit 量化
-  ↓ 替代方案是什麼？
-方案 A：維持 QAT (4-bit)，但優化 temperature 參數
-方案 B：使用 Q6_K (6-bit)，約 21GB，勉強可運行
-方案 C：使用 Q5_K_M (5-bit)，約 18GB，安全運行
-```
+- `gemma4:31b` 本機安裝大小約 19GB，本專案已在 Windows 11 + RTX 4090 + Ollama 完成實測
+- 若 macOS 記憶體不足，可在 `.env.local` 設定 `LOCAL_LLM_MODEL_MAC` 改用較小的 Gemma4 標籤
+- 指定驗收檔案 `tests\亞洲無人機AI創新應用研發中心.m4a` 已成功生成繁體中文 Markdown / DOCX 會議記錄
 
 ### 3.3 修正後的技術方案
 
@@ -74,18 +61,18 @@ Gemma3-27B 有 27.4B 參數，8-bit 需要約 27.4GB
 
 | 原計畫 | 修正後方案 | 理由 |
 |--------|------------|------|
-| gemma3:27b (8-bit) | **維持 gemma3:27b-it-qat** | 8-bit 超過 VRAM，QAT 已在範圍內 |
-| temperature: 0.7 | **temperature: 0.5** | 平衡創意與穩定性 |
-| 無 top_k/top_p | **新增 top_k: 64, top_p: 0.95** | Google 官方推薦參數 |
+| gemma3 量化變體 | **統一本地預設為 `gemma4:31b`** | 與目前程式碼、Docker 與 E2E 驗證結果一致 |
+| 單一路徑模型設定 | **保留 `LOCAL_LLM_MODEL_MAC` 覆寫** | 確保 macOS 仍可依記憶體條件調整 |
+| DOCX 直接導頁下載 | **改為 `fetch` + `blob` + 後端 ImportError 處理** | 徹底修復只拿到 JSON 的下載失敗體感 |
 
-**核心洞察**：問題不是量化方式，而是**參數設定**。QAT 版本已經足夠，只需優化生成參數。
+**核心洞察**：目前關鍵不再是 Gemma3 量化選型，而是 **Gemma4 的穩定輸出約束、下載流程可靠性與跨平台覆寫策略**。
 
 ### 3.4 VRAM 配置重新評估
 
 | 元件 | VRAM 需求 | 運行時機 | 狀態 |
 |------|-----------|----------|------|
 | Breeze-ASR-25 (INT8) | ~2GB | 轉錄階段 | ✅ |
-| Gemma3-27B (QAT, Q4_0) | ~20GB | 摘要階段 | ✅ |
+| Gemma4-31B（預設 / 相容 q4 標籤） | ~20GB | 摘要階段 | ✅ |
 | 系統保留 | ~2GB | 持續 | ✅ |
 | **總計** | ~22GB | - | ✅ 安全 |
 | **剩餘** | ~2GB | 緩衝 | ⚠️ 緊湊 |
@@ -199,7 +186,7 @@ temperature = 0.0
 
 ### Task 4: 更新 config.yaml - LLM 參數優化
 
-**目標**：優化 Gemma3 生成參數
+**目標**：同步 Gemma4 預設值與本地摘要參數
 
 **變更內容**：
 
@@ -213,18 +200,19 @@ llm:
 # 新版
 llm:
   ollama:
-    model: "gemma3:27b-it-qat"    # 維持 QAT，VRAM 安全
-    num_ctx: 32768
-    temperature: 0.5               # 提高至 0.5（平衡穩定性）
-    top_k: 64                      # 新增 - Google 推薦
-    top_p: 0.95                    # 新增 - Google 推薦
-    repeat_penalty: 1.1            # 新增 - 減少重複
+    model: "gemma4:31b"
+    num_ctx: 8192
+    temperature: 0.2               # 最終摘要溫度；extract / merge / refine 由程式分階段控制
+    top_k: 64
+    top_p: 0.95
+    repeat_penalty: 1.08
+    max_output_tokens: 3072
 ```
 
 **驗收標準**：
 - [ ] config.yaml 已更新
 - [ ] Ollama 正確讀取新參數
-- [ ] 輸出格式遵從率提升
+- [ ] 輸出格式遵從率提升，且無簡體漂移 / thought tags 殘留
 
 **預估時間**：2 小時
 
