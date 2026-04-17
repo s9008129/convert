@@ -13,6 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
+from backend.core.asr_model_resolver import resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.core.version import __version__
@@ -227,9 +228,6 @@ async def get_task_result(task_id: str, format: str = "md"):
             filename=result_filename
         )
     
-    # DOCX 格式：讀取 MD → 轉換 → 回傳（含快取）
-    from backend.services.docx_converter import docx_converter
-
     docx_filename = f"{safe_base_name}_{task_id}.docx"
     docx_path = os.path.join(settings.outputs_dir, docx_filename)
 
@@ -238,9 +236,16 @@ async def get_task_result(task_id: str, format: str = "md"):
         os.path.getmtime(docx_path) < os.path.getmtime(result_path)
     ):
         try:
+            from backend.services.docx_converter import docx_converter
             with open(result_path, 'r', encoding='utf-8') as f:
                 md_content = f.read()
             docx_converter.convert(md_content, docx_path)
+        except ImportError as e:
+            log.error(f"[DOCX] python-docx 未安裝或匯入失敗: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="DOCX 轉換功能無法使用（缺少 python-docx 套件）"
+            )
         except Exception as e:
             log.error(f"[DOCX] 轉換失敗: {e}")
             raise HTTPException(
@@ -323,8 +328,14 @@ async def get_config():
         "max_concurrent_tasks": settings.MAX_CONCURRENT_TASKS,
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
+        "asr_backend": settings.ASR_BACKEND,
+        "whisper_model": settings.WHISPER_MODEL,
+        "whisper_model_revision": resolve_model_revision(
+            settings.WHISPER_MODEL,
+            settings.WHISPER_MODEL_REVISION,
+        ),
         "gemini_available": summarization_service.check_gemini_available(),
-        "lmstudio_model": settings.LMSTUDIO_MODEL
+        "lmstudio_model": settings.LMSTUDIO_MODEL,
     }
 
 

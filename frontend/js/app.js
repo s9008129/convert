@@ -50,8 +50,6 @@ const elements = {
     
     // 結果
     resultSection: document.getElementById('resultSection'),
-    resultPreview: document.getElementById('resultPreview'),
-    copyBtn: document.getElementById('copyBtn'),
     downloadBtn: document.getElementById('downloadBtn'),
     downloadDocxBtn: document.getElementById('downloadDocxBtn'),
     resetBtn: document.getElementById('resetBtn'),
@@ -507,8 +505,13 @@ function showQueueStatus(result) {
 }
 
 async function showResult(message) {
+    if (message && message.task_id) {
+        state.taskId = message.task_id;
+    }
+
     if (elements.resultSection) {
         elements.resultSection.style.display = 'block';
+        elements.resultSection.dataset.taskId = state.taskId || '';
     }
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
@@ -516,19 +519,8 @@ async function showResult(message) {
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
     }
-    
-    if (elements.resultPreview) {
-        // 只預覽前 2000 字，避免一次渲染過大內容影響可讀性
-        if (message.preview) {
-            const maxLength = 2000;
-            const preview = message.preview.length > maxLength 
-                ? message.preview.substring(0, maxLength) + '...\n\n（更多內容請下載完整檔案）'
-                : message.preview;
-            elements.resultPreview.textContent = preview;
-        } else {
-            elements.resultPreview.textContent = '已完成，請下載檔案查看詳細內容。';
-        }
-    }
+
+    setDownloadButtonsEnabled(Boolean(state.taskId));
 }
 
 function resetUI() {
@@ -623,9 +615,6 @@ function setupEventListeners() {
     }
     
     // 操作按鈕
-    if (elements.copyBtn) {
-        elements.copyBtn.addEventListener('click', copyResult);
-    }
     if (elements.downloadBtn) {
         elements.downloadBtn.addEventListener('click', downloadResult);
     }
@@ -708,18 +697,6 @@ function handleFile(file) {
         return;
     }
     
-    // 通過檢查後才正式呼叫上傳 API
+    setDownloadButtonsEnabled(false);
     uploadFile(file);
-}
-
-function copyResult() {
-    if (elements.resultPreview) {
-        const text = elements.resultPreview.textContent;
-        // 使用瀏覽器剪貼簿 API，成功/失敗都給使用者明確回饋
-        navigator.clipboard.writeText(text).then(() => {
-            alert('已複製到剪貼板');
-        }).catch(err => {
-            console.error('複製失敗:', err);
-        });
-    }
 }

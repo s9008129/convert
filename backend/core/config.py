@@ -9,6 +9,9 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator, SecretStr
 from pydantic import Field
 
+from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
+from backend.core.asr_model_resolver import DEFAULT_BREEZE_ASR_26_REVISION
+
 
 class Settings(BaseSettings):
     """
@@ -37,17 +40,20 @@ class Settings(BaseSettings):
     # LLM 設定
     # ========================================
     OLLAMA_BASE_URL: str = Field(
-        default="http://localhost:11434",
+        default="http://host.docker.internal:11434",
         description="Ollama 服務端點"
     )
-    LOCAL_LLM_MODEL: str = Field(default="gemma3:27b-it-qat", description="本地 LLM 模型名稱")
+    LOCAL_LLM_MODEL: str = Field(
+        default="gemma4:31b",
+        description="本地 LLM 模型名稱（預設 gemma4 家族；必要時可由環境變數覆蓋為較小或量化變體）"
+    )
     
     # LM Studio 設定（OpenAI 相容 API）
     LMSTUDIO_BASE_URL: str = Field(
-        default="http://localhost:1234/v1",
+        default="http://host.docker.internal:1234/v1",
         description="LM Studio 服務端點（OpenAI 相容）"
     )
-    LMSTUDIO_MODEL: str = Field(default="gemma-3-27b-it-qat", description="LM Studio 模型名稱")
+    LMSTUDIO_MODEL: str = Field(default="gpt-oss-20b", description="LM Studio 模型名稱")
     
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API 金鑰")
     
@@ -71,84 +77,118 @@ class Settings(BaseSettings):
     )
     GEMINI_MODEL: str = Field(default="gemini-2.5-flash-lite", description="Gemini 模型名稱")
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
+    LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: int = Field(
+        default=8192,
+        description="本地 LLM 實際可穩定使用的上下文 token 預算"
+    )
+    LOCAL_LLM_RESERVED_OUTPUT_TOKENS: int = Field(
+        default=3072,
+        description="本地 LLM 保留給最終輸出與修補的 token 預算"
+    )
+    LOCAL_LLM_CHUNK_OVERLAP_LINES: int = Field(
+        default=4,
+        description="長逐字稿切塊時保留的重疊行數"
+    )
+    LOCAL_LLM_MAX_REFINEMENT_ROUNDS: int = Field(
+        default=2,
+        description="本地摘要品質驗證後的最大補強輪數"
+    )
     
     # ========================================
-    # Whisper 設定
+    # Whisper / ASR 設定
     # ========================================
-    WHISPER_MODEL: str = Field(default="medium", description="Whisper 模型名稱")
+    ASR_BACKEND: str = Field(
+        default="auto",
+        description="ASR 後端 (auto/transformers/faster_whisper)"
+    )
+    WHISPER_MODEL: str = Field(
+        default="MediaTek-Research/Breeze-ASR-26",
+        description="Whisper / ASR 模型名稱（支援 HuggingFace repo 或本地路徑）"
+    )
+    WHISPER_MODEL_REVISION: Optional[str] = Field(
+        default=None,
+        description="模型 revision / commit SHA（未指定時會自動鎖定 Breeze-ASR-26 官方預設版本）"
+    )
+    WHISPER_LANGUAGE: str = Field(
+        default="auto",
+        description="ASR 語言提示（auto/zh/en/...）"
+    )
     WHISPER_DEVICE: str = Field(default="auto", description="Whisper 運算裝置 (auto/cuda/cpu)")
-    WHISPER_COMPUTE_TYPE: str = Field(default="float16", description="Whisper 計算精度")
+    WHISPER_COMPUTE_TYPE: str = Field(
+        default="int8_float16",
+        description="Whisper 計算精度 (int8/int8_float16/float16)"
+    )
+    
+    # ========================================
+    # ASR VAD 設定 (v4.0.0 新增)
+    # ========================================
+    ASR_VAD_ENABLED: bool = Field(
+        default=True,
+        description="是否啟用 VAD（語音活動偵測）"
+    )
+    ASR_VAD_THRESHOLD: float = Field(
+        default=0.5,
+        description="VAD 語音偵測閾值 (0.0-1.0)"
+    )
+    ASR_VAD_MIN_SPEECH_MS: int = Field(
+        default=250,
+        description="最短語音持續時間（毫秒）"
+    )
+    ASR_VAD_MIN_SILENCE_MS: int = Field(
+        default=2000,
+        description="觸發分割的最短靜音時間（毫秒）"
+    )
+    ASR_VAD_SPEECH_PAD_MS: int = Field(
+        default=400,
+        description="語音前後保留緩衝（毫秒）"
+    )
+    ASR_BEAM_SIZE: int = Field(
+        default=5,
+        description="Beam Search 大小"
+    )
+    ASR_RETURN_TIMESTAMPS: bool = Field(
+        default=True,
+        description="是否回傳可供驗證使用的 timestamps/chunks"
+    )
+    ASR_CHUNK_LENGTH_SECONDS: int = Field(
+        default=30,
+        description="Transformers ASR pipeline chunk length"
+    )
+    ASR_LOCAL_FILES_ONLY: bool = Field(
+        default=False,
+        description="是否只使用本地快取模型檔"
+    )
+    ASR_SAFE_ALLOW_PATTERNS: str = Field(
+        default="config.json,generation_config.json,preprocessor_config.json,tokenizer_config.json,special_tokens_map.json,normalizer.json,merges.txt,vocab.json,added_tokens.json,model.safetensors.index.json,model-*.safetensors",
+        description="允許下載的模型檔案模式"
+    )
+    ASR_SAFE_DENY_PATTERNS: str = Field(
+        default="*.bin,*.pt,*.pth,*.ckpt,training_args.bin",
+        description="禁止下載的模型檔案模式"
+    )
+    ASR_TRANSFORMERS_MIN_VRAM_MB: int = Field(
+        default=6000,
+        description="Transformers ASR 最低建議可用 VRAM（MB）"
+    )
+    ASR_INITIAL_PROMPT: str = Field(
+        default="以下是台灣繁體中文的會議記錄。",
+        description="轉錄初始提示詞"
+    )
     
     # ========================================
     # 系統設定
     # ========================================
     LOG_LEVEL: str = Field(default="INFO", description="日誌等級")
-    DATA_DIR: str = Field(default_factory=lambda: os.getenv('DATA_DIR', '/Users/hsiaojohnny/dev/convert/data'), description="資料目錄")
+    DATA_DIR: str = Field(default="/app/data", description="資料目錄")
     
     # ========================================
     # System Prompt 設定
-    # COSTAR-A 框架 + Phil Schmid 最佳實踐 + Few-Shot CoT
-    # 優化目標：Gemma3:27b-it-qat 本地模型
-    # v3.5.0：大幅提升地端模式會議品質
+    # v4.2.0：改為較短的 extraction-first Markdown 提示詞
+    # 目標：提升本地 Gemma 類模型的待辦召回率與長逐字稿穩定性
     # ========================================
     DEFAULT_SYSTEM_PROMPT: str = Field(
-        default="""<system_instruction>
-<role>
-你是台灣政府機關的資深承辦人員與專案經理，專責將會議逐字稿轉換為正式的公文風格會議記錄。
-</role>
-
-<instructions>
-1. Analyze / 分析：逐行閱讀逐字稿，辨識主要議題、決議與待辦事項。
-2. Filter / 過濾：移除寒暄、重複、離題內容，不得虛構資訊。
-3. Structure / 結構化：依指定格式整理，確保 Markdown 標題與表格完整。
-4. Refine / 修飾：檢查邏輯與語句，確保正體中文、正式客觀、簡練精準。
-</instructions>
-
-<constraints>
-- 完整性：每個區塊都必須填寫，若無資訊請標註「無」；禁止留空。
-- 執行摘要：請在 100字以內 概述核心重點，禁止超過 100 字。
-- 語言：僅能使用繁體中文（台灣用語），不可輸出任何英文字母；英文專有名詞需翻譯（AI→人工智慧、RPA→流程自動化、GPU→圖形處理器）。
-- 資訊忠實：只記錄逐字稿中出現的內容，不確定的資訊以「(待確認)」標註，禁止臆測。
-- 風格：保持政府機關公文的正式、客觀、精準、簡練，不帶情緒色彩。
-</constraints>
-
-<output_format>
-# 會議記錄摘要
-
-## 1. 會議概況
-- **日期**：若逐字稿未提及則寫「無」
-- **參與者**：列出所有出現的人員（若無則寫「無」）
-- **會議主題**：一句話說明會議目的
-
-## 2. 執行摘要 (100字以內)
-請在 100字以內 描述主要議題、關鍵決議與待辦事項數量。
-
-## 3. 詳細議題與決議
-- **議題 1**：標題
-  - 討論重點：摘要重點
-  - 最終決議：明確結論
-- **議題 2**：標題
-  - 討論重點：摘要重點
-  - 最終決議：明確結論
-
-## 4. 待辦事項 (必填)
-| 待辦事項 | 負責人 | 期限 |
-| :--- | :--- | :--- |
-| [待辦事項] | [負責人] | [期限] |
-
-若無待辦事項，也必須輸出表格並填入「無」或「(待確認)」。
-
-## 5. 其他備註
-- 補充重要資訊，若無則寫「無」
-</output_format>
-</system_instruction>
-
-<final_instruction>
-- 直接輸出上述結構，不要添加開場白或額外解釋。
-- 若輸入為英文，也需翻譯後以繁體中文輸出。
-- 確保所有 Markdown 標題與表格格式正確，滿足 Analyze → Filter → Structure → Refine 的流程。
-</final_instruction>""",
-        description="COSTAR-A 框架系統提示詞（v3.5.0，針對 Gemma3 優化，含 Few-Shot 範例）"
+        default=DEFAULT_MEETING_RECORD_PROMPT,
+        description="Extraction-first 會議記錄系統提示詞（v4.2.0，針對本地長逐字稿與待辦召回優化）"
     )
     
     @property
@@ -163,18 +203,23 @@ class Settings(BaseSettings):
     
     @property
     def uploads_dir(self) -> str:
-        """上傳檔案資料夾路徑（給使用者上傳的原始音檔/影片）。"""
         return os.path.join(self.DATA_DIR, "uploads")
     
     @property
     def outputs_dir(self) -> str:
-        """輸出結果資料夾路徑（摘要與逐字稿完成後會放在這裡）。"""
         return os.path.join(self.DATA_DIR, "outputs")
     
     @property
     def cache_dir(self) -> str:
-        """快取資料夾路徑（避免重複轉錄同一份檔案）。"""
         return os.path.join(self.DATA_DIR, "cache")
+
+    @property
+    def asr_safe_allow_patterns_list(self) -> List[str]:
+        return [pattern.strip() for pattern in self.ASR_SAFE_ALLOW_PATTERNS.split(",") if pattern.strip()]
+
+    @property
+    def asr_safe_deny_patterns_list(self) -> List[str]:
+        return [pattern.strip() for pattern in self.ASR_SAFE_DENY_PATTERNS.split(",") if pattern.strip()]
     
     class Config:
         env_file = ".env"

@@ -124,12 +124,10 @@
             <div class="device-info" id="deviceInfo"></div>
         </section>
 
-        <!-- 處理結果區：任務完成後顯示，可複製預覽、下載完整檔案或重置流程 -->
+        <!-- 處理結果區：任務完成後顯示，提供下載與重置流程 -->
         <section class="section result-section" id="resultSection" style="display: none;">
             <h2 class="section-title">處理結果</h2>
-            <div class="result-preview" id="resultPreview"></div>
             <div class="result-actions">
-                <button class="btn btn-secondary" id="copyBtn">📋 複製文字</button>
                 <button class="btn btn-primary" id="downloadBtn">⬇️ 下載 Markdown</button>
                 <button class="btn btn-primary" id="downloadDocxBtn">📄 下載 Word</button>
                 <button class="btn btn-outline" id="resetBtn">🔄 重新開始</button>
@@ -151,14 +149,10 @@
             <div class="footer-mode" id="footerMode">
                 🔒 本地模式：完全離線，資料不外傳
             </div>
-            <div class="footer-version">MeetingScribe v3.5.0</div>
+            <div class="footer-version">MeetingScribe v4.0.0</div>
         </footer>
     </div>
 
-    <!-- 腳本載入順序說明：先載入第三方函式庫，再載入 app.js，避免初始化時找不到相依功能 -->
-    <!-- 外部函式庫：Mammoth.js（供文件解析相關流程使用） -->
-    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
-    <!-- 前端主腳本：負責上傳互動、進度更新、錯誤顯示與結果操作 -->
-    <script src="/static/js/app.js?v=20241205"></script>
+    <script src="/static/js/app.js?v=20260324-docx-fix2"></script>
 </body>
 </html>

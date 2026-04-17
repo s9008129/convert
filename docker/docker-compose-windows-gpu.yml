@@ -1,10 +1,15 @@
 # ============================================================
 # docker-compose-windows-gpu.yml
-# MeetingScribe v4.0 - Windows + RTX 4090 專用 GPU 加速版
+# MeetingScribe v4.0.0 - Windows + RTX 4090 專用 GPU 加速版
 # ============================================================
 # 
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
 # 使用 NVIDIA CUDA 12 + cuDNN 8/9 基底映像支援 faster-whisper GPU 加速
+#
+# v4.0.0 升級：
+# - ASR 模型升級至 Breeze-ASR-25（台灣專用）
+# - Gemma4 預設 + q4 相容解析（4090 若安裝 q4 變體會由後端優先採用）
+# - 模型持久化 Volume 確保不重複下載
 #
 # 重要依賴（參見 INSTRUCTIONS.md）：
 # - cuDNN 8 庫：Whisper 語音識別必需
@@ -69,15 +74,20 @@ services:
       
       # ========================================
       # 本地模式設定（Ollama - 連接主機）
+      # v4.2.1: 預設 gemma4:31b；若主機實際安裝 gemma4:31b-it-q4_K_M，後端會自動解析
       # ========================================
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
-      - LOCAL_LLM_MODEL=gemma3:27b-it-qat
+      - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
-      # Whisper 轉錄設定（GPU 加速）
+      # Whisper / ASR 設定（官方 Breeze-ASR-26）
       # ========================================
-      - WHISPER_MODEL=medium
+      - ASR_BACKEND=transformers
+      - WHISPER_MODEL=MediaTek-Research/Breeze-ASR-26
+      - WHISPER_MODEL_REVISION=949c87bca9dbe90e160cf739460cc765e80805f3
+      - WHISPER_LANGUAGE=auto
       - WHISPER_DEVICE=auto
+      - WHISPER_COMPUTE_TYPE=float16
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）
@@ -99,8 +109,8 @@ services:
       - ../data/outputs:/app/data/outputs
       - ../data/cache:/app/data/cache
       - meetingscribe-whisper-models:/app/models
-      # 開發模式：前端檔案即時同步
-      - ../frontend:/app/frontend
+      # 部署模式：前端由映像提供，避免與後端/依賴版本漂移
+      # 需要即時同步前後端程式碼時，請改用 docker-compose.yml + override.yml
     
     # 允許連接主機網路（存取 Ollama）
     extra_hosts:
@@ -113,18 +123,19 @@ services:
     # 標籤：方便識別
     labels:
       - "com.meetingscribe.project=meetingscribe"
-      - "com.meetingscribe.version=3.4.4"
+      - "com.meetingscribe.version=4.0.0"
       - "com.meetingscribe.platform=windows-gpu"
       - "com.meetingscribe.gpu=rtx4090"
       - "com.meetingscribe.cuda=12.3"
       - "com.meetingscribe.cudnn=8+9"
+      - "com.meetingscribe.asr=breeze-asr-26"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 600s
 
 # ========================================
 # 網路配置 - 完全獨立隔離
@@ -133,6 +144,7 @@ networks:
   meetingscribe-network:
     driver: bridge
     name: meetingscribe-network
+    # 獨立的 IP 範圍，避免與其他專案衝突
     ipam:
       driver: default
       config:

@@ -21,6 +21,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
@@ -277,6 +278,28 @@ class TestWhisperTranscriberInitialization:
             with pytest.raises(TranscriptionError):
                 WhisperTranscriber()
 
+    @patch('platform.system', return_value='Windows')
+    @patch('src.whisper_transcriber.Path.exists', return_value=True)
+    @patch('src.whisper_transcriber.infer_asr_backend', return_value='transformers')
+    def test_official_model_skips_windows_exe_backend(self, mock_infer, mock_exists, mock_platform):
+        """Official HF model should not fall back to Windows exe mode."""
+        with patch.dict(sys.modules, {"transformers": MagicMock()}):
+            transcriber = WhisperTranscriber(model="MediaTek-Research/Breeze-ASR-26", backend="auto")
+
+        assert transcriber.backend == "transformers"
+
+    @patch('src.whisper_transcriber.WhisperTranscriber._check_cuda', return_value=True)
+    @patch('src.whisper_transcriber.WhisperTranscriber._detect_backend', return_value='transformers')
+    def test_transformers_backend_uses_cpu_when_torch_has_no_cuda(self, mock_backend, mock_cuda):
+        """Transformers backend should not select CUDA when torch lacks CUDA support."""
+        fake_torch = MagicMock()
+        fake_torch.cuda.is_available.return_value = False
+
+        with patch.dict(sys.modules, {"torch": fake_torch}):
+            transcriber = WhisperTranscriber(device="auto", backend="transformers", model="MediaTek-Research/Breeze-ASR-26")
+
+        assert transcriber.device == "cpu"
+
 
 # =============================================================================
 # File Validation Tests
@@ -462,6 +485,43 @@ class TestTranscriptionWithMockedBackend:
                 # Check that final progress is 100 (completion indicator)
                 final_progress = progress_calls[-1][1]
                 assert final_progress == 100, f"Expected final progress 100, got {final_progress}"
+
+    @patch('src.whisper_transcriber.WhisperTranscriber._detect_backend')
+    @patch('src.whisper_transcriber.WhisperTranscriber._detect_device')
+    def test_transcribe_transformers_backend(self, mock_device, mock_backend):
+        """Test transcription using mocked transformers backend."""
+        mock_backend.return_value = "transformers"
+        mock_device.return_value = "cpu"
+
+        transcriber = WhisperTranscriber(
+            model="MediaTek-Research/Breeze-ASR-26",
+            language="auto",
+            backend="transformers",
+        )
+
+        fake_pipeline = MagicMock()
+        fake_pipeline.return_value = {
+            "text": "台語片段 English segment",
+            "language": "zh",
+            "chunks": [
+                {"text": "台語片段", "timestamp": (0.0, 2.0)},
+                {"text": "English segment", "timestamp": (2.0, 4.0)},
+            ],
+        }
+        fake_transformers = SimpleNamespace(pipeline=MagicMock(return_value=fake_pipeline))
+        fake_torch = SimpleNamespace(float16="float16", float32="float32")
+
+        with AudioGenerator() as generator:
+            wav_file = generator.generate("test_transformers.wav", duration=0.5)
+
+            with patch.dict(sys.modules, {"transformers": fake_transformers, "torch": fake_torch}):
+                with patch("src.whisper_transcriber.resolve_transformers_model_source", return_value="C:\\models\\breeze"):
+                    result = transcriber._transcribe_transformers(wav_file, None)
+
+        assert result.text == "台語片段 English segment"
+        assert result.language == "zh"
+        assert len(result.segments) == 2
+        assert result.segments[1]["end"] == 4.0
 
 
 # =============================================================================

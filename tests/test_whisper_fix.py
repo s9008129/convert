@@ -9,6 +9,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 # 添加專案根目錄到 Python 路徑
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -16,18 +18,26 @@ sys.path.insert(0, str(project_root))
 from backend.services.transcription import transcription_service
 from backend.core.logger import log
 
+@pytest.mark.parametrize(
+    ("audio_file", "test_name"),
+    [
+        ("test1_5sec.wav", "測試 1 - 5秒音訊"),
+        ("test2_3sec.wav", "測試 2 - 3秒音訊"),
+    ],
+)
 def test_transcription(audio_file: str, test_name: str):
     """測試單一音訊檔案轉錄"""
+    audio_path = project_root / "tests" / "test_audio" / audio_file
+
     print(f"\n{'='*60}")
     print(f"🧪 測試 {test_name}")
     print(f"{'='*60}")
-    print(f"📁 音訊檔案: {audio_file}")
+    print(f"📁 音訊檔案: {audio_path}")
     
-    if not os.path.exists(audio_file):
-        print(f"❌ 檔案不存在: {audio_file}")
-        return False
+    if not audio_path.exists():
+        pytest.skip(f"測試音檔不存在: {audio_path}")
     
-    file_size = os.path.getsize(audio_file) / 1024
+    file_size = os.path.getsize(audio_path) / 1024
     print(f"📊 檔案大小: {file_size:.2f} KB")
     
     try:
@@ -38,7 +48,7 @@ def test_transcription(audio_file: str, test_name: str):
         
         print("\n🚀 開始轉錄...")
         transcript, duration = transcription_service.transcribe(
-            audio_file,
+            str(audio_path),
             progress_callback=progress_callback
         )
         
@@ -54,15 +64,10 @@ def test_transcription(audio_file: str, test_name: str):
         if duration > 0:
             print(f"\n✅ 驗證通過: 音訊長度正常")
         else:
-            print(f"\n⚠️  警告: 音訊長度為 0")
-            
-        return True
+            pytest.fail("音訊長度為 0")
         
     except Exception as e:
-        print(f"\n❌ 轉錄失敗: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        pytest.fail(f"轉錄失敗: {e}")
 
 def main():
     """執行所有測試"""

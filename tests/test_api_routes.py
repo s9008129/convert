@@ -18,6 +18,7 @@
 import os
 import sys
 import io
+import types
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -64,6 +65,7 @@ def mock_services():
         
         # Setup summarization_service mock
         mock_summary.check_ollama_health = AsyncMock(return_value=True)
+        mock_summary.check_lmstudio_health = AsyncMock(return_value=False)
         mock_summary.check_gemini_available.return_value = False
         
         # Setup task_queue mock
@@ -187,6 +189,9 @@ class TestConfigEndpoint:
         assert "max_concurrent_tasks" in data
         assert "queue_max_size" in data
         assert "default_mode" in data
+        assert "asr_backend" in data
+        assert "whisper_model" in data
+        assert "whisper_model_revision" in data
     
     def test_config_contains_gemini_availability(self, test_client, mock_services):
         """Test config includes Gemini availability."""
@@ -195,6 +200,18 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "gemini_available" in data
+
+    def test_config_exposes_effective_breeze_revision(self, test_client, mock_services, monkeypatch):
+        """Test config returns the effective pinned revision for Breeze-ASR-26."""
+        from backend.core.config import settings
+
+        monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+
+        response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        assert response.json()["whisper_model_revision"] == "949c87bca9dbe90e160cf739460cc765e80805f3"
 
 
 # =============================================================================
@@ -412,10 +429,130 @@ class TestTaskResultEndpoint:
             
             assert response.status_code == 200
             assert response.headers["content-type"] == "text/markdown; charset=utf-8"
+            assert response.headers["content-disposition"] == 'attachment; filename="test_audio_test1234.md"'
         finally:
             # Cleanup
             if os.path.exists(result_file):
                 os.remove(result_file)
+
+    def test_get_result_invalid_format(self, test_client):
+        """Test getting result with unsupported format."""
+        response = test_client.get("/api/tasks/test1234/result?format=pdf")
+
+        assert response.status_code == 400
+        assert "不支援的格式" in response.json()["detail"]
+
+    def test_get_result_docx_success(self, test_client, mock_services, sample_task_info):
+        """Test successful DOCX result retrieval."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        fake_module = types.ModuleType("backend.services.docx_converter")
+        fake_converter = MagicMock()
+
+        def fake_convert(md_content, output_path):
+            assert "# 會議記錄" in md_content
+            with open(output_path, 'wb') as f:
+                f.write(b"fake docx")
+            return output_path
+
+        fake_converter.convert.side_effect = fake_convert
+        fake_module.docx_converter = fake_converter
+
+        try:
+            with patch.dict(sys.modules, {"backend.services.docx_converter": fake_module}):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            assert response.headers["content-disposition"] == 'attachment; filename="test_audio_test1234.docx"'
+            assert os.path.exists(docx_file)
+            fake_converter.convert.assert_called_once()
+        finally:
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_get_result_docx_conversion_failure(self, test_client, mock_services, sample_task_info):
+        """Test DOCX conversion failure is reported as 500."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        fake_module = types.ModuleType("backend.services.docx_converter")
+        fake_converter = MagicMock()
+        fake_converter.convert.side_effect = RuntimeError("boom")
+        fake_module.docx_converter = fake_converter
+
+        try:
+            with patch.dict(sys.modules, {"backend.services.docx_converter": fake_module}):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 500
+            assert "DOCX 轉換失敗" in response.json()["detail"]
+        finally:
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_get_result_docx_import_failure(self, test_client, mock_services, sample_task_info):
+        """Test DOCX import failure (missing python-docx) is reported as 500."""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        docx_file = os.path.join(settings.outputs_dir, "test_audio_test1234.docx")
+
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        # Simulate the module being missing entirely so the import inside
+        # the route handler raises ImportError.
+        import importlib
+        saved = sys.modules.pop("backend.services.docx_converter", None)
+
+        def _raise_import(name, *a, **kw):
+            if name == "backend.services.docx_converter":
+                raise ImportError("No module named 'docx'")
+            return original_import(name, *a, **kw)
+
+        import builtins
+        original_import = builtins.__import__
+
+        try:
+            # Remove cached module so the in-function import re-executes
+            sys.modules.pop("backend.services.docx_converter", None)
+            with patch("builtins.__import__", side_effect=_raise_import):
+                response = test_client.get("/api/tasks/test1234/result?format=docx")
+
+            assert response.status_code == 500
+            body = response.json()
+            assert "python-docx" in body["detail"] or "DOCX" in body["detail"]
+        finally:
+            if saved is not None:
+                sys.modules["backend.services.docx_converter"] = saved
+            for path in (result_file, docx_file):
+                if os.path.exists(path):
+                    os.remove(path)
 
 
 # =============================================================================

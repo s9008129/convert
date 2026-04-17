@@ -58,6 +58,7 @@ services:
     # ========================================
     # 啟動配置：實現動態依賴注入
     # ========================================
+    user: root
     entrypoint: >
       sh -c 'echo "[INIT] MeetingScribe 開發環境初始化";
       if [ -f /app/requirements.txt ]; then
@@ -65,7 +66,7 @@ services:
         pip install --no-cache-dir -q -r /app/requirements.txt || echo "[INIT] ⚠️  依賴同步失敗，使用現有環境繼續啟動";
       fi;
       echo "[INIT] 啟動 MeetingScribe...";
-      exec python -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload'
+      exec su appuser -s /bin/sh -c "python -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload"'
     
     # ========================================
     # 日誌配置：便於調試

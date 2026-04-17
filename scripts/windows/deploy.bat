@@ -64,7 +64,22 @@ if errorlevel 1 (
     echo [ERROR] Cannot change to Docker directory: !DOCKER_DIR!
     exit /b 1
 )
-docker compose --progress=plain build
+
+REM 檢查是否為 GPU 模式
+if exist "docker-compose-windows-gpu.yml" (
+    echo [INFO] Detected GPU compose file, checking GPU availability...
+    nvidia-smi >nul 2>&1
+    if not errorlevel 1 (
+        echo [INFO] NVIDIA GPU detected, building GPU version...
+        docker compose -f docker-compose-windows-gpu.yml --progress=plain build
+    ) else (
+        echo [WARN] No NVIDIA GPU detected, building standard version...
+        docker compose --progress=plain build
+    )
+) else (
+    docker compose --progress=plain build
+)
+
 if errorlevel 1 (
     echo [ERROR] Docker image build failed
     exit /b 1
@@ -82,7 +97,22 @@ if errorlevel 1 (
     echo [ERROR] Cannot change to Docker directory
     exit /b 1
 )
-docker compose up -d
+
+REM 檢查是否為 GPU 模式
+if exist "docker-compose-windows-gpu.yml" (
+    nvidia-smi >nul 2>&1
+    if not errorlevel 1 (
+        echo [INFO] Starting with GPU support...
+        echo [INFO] Rebuilding GPU image to keep frontend/backend/dependencies in sync...
+        docker compose -f docker-compose-windows-gpu.yml up -d --build
+    ) else (
+        echo [INFO] Starting without GPU...
+        docker compose up -d
+    )
+) else (
+    docker compose up -d
+)
+
 if errorlevel 1 (
     echo [ERROR] Failed to start services
     exit /b 1
@@ -124,7 +154,13 @@ REM ==============================================
 :cmd_down
 echo [INFO] Stopping services...
 cd /d "!DOCKER_DIR!"
-docker compose down
+
+REM 停止所有可能的 compose 配置
+if exist "docker-compose-windows-gpu.yml" (
+    docker compose -f docker-compose-windows-gpu.yml down 2>nul
+)
+docker compose down 2>nul
+
 echo [OK] Services stopped
 exit /b 0
 
@@ -143,14 +179,33 @@ REM ==============================================
 :cmd_status
 echo [INFO] Service status:
 cd /d "!DOCKER_DIR!"
-docker compose ps
-exit /b %ERRORLEVEL%
+
+REM 顯示所有可能的服務狀態
+if exist "docker-compose-windows-gpu.yml" (
+    echo [GPU Config]:
+    docker compose -f docker-compose-windows-gpu.yml ps 2>nul
+    echo.
+)
+echo [Standard Config]:
+docker compose ps 2>nul
+
+exit /b 0
 
 REM ==============================================
 REM LOGS COMMAND
 REM ==============================================
 :cmd_logs
 cd /d "!DOCKER_DIR!"
+
+REM 優先顯示 GPU 版本日誌
+if exist "docker-compose-windows-gpu.yml" (
+    nvidia-smi >nul 2>&1
+    if not errorlevel 1 (
+        docker compose -f docker-compose-windows-gpu.yml logs -f --tail 100
+        exit /b %ERRORLEVEL%
+    )
+)
+
 docker compose logs -f --tail 100
 exit /b %ERRORLEVEL%
 

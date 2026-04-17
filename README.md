@@ -19,6 +19,14 @@
 - ✅ 快取機制：首次轉換後快取，後續下載直接回傳
 - ✅ 28 項單元測試全數通過
 
+### 🎤 ASR 升級：Breeze-ASR-26 + Gemma4 本地模式
+
+- ✅ 官方 ASR 預設升級為 `MediaTek-Research/Breeze-ASR-26`（Transformers），並保留 `faster-whisper` / Breeze-ASR-25 回滾路徑
+- ✅ 固定 `model_revision`、安全下載 allowlist 與 backend-aware cache，避免誤用舊模型或不安全檔案
+- ✅ 新增 `scripts/download_models.py` 與 `scripts/run_asr26_validation.py`，已提交 10 分鐘驗收產物於 `data/validation/`
+- ✅ 本地 LLM 預設改為 `gemma4:31b`；若只安裝 Gemma4 相容標籤，後端會自動解析
+- ✅ 結果頁調整為純下載流程，完成後提供 Markdown / Word 下載，不再內嵌預覽
+
 **快速啟動**：
 ```bash
 # 使用環境驗證確保一切正常
@@ -210,6 +218,11 @@ pip install -r requirements.txt --prefer-binary
 - faster-whisper 已升級到 1.2.1，兼容新版 PyAV
 - 詳見 [CHANGELOG.md](CHANGELOG.md#v354-stable-patch---2025-12-07)
 
+> 🚀 建議先預載官方 ASR-26 模型：
+> ```bash
+> python scripts/download_models.py
+> ```
+
 如遇到編譯問題，可使用以下方式：
 ```bash
 # 方式 1：使用預編譯 wheels（推薦）
@@ -314,7 +327,7 @@ ws.onmessage = (event) => {
 | `MAX_FILE_SIZE_MB` | `200` | 單檔最大大小（MB） |
 | `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio 端點 |
 | `GEMINI_API_KEY` | - | Gemini API 金鑰 |
-| `WHISPER_MODEL` | `medium` | Whisper 模型 (tiny/base/small/medium/large) |
+| `WHISPER_MODEL` | `MediaTek-Research/Breeze-ASR-26` | Whisper / ASR 模型名稱 |
 
 ### 配置檔案
 

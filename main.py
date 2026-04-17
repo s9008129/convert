@@ -258,10 +258,13 @@ def main():
         transcriber = WhisperTranscriber(
             exe_path=whisper_config.get("exe_path"),
             model=whisper_config.get("model", "large-v3"),
-            language=whisper_config.get("language", "zh"),
+            language=whisper_config.get("language", "auto"),
             device=whisper_config.get("device", "auto"),
             compute_type=whisper_config.get("compute_type", "float16"),
-            cache_dir=str(temp_dir)
+            cache_dir=str(temp_dir),
+            backend=whisper_config.get("backend", "auto"),
+            model_revision=whisper_config.get("model_revision"),
+            local_files_only=whisper_config.get("local_files_only", False),
         )
     except Exception as e:
         logger.error("初始化 Whisper 失敗: %s", e)

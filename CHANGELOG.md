@@ -1,5 +1,21 @@
 # MeetingScribe - 變更紀錄
 
+## [Unreleased]
+
+### 🚀 Breeze-ASR-26 升級
+
+- 官方 ASR 預設路線升級為 `MediaTek-Research/Breeze-ASR-26`（Transformers），並保留 `faster-whisper` / Breeze-ASR-25 回滾能力
+- 新增 `ASR_BACKEND`、`WHISPER_MODEL_REVISION`、安全 allow/deny patterns、backend-aware transcript cache
+- 新增 `scripts/download_models.py` 與 `scripts/run_asr26_validation.py`，固定 revision 下載並產生 10 分鐘混語驗收產物
+- Windows GPU compose 預設切換至官方 ASR-26，CPU / mac 路徑維持較保守設定
+- 本地模式預設 LLM 改為 `gemma4:31b`，若只安裝 Gemma4 相容標籤可由後端自動解析
+
+### 🐛 修復
+
+- 修復官方 ASR-26 的 revision 處理、安全下載限制、CPU fallback retry 與路徑 containment 問題
+- 修復 DOCX 下載失敗時前端/後端錯誤處理，避免只看到 JSON 錯誤內容
+- 新增 60 秒與 10 分鐘驗收產物，詳見 `data/validation/` 與 `驗收報告.md`
+
 ## [v4.0] - 2026-02-28
 
 ### ✨ 新增 DOCX (Word) 下載功能

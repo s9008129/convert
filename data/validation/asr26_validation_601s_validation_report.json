@@ -1,0 +1,13 @@
+{
+  "audio_file": "D:\\dev\\convert\\data\\uploads\\asr26_validation_601s.wav",
+  "manifest_file": "D:\\dev\\convert\\data\\validation\\asr26_validation_601s_manifest.json",
+  "transcript_file": "D:\\dev\\convert\\data\\validation\\asr26_validation_601s_validation_transcript.md",
+  "notes_file": "D:\\dev\\convert\\data\\validation\\asr26_validation_601s_validation_notes.md",
+  "asr_backend": "transformers",
+  "whisper_model": "MediaTek-Research/Breeze-ASR-26",
+  "whisper_model_revision": "949c87bca9dbe90e160cf739460cc765e80805f3",
+  "acceptance_mode": "taigi-priority",
+  "actual_duration_seconds": 606.26,
+  "taigi_segment_count": 24,
+  "taigi_average_similarity": 0.93
+}
