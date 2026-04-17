@@ -9,6 +9,10 @@
 
 ### 變更 🔄
 
+- 官方 ASR 預設路線升級為 `MediaTek-Research/Breeze-ASR-26`（Transformers），並保留 `faster-whisper` / Breeze-ASR-25 回滾能力
+- 新增 `ASR_BACKEND`、`WHISPER_MODEL_REVISION`、安全 allow/deny patterns、backend-aware transcript cache
+- `scripts/download_models.py` 改為固定 revision + safetensors only 預載；新增 `scripts/run_asr26_validation.py` 產生 10 分鐘混語驗收音檔與台語標記產物
+- Windows GPU compose 預設切換至官方 ASR-26；CPU / mac compose 維持保守 faster-whisper 預設
 - 本地模式預設 LLM 改為 `gemma4:31b`，Windows / RTX 4090 已完成實機驗證；若只安裝 Gemma4 相容標籤，後端會自動解析
 - macOS compose 與啟動腳本新增 `LOCAL_LLM_MODEL_MAC` 覆寫路徑，讓小記憶體 Mac 可切換較小的 Gemma4 標籤
 - 結果頁移除 Markdown 預覽與複製按鈕，完成後僅保留 Markdown / DOCX 下載
@@ -16,9 +20,17 @@
 
 ### 修復 🐛
 
+- 修復官方 ASR-26 在 Windows / CPU torch 環境下誤判 CUDA、`pipeline` 參數衝突、缺少外部 ffmpeg CLI、以及下載腳本匯入路徑問題
+- 修復長音檔驗收流程：驗證腳本改為 manifest 對位並在會議記錄中保留台語驗收標記，正式產品輸出仍不含測試標記
 - 修復 DOCX 下載失敗時只看到 JSON 錯誤內容的問題：前端改用 `fetch` + `blob`，後端補上 `python-docx` ImportError 處理
 - 修復 Gemma4 摘要輸出清理與簡繁體誤判：移除 `<think>` 類殘留、正規化 `Stand by` / `\rightarrow`，並排除 `台`、`后` 的誤判
 - 使用 `tests\亞洲無人機AI創新應用研發中心.m4a` 完成端到端驗證，Markdown / DOCX 下載皆通過
+
+### 驗收狀態 📋
+
+- ✅ 60 秒混合語音驗證通過，台語平均相似度 0.928（詳見 `驗收報告.md`）
+- ✅ 10 分鐘混合語音驗收完成（`taigi-priority` 模式），台語平均相似度 0.930，已產生逐字稿與會議記錄驗收文件
+- ✅ 驗收產物會明確標註台語 / 閩南語段落，正式產品輸出仍不含測試標記
 
 ## [4.0.0] - 2025-12-19
 

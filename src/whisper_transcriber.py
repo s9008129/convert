@@ -16,10 +16,13 @@ import time
 import hashlib
 import json
 import platform
+import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from backend.core.asr_model_resolver import infer_asr_backend, resolve_transformers_model_source
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,7 @@ class WhisperTranscriber:
         'medium': '~1.5GB',
         'large-v2': '~3.1GB',
         'large-v3': '~3.1GB',
+        'MediaTek-Research/Breeze-ASR-26': '~6.2GB',
     }
     
     def __init__(
@@ -100,7 +104,10 @@ class WhisperTranscriber:
         language: str = "zh",
         device: str = "auto",
         compute_type: str = "float16",
-        cache_dir: Optional[str] = None
+        cache_dir: Optional[str] = None,
+        backend: str = "auto",
+        model_revision: Optional[str] = None,
+        local_files_only: bool = False,
     ):
         """
         初始化轉錄器
@@ -117,6 +124,9 @@ class WhisperTranscriber:
         self.language = language
         self.compute_type = compute_type
         self.cache_dir = Path(cache_dir) if cache_dir else None
+        self.backend_preference = backend
+        self.model_revision = model_revision
+        self.local_files_only = local_files_only
         
         # 決定後端和裝置
         self.backend = self._detect_backend(exe_path)
@@ -131,6 +141,15 @@ class WhisperTranscriber:
     
     def _detect_backend(self, exe_path: Optional[str]) -> str:
         """檢測可用的後端"""
+        if infer_asr_backend(self.model, self.backend_preference) == "transformers":
+            try:
+                import transformers  # noqa: F401
+                return "transformers"
+            except ImportError as exc:
+                raise TranscriptionError(
+                    "官方 Transformers 模型需要安裝 transformers + torch"
+                ) from exc
+
         # Windows 優先使用獨立執行檔
         if platform.system() == "Windows":
             if exe_path and Path(exe_path).exists():
@@ -168,6 +187,15 @@ class WhisperTranscriber:
         
         # 檢測 CUDA
         if self._check_cuda():
+            if self.backend == "transformers":
+                try:
+                    import torch
+
+                    if not torch.cuda.is_available():
+                        logger.warning("[Whisper] 偵測到 NVIDIA GPU，但 torch 未啟用 CUDA，官方模型改用 CPU")
+                        return "cpu"
+                except ImportError:
+                    return "cpu"
             return "cuda"
         
         logger.warning("[Whisper] CUDA 不可用，使用 CPU")
@@ -246,6 +274,12 @@ class WhisperTranscriber:
             if data.get('model') != self.model:
                 logger.info("[快取] 模型不符，重新轉錄")
                 return None
+            if data.get('backend') != self.backend:
+                logger.info("[快取] 後端不符，重新轉錄")
+                return None
+            if data.get('model_revision') != self.model_revision:
+                logger.info("[快取] 模型 revision 不符，重新轉錄")
+                return None
             
             result = TranscriptionResult(
                 text=data['text'],
@@ -280,6 +314,8 @@ class WhisperTranscriber:
                 'duration_seconds': result.duration_seconds,
                 'processing_time': result.processing_time,
                 'model': result.model,
+                'model_revision': self.model_revision,
+                'backend': self.backend,
                 'device': result.device,
                 'source_file': result.source_file,
                 'segments': result.segments,
@@ -326,6 +362,8 @@ class WhisperTranscriber:
         # 執行轉錄
         if self.backend == "exe":
             result = self._transcribe_exe(audio_path, on_progress)
+        elif self.backend == "transformers":
+            result = self._transcribe_transformers(audio_path, on_progress)
         else:
             result = self._transcribe_python(audio_path, on_progress)
         
@@ -509,6 +547,145 @@ class WhisperTranscriber:
             source_file=str(audio_path),
             segments=segments
         )
+
+    def _transcribe_transformers(
+        self,
+        audio_path: Path,
+        on_progress: Optional[Callable[[str, float], None]]
+    ) -> TranscriptionResult:
+        try:
+            import torch
+            from transformers import pipeline
+        except ImportError as exc:
+            raise TranscriptionError("請安裝 transformers 與 torch") from exc
+
+        if on_progress:
+            on_progress("載入官方 ASR 模型...", 5)
+
+        model_source = resolve_transformers_model_source(
+            self.model,
+            revision=self.model_revision,
+            local_files_only=self.local_files_only,
+        )
+        use_cuda = self.device == "cuda" and getattr(torch.cuda, "is_available", lambda: False)()
+        if self.device == "cuda" and not use_cuda:
+            logger.warning("[Whisper] torch 未啟用 CUDA，Transformers 路徑改用 CPU")
+        torch_dtype = torch.float16 if use_cuda else torch.float32
+        pipeline_device = 0 if use_cuda else -1
+        asr_pipeline = pipeline(
+            task="automatic-speech-recognition",
+            model=model_source,
+            tokenizer=model_source,
+            feature_extractor=model_source,
+            device=pipeline_device,
+            torch_dtype=torch_dtype,
+            model_kwargs={
+                "use_safetensors": True,
+                "low_cpu_mem_usage": True,
+            },
+        )
+
+        if on_progress:
+            on_progress("轉錄中...", 20)
+
+        start_time = time.time()
+        generate_kwargs = {"task": "transcribe"}
+        if self.language and self.language != "auto":
+            generate_kwargs["language"] = self.language
+
+        segments = []
+        audio_array = self._load_audio_array(audio_path)
+        chunk_samples = 30 * 16000
+        full_text_parts = []
+        detected_language = self.language
+
+        for start_index in range(0, len(audio_array), chunk_samples):
+            window = audio_array[start_index:start_index + chunk_samples]
+            if window.size == 0:
+                continue
+            result = asr_pipeline(
+                {"array": window, "sampling_rate": 16000},
+                return_timestamps=True,
+                generate_kwargs=generate_kwargs,
+            )
+            offset = start_index / 16000.0
+            raw_chunks = result.get("chunks", [])
+            normalized_chunks = []
+            for raw_chunk in raw_chunks:
+                timestamp = raw_chunk.get("timestamp") or (0.0, 0.0)
+                if isinstance(timestamp, (list, tuple)) and len(timestamp) == 2:
+                    start, end = timestamp
+                else:
+                    start, end = 0.0, 0.0
+                if raw_chunk.get("text"):
+                    normalized_chunks.append((float(start or 0.0), float(end or 0.0), raw_chunk["text"].strip()))
+
+            if normalized_chunks and any(end > start for start, end, _ in normalized_chunks):
+                for raw_chunk in raw_chunks:
+                    timestamp = raw_chunk.get("timestamp") or (0.0, 0.0)
+                    if isinstance(timestamp, (list, tuple)) and len(timestamp) == 2:
+                        start, end = timestamp
+                    else:
+                        start, end = 0.0, 0.0
+                    if raw_chunk.get("text"):
+                        text = raw_chunk["text"].strip()
+                        segments.append({
+                            "start": float((start or 0.0) + offset),
+                            "end": float((end or 0.0) + offset),
+                            "text": text,
+                        })
+                        full_text_parts.append(text)
+            elif result.get("text"):
+                text = result["text"].strip()
+                end = offset + (len(window) / 16000.0)
+                segments.append({
+                    "start": offset,
+                    "end": end,
+                    "text": text,
+                })
+                full_text_parts.append(text)
+
+            if result.get("language"):
+                detected_language = result["language"]
+
+        elapsed = time.time() - start_time
+
+        if on_progress:
+            on_progress("轉錄完成", 100)
+
+        return TranscriptionResult(
+            text=" ".join(full_text_parts).strip(),
+            language=detected_language,
+            duration_seconds=len(audio_array) / 16000.0,
+            processing_time=elapsed,
+            model=self.model,
+            device=self.device,
+            source_file=str(audio_path),
+            segments=segments,
+        )
+
+    @staticmethod
+    def _load_audio_array(audio_path: Path) -> np.ndarray:
+        import av
+
+        with av.open(str(audio_path)) as container:
+            resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
+            frames: List[np.ndarray] = []
+            for frame in container.decode(audio=0):
+                converted = resampler.resample(frame)
+                if isinstance(converted, list):
+                    iterable = converted
+                else:
+                    iterable = [converted]
+                for item in iterable:
+                    if item is None:
+                        continue
+                    frames.append(item.to_ndarray().reshape(-1).astype(np.int16))
+
+        if not frames:
+            raise TranscriptionError(f"無法讀取音訊資料: {audio_path}")
+
+        return np.concatenate(frames).astype(np.float32) / 32768.0
     
     def get_gpu_info(self) -> Optional[Dict[str, Any]]:
         """取得 GPU 資訊"""

@@ -10,6 +10,7 @@ from pydantic import field_validator, SecretStr
 from pydantic import Field
 
 from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
+from backend.core.asr_model_resolver import DEFAULT_BREEZE_ASR_26_REVISION
 
 
 class Settings(BaseSettings):
@@ -94,11 +95,23 @@ class Settings(BaseSettings):
     )
     
     # ========================================
-    # Whisper 設定 (v4.0.0: 升級至 Breeze-ASR-25)
+    # Whisper / ASR 設定
     # ========================================
+    ASR_BACKEND: str = Field(
+        default="auto",
+        description="ASR 後端 (auto/transformers/faster_whisper)"
+    )
     WHISPER_MODEL: str = Field(
-        default="SoybeanMilk/faster-whisper-Breeze-ASR-25",
-        description="Whisper 模型名稱（支援 HuggingFace repo 或本地路徑）"
+        default="MediaTek-Research/Breeze-ASR-26",
+        description="Whisper / ASR 模型名稱（支援 HuggingFace repo 或本地路徑）"
+    )
+    WHISPER_MODEL_REVISION: Optional[str] = Field(
+        default=None,
+        description="模型 revision / commit SHA（未指定時會自動鎖定 Breeze-ASR-26 官方預設版本）"
+    )
+    WHISPER_LANGUAGE: str = Field(
+        default="auto",
+        description="ASR 語言提示（auto/zh/en/...）"
     )
     WHISPER_DEVICE: str = Field(default="auto", description="Whisper 運算裝置 (auto/cuda/cpu)")
     WHISPER_COMPUTE_TYPE: str = Field(
@@ -132,6 +145,30 @@ class Settings(BaseSettings):
     ASR_BEAM_SIZE: int = Field(
         default=5,
         description="Beam Search 大小"
+    )
+    ASR_RETURN_TIMESTAMPS: bool = Field(
+        default=True,
+        description="是否回傳可供驗證使用的 timestamps/chunks"
+    )
+    ASR_CHUNK_LENGTH_SECONDS: int = Field(
+        default=30,
+        description="Transformers ASR pipeline chunk length"
+    )
+    ASR_LOCAL_FILES_ONLY: bool = Field(
+        default=False,
+        description="是否只使用本地快取模型檔"
+    )
+    ASR_SAFE_ALLOW_PATTERNS: str = Field(
+        default="config.json,generation_config.json,preprocessor_config.json,tokenizer_config.json,special_tokens_map.json,normalizer.json,merges.txt,vocab.json,added_tokens.json,model.safetensors.index.json,model-*.safetensors",
+        description="允許下載的模型檔案模式"
+    )
+    ASR_SAFE_DENY_PATTERNS: str = Field(
+        default="*.bin,*.pt,*.pth,*.ckpt,training_args.bin",
+        description="禁止下載的模型檔案模式"
+    )
+    ASR_TRANSFORMERS_MIN_VRAM_MB: int = Field(
+        default=6000,
+        description="Transformers ASR 最低建議可用 VRAM（MB）"
     )
     ASR_INITIAL_PROMPT: str = Field(
         default="以下是台灣繁體中文的會議記錄。",
@@ -175,6 +212,14 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> str:
         return os.path.join(self.DATA_DIR, "cache")
+
+    @property
+    def asr_safe_allow_patterns_list(self) -> List[str]:
+        return [pattern.strip() for pattern in self.ASR_SAFE_ALLOW_PATTERNS.split(",") if pattern.strip()]
+
+    @property
+    def asr_safe_deny_patterns_list(self) -> List[str]:
+        return [pattern.strip() for pattern in self.ASR_SAFE_DENY_PATTERNS.split(",") if pattern.strip()]
     
     class Config:
         env_file = ".env"

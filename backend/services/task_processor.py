@@ -102,7 +102,8 @@ class TaskProcessor:
             
             # 計算檔案 hash 並檢查快取
             file_hash = file_manager.get_file_hash(file_path)
-            cached_transcript = file_manager.get_cached_transcript(file_hash)
+            cache_signature = file_manager.get_asr_cache_signature()
+            cached_transcript = file_manager.get_cached_transcript(file_hash, cache_signature)
             
             if cached_transcript:
                 log.info(f"找到快取的逐字稿: {file_hash}")
@@ -137,7 +138,7 @@ class TaskProcessor:
                     raise RuntimeError("轉錄結果為空")
                 
                 # 儲存快取
-                file_manager.save_transcript_cache(file_hash, transcript)
+                file_manager.save_transcript_cache(file_hash, transcript, cache_signature)
             
             # 生成摘要
             await self._update_progress(task.task_id, 65.0, "生成摘要", TaskStatus.SUMMARIZING)

@@ -337,14 +337,15 @@ class TestCacheManagement:
         """Test saving and retrieving cached transcript."""
         file_hash = "a" * 64  # Valid SHA256 hash
         transcript = "這是測試逐字稿內容"
+        cache_signature = file_manager.get_asr_cache_signature()
         
-        file_manager.save_transcript_cache(file_hash, transcript)
-        result = file_manager.get_cached_transcript(file_hash)
+        file_manager.save_transcript_cache(file_hash, transcript, cache_signature)
+        result = file_manager.get_cached_transcript(file_hash, cache_signature)
         
         assert result == transcript
         
         # Cleanup
-        cache_file = os.path.join(temp_dirs['cache'], f"{file_hash}.txt")
+        cache_file = file_manager._build_cache_path(file_hash, cache_signature)
         if os.path.exists(cache_file):
             os.remove(cache_file)
     
@@ -376,6 +377,31 @@ class TestCacheManagement:
         # No file should be created
         cache_file = os.path.join(temp_dirs['cache'], "invalid.txt")
         assert not os.path.exists(cache_file)
+
+    def test_asr_cache_signature_changes_with_model_revision(self, file_manager, monkeypatch):
+        """Different model revisions should produce different cache signatures."""
+        from backend.core.config import settings
+
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", "rev-a")
+        sig_a = file_manager.get_asr_cache_signature()
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", "rev-b")
+        sig_b = file_manager.get_asr_cache_signature()
+
+        assert sig_a != sig_b
+
+    def test_asr_cache_signature_uses_effective_breeze_revision(self, file_manager, monkeypatch):
+        """Breeze-ASR-26 should still use the pinned effective revision when unset."""
+        from backend.core.config import settings
+
+        monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+
+        effective_sig = file_manager.get_asr_cache_signature()
+
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", "949c87bca9dbe90e160cf739460cc765e80805f3")
+        explicit_sig = file_manager.get_asr_cache_signature()
+
+        assert effective_sig == explicit_sig
 
 
 # =============================================================================
@@ -502,6 +528,18 @@ class TestFileDeletion:
         result = file_manager.delete_file(malicious_path)
         
         assert result is False
+
+    def test_delete_file_prefix_bypass_blocked(self, file_manager, temp_dirs, tmp_path):
+        """Test that sibling directories with same prefix are blocked."""
+        sibling_dir = tmp_path / "uploads_evil"
+        sibling_dir.mkdir()
+        sibling_file = sibling_dir / "payload.mp3"
+        sibling_file.write_bytes(b"test")
+
+        result = file_manager.delete_file(str(sibling_file))
+
+        assert result is False
+        assert sibling_file.exists()
 
 
 # =============================================================================

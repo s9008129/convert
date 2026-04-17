@@ -43,7 +43,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MAX_FILE_SIZE_MB=100 \
     ENABLE_BATCH_UPLOAD=false \
     MAX_CONCURRENT_TASKS=1 \
-    QUEUE_MAX_SIZE=50
+    QUEUE_MAX_SIZE=50 \
+    HF_HOME=/app/models/huggingface \
+    XDG_CACHE_HOME=/app/models/cache \
+    TRANSFORMERS_CACHE=/app/models/transformers
 
 # 安裝運行時依賴（只需要 ffmpeg runtime，不需要開發套件）
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,10 +65,6 @@ COPY --from=builder /opt/venv /opt/venv
 
 # 複製應用程式碼
 COPY --chown=appuser:appuser . .
-
-# 預載 Whisper 模型（建構時下載，打包進映像）
-# 使用 medium 模型：輸出直接為台灣繁體中文，無需簡繁轉換
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('medium', device='cpu', compute_type='int8')" || true
 
 # 建立資料目錄
 RUN mkdir -p /app/data/uploads /app/data/outputs /app/data/cache /app/models && \

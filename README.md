@@ -19,8 +19,11 @@
 
 MeetingScribe 是一個企業級會議轉錄工具，採用 Docker 容器化部署，實現「一包帶走，直接部署」的目標。支援跨 Windows、macOS、Linux 平台無縫部署，**完全隔離執行環境，絕對不影響主機其他 Docker 服務**。
 
-### 🆕 近期更新：Gemma4 本地模式 + DOCX 下載修復 + 結果頁精簡
+### 🆕 近期更新：ASR 引擎升級至 Breeze-ASR-26 + Gemma4 本地模式
 
+- 🎤 **ASR 引擎升級至 `MediaTek-Research/Breeze-ASR-26`**：官方 Transformers 管線，台語辨識相似度達 92.8%，保留 `faster-whisper` / ASR-25 回滾能力。詳見 [Breeze-ASR-26 驗收報告](驗收報告.md)
+- ✅ **多語言混合驗證**：自動化腳本產生中文 / 英文 / 台語混合音檔，支援 `full-asr` 與 `taigi-priority` 驗收模式，並輸出台語標記逐字稿 / 會議記錄（`scripts/run_asr26_validation.py`）
+- ✅ **模型版本鎖定與快取隔離**：`model_revision` 固定 + 後端感知的 transcript cache 簽章，避免升級誤用舊快取
 - ✅ **本地模式預設改為 `gemma4:31b`**：Windows / RTX 4090 已完成實機驗證；若只安裝 `gemma4:31b-it-q4_K_M` 等相容標籤，後端會自動解析
 - ✅ **台灣繁體中文摘要再優化**：沿用 extraction → merge → refine 管線，強化繁中約束、移除 thought tags，並降低簡繁體誤判
 - ✅ **DOCX 下載問題根因修復**：前端改用 `fetch` + `blob`，後端補上 `python-docx` ImportError 處理，不再出現只拿到 JSON 錯誤內容
@@ -148,10 +151,18 @@ deploy.bat up
 > 💡 **GPU 自動偵測**：
 > 
 > `deploy.bat` 會自動偵測您的系統是否有 NVIDIA GPU：
-> - **有 GPU**：自動使用 `docker-compose-windows-gpu.yml` 進行 CUDA 加速
-> - **無 GPU**：使用標準 `docker-compose.yml`，以 CPU 模式運行
+> - **有 GPU**：自動使用 `docker-compose-windows-gpu.yml`，預設切到官方 `MediaTek-Research/Breeze-ASR-26`
+> - **無 GPU**：使用標準 `docker-compose.yml`，維持 `faster-whisper` / Breeze-ASR-25 保守路徑
 > 
 > 無需手動選擇，一個指令即可完成！
+
+> 🚀 **部署前建議先預載官方模型**
+>
+> ```batch
+> python scripts\download_models.py
+> ```
+>
+> 此腳本會使用固定 revision 與 safetensors allowlist 下載官方 ASR-26，避免執行期臨時抓取未鎖版模型。
 
 > ⚠️ **Windows PowerShell 執行策略問題**？
 > 
@@ -238,7 +249,10 @@ services:
 | `MAX_CONCURRENT_TASKS` | 同時處理數 | 1 | 1-10 |
 | `QUEUE_MAX_SIZE` | 排隊上限 | 50 | 1-1000 |
 | `GEMINI_API_KEY` | Gemini API 金鑰 | - | 必要（雲端模式） |
-| `WHISPER_MODEL` | Whisper 模型 | SoybeanMilk/faster-whisper-Breeze-ASR-25 | faster-whisper 支援的任何模型 |
+| `ASR_BACKEND` | ASR 後端 | auto | auto / transformers / faster_whisper |
+| `WHISPER_MODEL` | Whisper / ASR 模型 | MediaTek-Research/Breeze-ASR-26 | Hugging Face repo 或 faster-whisper 模型 |
+| `WHISPER_MODEL_REVISION` | 官方模型版本鎖定 | 949c87bca9dbe90e160cf739460cc765e80805f3 | 建議固定 commit SHA |
+| `WHISPER_LANGUAGE` | 語言提示 | auto | auto / zh / en / ... |
 | `LOCAL_LLM_MODEL` | 本地 LLM 模型 | gemma4:31b | ollama 支援的任何模型 |
 | `LOCAL_LLM_MODEL_MAC` | macOS 覆寫模型 | （留空） | 小記憶體 Mac 可指定較小 Gemma4 標籤 |
 
@@ -296,6 +310,20 @@ bash ./scripts/health-check.sh
 # 部署工具
 bash ./scripts/deploy.sh [build|up|down|restart|status|logs]
 ```
+
+### ASR-26 驗收腳本
+
+```batch
+python scripts\run_asr26_validation.py --target-duration-seconds 600
+```
+
+此腳本會產生約 10 分鐘的繁中 / 英文 / 台語混合驗證音檔，並輸出：
+
+1. `data\validation\*_manifest.json`
+2. `data\validation\*_validation_transcript.md`
+3. `data\validation\*_validation_notes.md`
+
+驗證產物內會明確標註台語 / 閩南語段落；正式產品輸出仍不含這些測試標記。
 
 ---
 
@@ -448,7 +476,7 @@ curl http://localhost:9527/api/config | findstr gemini_available
 
 - 建議使用 GPU 模式（確認 NVIDIA 驅動已安裝）
 - 嘗試減少 `MAX_CONCURRENT_TASKS` 以節省記憶體
-- 考慮使用較小的 Whisper 模型（修改環境變數 `WHISPER_MODEL=base`）
+- 若需快速回滾，可設定 `ASR_BACKEND=faster_whisper` 與 `WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25`
 - 檢查磁碟 I/O 是否為瓶頸
 
 **Q: 檔案上傳失敗「檔案名稱包含無效字符」？**

@@ -36,16 +36,16 @@ llm:
     repeat_penalty: 1.08   # Gemma4 本地摘要降低重複
     max_output_tokens: 3072   # 最終輸出 / refine 預留長度
 
-# ===== Whisper 語音轉錄設定 (v4.0.0 升級至 Breeze-ASR-25) =====
+# ===== Whisper / ASR 語音轉錄設定 =====
 whisper:
-  # faster-whisper 模型設定
-  # v4.0.0: 升級至 Breeze-ASR-25（台灣繁體中文專用）
-  # 模型來源: HuggingFace SoybeanMilk/faster-whisper-Breeze-ASR-25
-  model: "SoybeanMilk/faster-whisper-Breeze-ASR-25"
+  backend: "transformers"
+  model: "MediaTek-Research/Breeze-ASR-26"
+  model_revision: "949c87bca9dbe90e160cf739460cc765e80805f3"
+  local_files_only: false
   
   # 語言代碼
-  # zh = 中文（繁體/簡體自動識別）
-  language: "zh"
+  # auto = 自動判斷（較適合繁中 / 英文 / 台語混合語音）
+  language: "auto"
   
   # 運算裝置
   # auto = 自動選擇（推薦）
@@ -54,10 +54,10 @@ whisper:
   device: "auto"
   
   # 計算精度（僅 CUDA）
-  # int8_float16 = 混合精度，推薦用於 Breeze-ASR-25
+  # int8_float16 = faster-whisper 混合精度
   # float16     = 標準精度
   # int8        = 最省 VRAM
-  compute_type: "int8_float16"
+  compute_type: "float16"
   
   # VAD（語音活動偵測）設定 - v4.0.0 新增
   vad:

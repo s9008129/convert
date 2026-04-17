@@ -12,6 +12,10 @@ websockets==12.0
 # Whisper 語音轉錄 (v4.0.0 升級)
 faster-whisper==1.1.0
 ctranslate2>=4.5.0
+torch>=2.1.0,<3.0.0
+transformers>=4.49.0,<5.0.0
+accelerate>=0.27.0,<2.0.0
+safetensors>=0.4.2,<1.0.0
 
 # Hugging Face 模型管理 (v4.0.0 新增)
 huggingface_hub>=0.20.0

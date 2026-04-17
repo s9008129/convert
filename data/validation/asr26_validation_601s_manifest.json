@@ -1,0 +1,511 @@
+{
+  "audio_file": "D:\\dev\\convert\\data\\uploads\\asr26_validation_601s.wav",
+  "target_duration_seconds": 601,
+  "actual_duration_seconds": 606.26,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 11.604,
+      "language": "zh-tw",
+      "text": "各位早安，今天先確認無人機巡檢平台第二季的里程碑與風險清單，請大家依照議程逐項回報。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 11.954,
+      "end": 20.871,
+      "language": "en-us",
+      "text": "Let's confirm the rollout plan for the upgraded speech engine and make sure the GPU deployment stays reproducible across environments.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 21.221,
+      "end": 26.476,
+      "language": "nan-tw",
+      "text": "只有孤單陪伴我（Ts?-? koo-tuann pu?-phu?nn gu?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 26.826,
+      "end": 38.395,
+      "language": "zh-tw",
+      "text": "上週 API 串接延遲的主因是影像標註流程還沒有完全自動化，資料團隊預計下週二完成修正。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 38.745,
+      "end": 42.2,
+      "language": "nan-tw",
+      "text": "金錢毋是萬能的（Kim-ts?nn m? s? b?n-l?ng--?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 42.55,
+      "end": 52.712,
+      "language": "en-us",
+      "text": "The operations team needs a clear checklist for model download, cache cleanup, rollback steps, and health check tuning before release.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 53.062,
+      "end": 65.245,
+      "language": "zh-tw",
+      "text": "針對展演活動的現場佈署，我們需要提前確認電力、網路、備援電池與收音設備，避免測試當天重工。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 65.595,
+      "end": 75.057,
+      "language": "en-us",
+      "text": "Please capture the remaining risks around CPU fallback, memory pressure, and mixed language recognition quality in the acceptance report.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 75.407,
+      "end": 78.142,
+      "language": "nan-tw",
+      "text": "清清白白（tshing-tshing-pe?h-pe?h | tshing-tshing-pi?k-pi?k）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 78.492,
+      "end": 88.677,
+      "language": "zh-tw",
+      "text": "教育訓練簡報會由產品經理整理成繁體中文版，英文版摘要請在週五前同步完成。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 89.027,
+      "end": 93.706,
+      "language": "nan-tw",
+      "text": "目前上無有二十八人不幸死亡（bo?k-ts?ng si?ng-b? ? j?-tsa?p-pueh l?ng put-h?ng s?-b?ng）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 94.056,
+      "end": 104.553,
+      "language": "en-us",
+      "text": "For the demo recording, we should alternate Mandarin updates, English action items, and Taigi field feedback to stress the transcription path.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 104.903,
+      "end": 116.534,
+      "language": "zh-tw",
+      "text": "若要把模型部署到 Windows GPU 環境，請先確認 Docker 映像版本、模型快取目錄與 health check 參數一致。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 116.884,
+      "end": 126.231,
+      "language": "en-us",
+      "text": "We also need a validation artifact that highlights every Taigi segment so reviewers can verify the upgrade without changing production output.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 126.581,
+      "end": 129.568,
+      "language": "nan-tw",
+      "text": "伊的人生坎坎坷坷（I ? j?n-sing kh?m-kh?m-khia?t-khia?t）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 129.918,
+      "end": 140.409,
+      "language": "zh-tw",
+      "text": "本次會議的重點是驗證台語、英文與中文混合語音是否都能穩定產生逐字稿與會議記錄。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 140.759,
+      "end": 144.106,
+      "language": "nan-tw",
+      "text": "改過自新（k?i-k?-ts?-sin）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 144.456,
+      "end": 154.093,
+      "language": "en-us",
+      "text": "If the summarization service returns incomplete action items, run one more refinement pass and keep the final notes in traditional Chinese.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 154.443,
+      "end": 164.929,
+      "language": "zh-tw",
+      "text": "法務提醒所有對外展示資料都要去識別化，包含試錄音檔、畫面截圖與下載文件名稱。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 165.279,
+      "end": 173.291,
+      "language": "en-us",
+      "text": "The product owner wants the transcript, meeting notes, and language manifest to be generated from one repeatable command.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 173.641,
+      "end": 178.895,
+      "language": "nan-tw",
+      "text": "只有孤單陪伴我（Ts?-? koo-tuann pu?-phu?nn gu?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 179.245,
+      "end": 189.157,
+      "language": "zh-tw",
+      "text": "如果現場網路品質不穩，我們會切回離線模式，先保留逐字稿再於會後補跑摘要。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 189.507,
+      "end": 192.962,
+      "language": "nan-tw",
+      "text": "金錢毋是萬能的（Kim-ts?nn m? s? b?n-l?ng--?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 193.312,
+      "end": 202.234,
+      "language": "en-us",
+      "text": "Please make sure the backend cache is invalidated by model, backend, and revision so old transcripts can never mask a failed upgrade.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 202.584,
+      "end": 213.333,
+      "language": "zh-tw",
+      "text": "請研發團隊評估語者分段與時間戳精度，因為後續的會議紀錄標註會直接依賴這些區塊。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 213.683,
+      "end": 222.62,
+      "language": "en-us",
+      "text": "After the deployment test, prepare a concise merge log in zh-TW that explains what changed and how to roll back safely.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 222.97,
+      "end": 225.705,
+      "language": "nan-tw",
+      "text": "清清白白（tshing-tshing-pe?h-pe?h | tshing-tshing-pi?k-pi?k）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 226.055,
+      "end": 237.436,
+      "language": "zh-tw",
+      "text": "下週驗收時，請在測試產物中保留台語段落標記，但正式產品輸出不得出現任何測試標記。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 237.786,
+      "end": 242.465,
+      "language": "nan-tw",
+      "text": "目前上無有二十八人不幸死亡（bo?k-ts?ng si?ng-b? ? j?-tsa?p-pueh l?ng put-h?ng s?-b?ng）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 242.815,
+      "end": 252.057,
+      "language": "en-us",
+      "text": "If we detect that torch does not have CUDA support, the validation runner must fall back to CPU instead of crashing halfway through.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 252.407,
+      "end": 264.011,
+      "language": "zh-tw",
+      "text": "各位早安，今天先確認無人機巡檢平台第二季的里程碑與風險清單，請大家依照議程逐項回報。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 264.361,
+      "end": 273.278,
+      "language": "en-us",
+      "text": "Let's confirm the rollout plan for the upgraded speech engine and make sure the GPU deployment stays reproducible across environments.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 273.628,
+      "end": 276.615,
+      "language": "nan-tw",
+      "text": "伊的人生坎坎坷坷（I ? j?n-sing kh?m-kh?m-khia?t-khia?t）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 276.965,
+      "end": 288.534,
+      "language": "zh-tw",
+      "text": "上週 API 串接延遲的主因是影像標註流程還沒有完全自動化，資料團隊預計下週二完成修正。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 288.884,
+      "end": 292.231,
+      "language": "nan-tw",
+      "text": "改過自新（k?i-k?-ts?-sin）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 292.581,
+      "end": 302.743,
+      "language": "en-us",
+      "text": "The operations team needs a clear checklist for model download, cache cleanup, rollback steps, and health check tuning before release.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 303.093,
+      "end": 315.276,
+      "language": "zh-tw",
+      "text": "針對展演活動的現場佈署，我們需要提前確認電力、網路、備援電池與收音設備，避免測試當天重工。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 315.626,
+      "end": 325.088,
+      "language": "en-us",
+      "text": "Please capture the remaining risks around CPU fallback, memory pressure, and mixed language recognition quality in the acceptance report.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 325.438,
+      "end": 330.693,
+      "language": "nan-tw",
+      "text": "只有孤單陪伴我（Ts?-? koo-tuann pu?-phu?nn gu?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 331.043,
+      "end": 341.228,
+      "language": "zh-tw",
+      "text": "教育訓練簡報會由產品經理整理成繁體中文版，英文版摘要請在週五前同步完成。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 341.578,
+      "end": 345.033,
+      "language": "nan-tw",
+      "text": "金錢毋是萬能的（Kim-ts?nn m? s? b?n-l?ng--?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 345.383,
+      "end": 355.88,
+      "language": "en-us",
+      "text": "For the demo recording, we should alternate Mandarin updates, English action items, and Taigi field feedback to stress the transcription path.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 356.229,
+      "end": 367.861,
+      "language": "zh-tw",
+      "text": "若要把模型部署到 Windows GPU 環境，請先確認 Docker 映像版本、模型快取目錄與 health check 參數一致。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 368.211,
+      "end": 377.558,
+      "language": "en-us",
+      "text": "We also need a validation artifact that highlights every Taigi segment so reviewers can verify the upgrade without changing production output.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 377.908,
+      "end": 380.643,
+      "language": "nan-tw",
+      "text": "清清白白（tshing-tshing-pe?h-pe?h | tshing-tshing-pi?k-pi?k）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 380.993,
+      "end": 391.484,
+      "language": "zh-tw",
+      "text": "本次會議的重點是驗證台語、英文與中文混合語音是否都能穩定產生逐字稿與會議記錄。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 391.834,
+      "end": 396.513,
+      "language": "nan-tw",
+      "text": "目前上無有二十八人不幸死亡（bo?k-ts?ng si?ng-b? ? j?-tsa?p-pueh l?ng put-h?ng s?-b?ng）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 396.863,
+      "end": 406.5,
+      "language": "en-us",
+      "text": "If the summarization service returns incomplete action items, run one more refinement pass and keep the final notes in traditional Chinese.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 406.85,
+      "end": 417.336,
+      "language": "zh-tw",
+      "text": "法務提醒所有對外展示資料都要去識別化，包含試錄音檔、畫面截圖與下載文件名稱。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 417.686,
+      "end": 425.697,
+      "language": "en-us",
+      "text": "The product owner wants the transcript, meeting notes, and language manifest to be generated from one repeatable command.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 426.047,
+      "end": 429.034,
+      "language": "nan-tw",
+      "text": "伊的人生坎坎坷坷（I ? j?n-sing kh?m-kh?m-khia?t-khia?t）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 429.384,
+      "end": 439.296,
+      "language": "zh-tw",
+      "text": "如果現場網路品質不穩，我們會切回離線模式，先保留逐字稿再於會後補跑摘要。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 439.646,
+      "end": 442.993,
+      "language": "nan-tw",
+      "text": "改過自新（k?i-k?-ts?-sin）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 443.343,
+      "end": 452.264,
+      "language": "en-us",
+      "text": "Please make sure the backend cache is invalidated by model, backend, and revision so old transcripts can never mask a failed upgrade.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 452.614,
+      "end": 463.364,
+      "language": "zh-tw",
+      "text": "請研發團隊評估語者分段與時間戳精度，因為後續的會議紀錄標註會直接依賴這些區塊。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 463.714,
+      "end": 472.651,
+      "language": "en-us",
+      "text": "After the deployment test, prepare a concise merge log in zh-TW that explains what changed and how to roll back safely.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 473.001,
+      "end": 478.256,
+      "language": "nan-tw",
+      "text": "只有孤單陪伴我（Ts?-? koo-tuann pu?-phu?nn gu?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 478.606,
+      "end": 489.987,
+      "language": "zh-tw",
+      "text": "下週驗收時，請在測試產物中保留台語段落標記，但正式產品輸出不得出現任何測試標記。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 490.337,
+      "end": 493.792,
+      "language": "nan-tw",
+      "text": "金錢毋是萬能的（Kim-ts?nn m? s? b?n-l?ng--?）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 494.142,
+      "end": 503.384,
+      "language": "en-us",
+      "text": "If we detect that torch does not have CUDA support, the validation runner must fall back to CPU instead of crashing halfway through.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 503.734,
+      "end": 515.338,
+      "language": "zh-tw",
+      "text": "各位早安，今天先確認無人機巡檢平台第二季的里程碑與風險清單，請大家依照議程逐項回報。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 515.688,
+      "end": 524.605,
+      "language": "en-us",
+      "text": "Let's confirm the rollout plan for the upgraded speech engine and make sure the GPU deployment stays reproducible across environments.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 524.955,
+      "end": 527.69,
+      "language": "nan-tw",
+      "text": "清清白白（tshing-tshing-pe?h-pe?h | tshing-tshing-pi?k-pi?k）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 528.04,
+      "end": 539.609,
+      "language": "zh-tw",
+      "text": "上週 API 串接延遲的主因是影像標註流程還沒有完全自動化，資料團隊預計下週二完成修正。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 539.959,
+      "end": 544.638,
+      "language": "nan-tw",
+      "text": "目前上無有二十八人不幸死亡（bo?k-ts?ng si?ng-b? ? j?-tsa?p-pueh l?ng put-h?ng s?-b?ng）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 544.988,
+      "end": 555.15,
+      "language": "en-us",
+      "text": "The operations team needs a clear checklist for model download, cache cleanup, rollback steps, and health check tuning before release.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 555.5,
+      "end": 567.683,
+      "language": "zh-tw",
+      "text": "針對展演活動的現場佈署，我們需要提前確認電力、網路、備援電池與收音設備，避免測試當天重工。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 568.033,
+      "end": 577.495,
+      "language": "en-us",
+      "text": "Please capture the remaining risks around CPU fallback, memory pressure, and mixed language recognition quality in the acceptance report.",
+      "source": "tts:Microsoft Zira Desktop"
+    },
+    {
+      "start": 577.845,
+      "end": 580.832,
+      "language": "nan-tw",
+      "text": "伊的人生坎坎坷坷（I ? j?n-sing kh?m-kh?m-khia?t-khia?t）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 581.182,
+      "end": 591.367,
+      "language": "zh-tw",
+      "text": "教育訓練簡報會由產品經理整理成繁體中文版，英文版摘要請在週五前同步完成。",
+      "source": "tts:Microsoft Hanhan Desktop"
+    },
+    {
+      "start": 591.717,
+      "end": 595.064,
+      "language": "nan-tw",
+      "text": "改過自新（k?i-k?-ts?-sin）",
+      "source": "adi-gov-tw/Taiwan-Tongues-ASR-CE-dataset-hokkien:train-000000"
+    },
+    {
+      "start": 595.414,
+      "end": 605.91,
+      "language": "en-us",
+      "text": "For the demo recording, we should alternate Mandarin updates, English action items, and Taigi field feedback to stress the transcription path.",
+      "source": "tts:Microsoft Zira Desktop"
+    }
+  ]
+}

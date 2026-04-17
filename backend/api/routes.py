@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
+from backend.core.asr_model_resolver import resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.models.schemas import (
@@ -284,7 +285,13 @@ async def get_config():
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
         "gemini_available": summarization_service.check_gemini_available(),
-        "lmstudio_model": settings.LMSTUDIO_MODEL
+        "lmstudio_model": settings.LMSTUDIO_MODEL,
+        "asr_backend": settings.ASR_BACKEND,
+        "whisper_model": settings.WHISPER_MODEL,
+        "whisper_model_revision": resolve_model_revision(
+            settings.WHISPER_MODEL,
+            settings.WHISPER_MODEL_REVISION,
+        ),
     }
 
 

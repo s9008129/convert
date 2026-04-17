@@ -80,11 +80,14 @@ services:
       - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
-      # Whisper 轉錄設定 (v4.0.0: Breeze-ASR-25)
+      # Whisper / ASR 設定（官方 Breeze-ASR-26）
       # ========================================
-      - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
+      - ASR_BACKEND=transformers
+      - WHISPER_MODEL=MediaTek-Research/Breeze-ASR-26
+      - WHISPER_MODEL_REVISION=949c87bca9dbe90e160cf739460cc765e80805f3
+      - WHISPER_LANGUAGE=auto
       - WHISPER_DEVICE=auto
-      - WHISPER_COMPUTE_TYPE=int8_float16
+      - WHISPER_COMPUTE_TYPE=float16
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）
@@ -125,14 +128,14 @@ services:
       - "com.meetingscribe.gpu=rtx4090"
       - "com.meetingscribe.cuda=12.3"
       - "com.meetingscribe.cudnn=8+9"
-      - "com.meetingscribe.asr=breeze-asr-25"
+      - "com.meetingscribe.asr=breeze-asr-26"
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9527/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 600s
 
 # ========================================
 # 網路配置 - 完全獨立隔離

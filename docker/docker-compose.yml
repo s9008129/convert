@@ -76,7 +76,9 @@ services:
       # ========================================
       # Whisper 轉錄設定
       # ========================================
+      - ASR_BACKEND=faster_whisper
       - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
+      - WHISPER_LANGUAGE=zh
       - WHISPER_DEVICE=auto
       
       # ========================================

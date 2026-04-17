@@ -12,11 +12,19 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from fastapi import UploadFile
 
+from backend.core.asr_model_resolver import build_asr_cache_signature, infer_asr_backend, resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
 
 # 預編譯正則表達式以提升效能
 SHA256_HASH_PATTERN = re.compile(r'^[0-9a-f]{64}$')
+
+
+def _is_within_directory(path: str, directory: str) -> bool:
+    try:
+        return os.path.commonpath([path, directory]) == directory
+    except ValueError:
+        return False
 
 
 class FileManagerService:
@@ -112,28 +120,43 @@ class FileManagerService:
             for chunk in iter(lambda: f.read(8192), b""):
                 hash_sha256.update(chunk)
         return hash_sha256.hexdigest()
+
+    def get_asr_cache_signature(self) -> str:
+        backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        return build_asr_cache_signature(
+            model_name=settings.WHISPER_MODEL,
+            backend=backend,
+            revision=resolve_model_revision(
+                settings.WHISPER_MODEL,
+                settings.WHISPER_MODEL_REVISION,
+            ),
+        )
+
+    def _build_cache_path(self, file_hash: str, cache_signature: Optional[str] = None) -> str:
+        signature = cache_signature or self.get_asr_cache_signature()
+        return os.path.join(settings.cache_dir, f"{file_hash}_{signature}.txt")
     
-    def get_cached_transcript(self, file_hash: str) -> Optional[str]:
+    def get_cached_transcript(self, file_hash: str, cache_signature: Optional[str] = None) -> Optional[str]:
         """取得快取的逐字稿（驗證 hash 格式）"""
         # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
         if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
             log.warning(f"無效的快取 hash 格式: {file_hash}")
             return None
         
-        cache_file = os.path.join(settings.cache_dir, f"{file_hash}.txt")
+        cache_file = self._build_cache_path(file_hash, cache_signature=cache_signature)
         if os.path.exists(cache_file):
             with open(cache_file, 'r', encoding='utf-8') as f:
                 return f.read()
         return None
     
-    def save_transcript_cache(self, file_hash: str, transcript: str):
+    def save_transcript_cache(self, file_hash: str, transcript: str, cache_signature: Optional[str] = None):
         """儲存逐字稿到快取（驗證 hash 格式）"""
         # 驗證 file_hash 格式（應為 64 字元的十六進位字串）
         if not file_hash or not SHA256_HASH_PATTERN.match(file_hash.lower()):
             log.warning(f"無效的快取 hash 格式，跳過儲存: {file_hash}")
             return
         
-        cache_file = os.path.join(settings.cache_dir, f"{file_hash}.txt")
+        cache_file = self._build_cache_path(file_hash, cache_signature=cache_signature)
         with open(cache_file, 'w', encoding='utf-8') as f:
             f.write(transcript)
         log.debug(f"逐字稿已快取: {file_hash}")
@@ -170,7 +193,7 @@ class FileManagerService:
                 os.path.abspath(settings.cache_dir)
             ]
             
-            is_safe = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+            is_safe = any(_is_within_directory(abs_path, allowed_dir) for allowed_dir in allowed_dirs)
             if not is_safe:
                 log.warning(f"嘗試刪除不允許目錄中的檔案: {file_path}")
                 return False

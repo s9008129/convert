@@ -187,6 +187,9 @@ class TestConfigEndpoint:
         assert "max_concurrent_tasks" in data
         assert "queue_max_size" in data
         assert "default_mode" in data
+        assert "asr_backend" in data
+        assert "whisper_model" in data
+        assert "whisper_model_revision" in data
     
     def test_config_contains_gemini_availability(self, test_client, mock_services):
         """Test config includes Gemini availability."""
@@ -195,6 +198,18 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "gemini_available" in data
+
+    def test_config_exposes_effective_breeze_revision(self, test_client, mock_services, monkeypatch):
+        """Test config returns the effective pinned revision for Breeze-ASR-26."""
+        from backend.core.config import settings
+
+        monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+        monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+
+        response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        assert response.json()["whisper_model_revision"] == "949c87bca9dbe90e160cf739460cc765e80805f3"
 
 
 # =============================================================================
