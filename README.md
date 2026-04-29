@@ -210,7 +210,21 @@ venv\Scripts\activate
 #### 3. 安裝依賴
 
 ```bash
+# macOS / Linux / 無 NVIDIA GPU 的 Windows
 pip install -r requirements.txt --prefer-binary
+```
+
+**Windows + NVIDIA GPU（官方 ASR-26 / Transformers 必做）**：
+```bash
+python install_deps.py
+python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```
+
+`install_deps.py` 會先安裝 `requirements.txt`，再用 `requirements.windows-cuda.txt` 強制覆寫成 PyTorch 官方 CUDA wheel。
+
+若最後一行不是 `True`，代表目前仍是 CPU-only torch；請執行一次：
+```bash
+python -m pip install --upgrade --force-reinstall -r requirements.windows-cuda.txt --prefer-binary
 ```
 
 **依賴修復（v3.5.4-stable-patch）**：
@@ -405,6 +419,15 @@ curl http://localhost:1234/v1/models
 - 檢查音訊品質（建議 16kHz, mono）
 - 調整 Whisper 模型大小（更大 = 更準確但更慢）
 - 檢查 system prompt 設定
+
+#### Q: 有 RTX 4090，但轉錄沒有使用 GPU
+- 先執行 `python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"`
+- 若結果是 `+cpu`、`None` 或 `False`，代表目前安裝的是 CPU-only torch
+- 在 Windows + NVIDIA 環境請改執行：
+```bash
+python -m pip install --upgrade --force-reinstall -r requirements.windows-cuda.txt --prefer-binary
+```
+- 重新啟動服務後再檢查 `/api/health` 或重新上傳音檔
 
 #### Q: 記憶體不足
 - 降低 Whisper 模型等級（large → medium）

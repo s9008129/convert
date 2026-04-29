@@ -29,9 +29,13 @@ MeetingScribe 環境驗證腳本 v1.0
 
 import sys
 import os
+import platform
 import subprocess
 from pathlib import Path
 from typing import Tuple, List
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WINDOWS_CUDA_REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.windows-cuda.txt"
 
 
 class Colors:
@@ -93,6 +97,82 @@ def check_ffmpeg() -> Tuple[bool, str]:
         return False, "FFmpeg 未安裝（brew install ffmpeg）"
     except subprocess.TimeoutExpired:
         return False, "FFmpeg 回應超時"
+
+
+def has_nvidia_gpu() -> bool:
+    """檢查目前主機是否可見 NVIDIA GPU。"""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
+def get_windows_cuda_fix_command(python_executable: str | None = None) -> str:
+    """提供 Windows + NVIDIA GPU 的 torch 修復指令。"""
+    python_cmd = python_executable or sys.executable
+    return (
+        f'"{python_cmd}" -m pip install --upgrade --force-reinstall '
+        f'-r "{WINDOWS_CUDA_REQUIREMENTS_FILE}" --prefer-binary'
+    )
+
+
+def _read_torch_runtime_status() -> dict[str, object]:
+    try:
+        import torch
+    except ImportError:
+        return {
+            "installed": False,
+            "version": None,
+            "cuda_version": None,
+            "cuda_available": False,
+        }
+
+    return {
+        "installed": True,
+        "version": getattr(torch, "__version__", None),
+        "cuda_version": getattr(torch.version, "cuda", None),
+        "cuda_available": bool(torch.cuda.is_available()),
+    }
+
+
+def evaluate_windows_cuda_torch_status(
+    runtime_status: dict[str, object],
+    system_name: str,
+    nvidia_gpu_available: bool,
+) -> Tuple[bool, str]:
+    """評估 Windows + NVIDIA 環境是否真的具備 CUDA 版 torch。"""
+    if system_name != "Windows" or not nvidia_gpu_available:
+        return True, "未偵測到 Windows + NVIDIA GPU，略過 CUDA torch 檢查"
+
+    if runtime_status["cuda_available"]:
+        return True, (
+            f"torch {runtime_status['version']} 已啟用 CUDA "
+            f"(torch.version.cuda={runtime_status['cuda_version']})"
+        )
+
+    return False, (
+        "偵測到 Windows + NVIDIA GPU，但目前 torch 為 CPU-only 或 CUDA 未啟用："
+        f" torch={runtime_status['version'] or '未安裝'},"
+        f" torch.version.cuda={runtime_status['cuda_version']},"
+        f" torch.cuda.is_available()={runtime_status['cuda_available']}。\n"
+        f"    修復指令：{get_windows_cuda_fix_command()}\n"
+        "    或改用：python install_deps.py"
+    )
+
+
+def check_windows_cuda_torch() -> Tuple[bool, str]:
+    """檢查 Windows + NVIDIA 主機上的 torch 是否真為 CUDA 版。"""
+    return evaluate_windows_cuda_torch_status(
+        runtime_status=_read_torch_runtime_status(),
+        system_name=platform.system(),
+        nvidia_gpu_available=has_nvidia_gpu(),
+    )
 
 
 def check_module(module_name: str, display_name: str, import_test: str = None) -> Tuple[bool, str]:
@@ -251,8 +331,16 @@ def run_all_checks() -> bool:
     
     if not optional_ok:
         print(f"  {Colors.YELLOW}提示：安裝 mlx-whisper 可獲得 3-5 倍加速{Colors.RESET}")
+
+    # 5. Windows CUDA / Torch
+    print(f"\n{Colors.BLUE}{Colors.BOLD}【Windows CUDA / Torch】{Colors.RESET}")
+    ok, msg = check_windows_cuda_torch()
+    status = f"{Colors.GREEN}✅{Colors.RESET}" if ok else f"{Colors.RED}❌{Colors.RESET}"
+    print(f"  {status} {msg}")
+    if not ok:
+        critical_failed = True
     
-    # 5. 目錄結構
+    # 6. 目錄結構
     print(f"\n{Colors.BLUE}{Colors.BOLD}【目錄結構】{Colors.RESET}")
     
     for ok, msg in check_directories():
@@ -261,7 +349,7 @@ def run_all_checks() -> bool:
         if not ok:
             critical_failed = True
     
-    # 6. 配置檔案
+    # 7. 配置檔案
     print(f"\n{Colors.BLUE}{Colors.BOLD}【配置檔案】{Colors.RESET}")
     
     for ok, msg in check_config_files():
@@ -278,6 +366,8 @@ def run_all_checks() -> bool:
         print("  2. conda activate meetingscribe")
         print("  3. conda install -c conda-forge av ffmpeg -y")
         print("  4. pip install faster-whisper mlx-whisper")
+        if platform.system() == "Windows" and has_nvidia_gpu():
+            print(f"  5. {get_windows_cuda_fix_command()}")
         return False
     else:
         print(f"{Colors.GREEN}{Colors.BOLD}✅ 環境驗證通過 - 可以啟動服務{Colors.RESET}")

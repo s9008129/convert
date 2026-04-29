@@ -15,6 +15,7 @@
 - 修復官方 ASR-26 的 revision 處理、安全下載限制、CPU fallback retry 與路徑 containment 問題
 - 修復 DOCX 下載失敗時前端/後端錯誤處理，避免只看到 JSON 錯誤內容
 - 修復前端上傳流程遺失 `setDownloadButtonsEnabled()` 輔助函式，避免選檔後在送出 `/api/upload` 前就因 `ReferenceError` 完全無反應
+- 修復 Windows + NVIDIA 原生安裝容易誤裝 `torch ... +cpu` 的問題：新增 `requirements.windows-cuda.txt` 精確鎖定 CUDA wheel、`install_deps.py` 自動選擇 GPU 安裝路徑，並讓 `scripts/verify_env.py` 明確攔截 CPU-only torch
 - 新增 60 秒與 10 分鐘驗收產物，詳見 `data/validation/` 與 `驗收報告.md`
 
 ## [v4.0] - 2026-02-28

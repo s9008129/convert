@@ -14,39 +14,129 @@
 3) 印出完成摘要供使用者核對
 
 例外情境說明：
-- 本腳本刻意維持簡單流程，未使用 check=True 強制中止。
-- 若單一套件安裝失敗，畫面仍可能繼續執行到下一個套件，
-  因此建議搭配終端機輸出或後續執行主程式來確認環境是否完整。
+- 安裝失敗會立即中止，避免留下看似成功、實際不完整的環境。
 """
+import platform
 import subprocess
 import sys
+from pathlib import Path
 
-REQUIRED_PACKAGES = [
-    "pyyaml",
-    "httpx",
-    "python-docx",
-]
+REPO_ROOT = Path(__file__).resolve().parent
+REQUIREMENTS_FILE = REPO_ROOT / "requirements.txt"
+WINDOWS_CUDA_REQUIREMENTS_FILE = REPO_ROOT / "requirements.windows-cuda.txt"
+CUDA_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu126"
 
-OPTIONAL_PACKAGES = [
-    "faster-whisper",  # 如果不使用獨立執行檔
-]
+def _run_pip_install(*args: str) -> None:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", *args],
+        check=True,
+    )
+
+
+def _has_nvidia_gpu() -> bool:
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
+def _is_windows_nvidia_host(system_name: str | None = None, has_nvidia_gpu: bool | None = None) -> bool:
+    detected_system = system_name or platform.system()
+    detected_gpu = _has_nvidia_gpu() if has_nvidia_gpu is None else has_nvidia_gpu
+    return detected_system == "Windows" and detected_gpu
+
+
+def _should_install_windows_cuda_torch(system_name: str | None = None, has_nvidia_gpu: bool | None = None) -> bool:
+    return _is_windows_nvidia_host(system_name=system_name, has_nvidia_gpu=has_nvidia_gpu)
+
+
+def _read_torch_runtime_status() -> dict[str, object]:
+    try:
+        import torch
+    except ImportError:
+        return {
+            "installed": False,
+            "version": None,
+            "cuda_version": None,
+            "cuda_available": False,
+        }
+
+    return {
+        "installed": True,
+        "version": getattr(torch, "__version__", None),
+        "cuda_version": getattr(torch.version, "cuda", None),
+        "cuda_available": bool(torch.cuda.is_available()),
+    }
+
+
+def _validate_windows_cuda_runtime(
+    status: dict[str, object] | None = None,
+    system_name: str | None = None,
+    has_nvidia_gpu: bool | None = None,
+) -> tuple[bool, str]:
+    if not _is_windows_nvidia_host(system_name=system_name, has_nvidia_gpu=has_nvidia_gpu):
+        return True, ""
+
+    runtime = status or _read_torch_runtime_status()
+    if runtime["cuda_available"]:
+        return True, (
+            "已確認 torch CUDA 可用："
+            f" version={runtime['version']}, cuda={runtime['cuda_version']}"
+        )
+
+    repair_command = (
+        f'"{sys.executable}" -m pip install --upgrade --force-reinstall '
+        f'-r "{WINDOWS_CUDA_REQUIREMENTS_FILE}" --prefer-binary'
+    )
+    return False, (
+        "偵測到 Windows + NVIDIA GPU，但目前 torch 尚未啟用 CUDA："
+        f" version={runtime['version'] or '未安裝'},"
+        f" torch.version.cuda={runtime['cuda_version']},"
+        f" torch.cuda.is_available()={runtime['cuda_available']}。\n"
+        f"請在專案根目錄執行：{repair_command}"
+    )
+
 
 def main():
     """依序安裝必要套件，並在最後顯示安裝摘要。"""
     print("安裝必要的 Python 套件...")
-    
-    # 每安裝一個就立即顯示進度，讓非技術使用者知道目前卡在哪一步。
-    for package in REQUIRED_PACKAGES:
-        print(f"  安裝 {package}...")
-        subprocess.run([
-            sys.executable, "-m", "pip", "install", 
-            package, "--quiet"
-        ])
-    
+    has_nvidia_gpu = _has_nvidia_gpu()
+    should_install_windows_cuda_torch = _should_install_windows_cuda_torch(has_nvidia_gpu=has_nvidia_gpu)
+
+    _run_pip_install("--upgrade", "pip")
+
+    print(f"  安裝 {REQUIREMENTS_FILE.name}...")
+    _run_pip_install("-r", str(REQUIREMENTS_FILE), "--prefer-binary")
+
+    if should_install_windows_cuda_torch:
+        print(f"\n偵測到 Windows + NVIDIA GPU，正在覆寫安裝 CUDA 版 torch...")
+        _run_pip_install(
+            "--upgrade",
+            "--force-reinstall",
+            "-r",
+            str(WINDOWS_CUDA_REQUIREMENTS_FILE),
+            "--prefer-binary",
+        )
+
+    cuda_ok, cuda_message = _validate_windows_cuda_runtime(has_nvidia_gpu=has_nvidia_gpu)
+    if cuda_message:
+        print(f"\n{cuda_message}")
+    if not cuda_ok:
+        raise SystemExit(1)
+
     print("\n安裝完成！")
     print("\n已安裝的套件：")
-    for package in REQUIRED_PACKAGES:
-        print(f"  ✓ {package}")
+    print(f"  ✓ {REQUIREMENTS_FILE.name}")
+    if should_install_windows_cuda_torch:
+        print(f"  ✓ {WINDOWS_CUDA_REQUIREMENTS_FILE.name}")
+        print(f"  ✓ CUDA torch ({CUDA_TORCH_INDEX_URL})")
 
 if __name__ == "__main__":
     main()

@@ -41,7 +41,8 @@ example_start.bat（範例）:
 REM 啟用 Python 虛擬環境（若使用 venv）
 call "%~dp0\.venv\Scripts\activate.bat"
 REM 安裝相依套件（第一次或更新時使用）
-python -m pip install -r requirements.txt
+REM Windows + NVIDIA GPU 請優先使用 install_deps.py，避免裝到 CPU-only torch
+python install_deps.py
 REM 啟動主程式
 python main.py
 
@@ -148,6 +149,7 @@ Docker 中設定方式：
 
 注意相容性：
 - CUDA、驅動與深度學習套件（如 PyTorch、TensorFlow）之間需要版本相容，若發生錯誤，通常為版本不匹配所致。
+- 本專案的 Windows GPU 安裝路徑已固定到「先安裝 `requirements.txt`、再以 `requirements.windows-cuda.txt` 覆寫 CUDA 版 torch (`torch==2.11.0+cu126`)」，避免 `pip install -r requirements.txt` 誤裝成 `torch ... +cpu`。
 
 ---
 
@@ -183,6 +185,8 @@ Q3：GPU 在容器中不可見
 Q4：套件相依性或版本不相容
 - 使用 `requirements.txt` 建立隔離的虛擬環境並安裝依賴。
 - 若使用 GPU，加倍注意 PyTorch/TF 與 CUDA 的版本相容表。
+- Windows + NVIDIA GPU 若看到 `torch.cuda.is_available() == False`，請在專案根目錄執行：
+  `python -m pip install --upgrade --force-reinstall -r requirements.windows-cuda.txt --prefer-binary`
 
 Q5：資料遺失或權限問題
 - 確認資料目錄（data/）權限，避免服務無法讀寫。
