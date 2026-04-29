@@ -221,6 +221,19 @@ class TestFileSizeValidation:
         # Verify seek was called to reset pointer
         file.seek.assert_called_with(0)
 
+    @pytest.mark.asyncio
+    async def test_validate_file_size_can_return_content(self, file_manager):
+        """Test validation can return the already-read bytes for reuse."""
+        content = b"reusable content"
+        file = create_mock_upload_file("test.mp3", content)
+
+        is_valid, error, size, returned_content = await file_manager.validate_file_size(file, return_content=True)
+
+        assert is_valid
+        assert error == ""
+        assert size == len(content)
+        assert returned_content == content
+
 
 # =============================================================================
 # File Upload Tests
@@ -284,6 +297,21 @@ class TestFileUpload:
         assert file_path.startswith(temp_dirs['uploads'])
         
         # Cleanup
+        os.remove(file_path)
+
+    @pytest.mark.asyncio
+    async def test_save_upload_reuses_preloaded_content(self, file_manager, temp_dirs):
+        """Test save_upload can write already-read bytes without another file.read()."""
+        content = b"preloaded audio content"
+        file = create_mock_upload_file("test.mp3", content)
+
+        file_path, unique_name, size = await file_manager.save_upload(file, content=content)
+
+        assert os.path.exists(file_path)
+        assert unique_name.endswith(".mp3")
+        assert size == len(content)
+        file.read.assert_not_called()
+
         os.remove(file_path)
 
 

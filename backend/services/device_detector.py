@@ -8,6 +8,8 @@
 import subprocess
 from enum import Enum
 from typing import Tuple, Optional, Dict
+from backend.core.asr_model_resolver import infer_asr_backend
+from backend.core.config import settings
 from backend.core.logger import log
 
 
@@ -31,6 +33,9 @@ class DeviceDetector:
         self.fallback_count: int = 0
         self.gpu_name: Optional[str] = None
         self.gpu_memory_mb: Optional[int] = None
+        self.cuda_runtime_available: bool = False
+        self.cuda_runtime_error: Optional[str] = None
+        self.torch_cuda_version: Optional[str] = None
         
     def detect_best_device(self) -> Tuple[DeviceType, str]:
         """
@@ -68,7 +73,7 @@ class DeviceDetector:
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.free,memory.total", 
-                 "--format=csv,noheader,nounits"],
+                     "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
                 timeout=10
@@ -81,9 +86,31 @@ class DeviceDetector:
                         name = parts[0].strip()
                         memory_free = int(parts[1].strip())
                         memory_total = int(parts[2].strip())
+                        self.gpu_name = name
+                        self.gpu_memory_mb = memory_free
+                        self.cuda_runtime_available = False
+                        self.cuda_runtime_error = None
+                        self.torch_cuda_version = None
                         
                         # 至少需要 4GB VRAM
                         if memory_free >= 4000:
+                            backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+                            if backend == "transformers":
+                                torch_ready, runtime_info = self._check_torch_cuda_runtime()
+                                self.cuda_runtime_available = torch_ready
+                                self.cuda_runtime_error = runtime_info.get("error")
+                                self.torch_cuda_version = runtime_info.get("cuda_version")
+                                if not torch_ready:
+                                    log.warning(
+                                        "偵測到 NVIDIA GPU {}，但目前 PyTorch 為 CPU-only 或未啟用 CUDA，ASR 將改用 CPU。{}",
+                                        name,
+                                        self.cuda_runtime_error or "請安裝 CUDA 版 torch",
+                                    )
+                                    return False, {
+                                        "name": name,
+                                        "memory_free": memory_free,
+                                        "memory_total": memory_total,
+                                    }
                             return True, {
                                 "name": name,
                                 "memory_free": memory_free,
@@ -99,6 +126,24 @@ class DeviceDetector:
             log.debug(f"CUDA 偵測失敗：{e}")
         
         return False, {}
+
+    @staticmethod
+    def _check_torch_cuda_runtime() -> Tuple[bool, Dict]:
+        """檢查目前 torch 執行階段是否真的可使用 CUDA。"""
+        try:
+            import torch
+        except ImportError:
+            return False, {"error": "未安裝 torch", "cuda_version": None}
+
+        cuda_version = getattr(getattr(torch, "version", None), "cuda", None)
+        if not torch.cuda.is_available():
+            build = getattr(torch, "__version__", "unknown")
+            return False, {
+                "error": f"目前 torch={build}，torch.cuda.is_available()=False",
+                "cuda_version": cuda_version,
+            }
+
+        return True, {"error": None, "cuda_version": cuda_version}
     
     def _check_mps(self) -> bool:
         """檢查 Apple MPS 是否可用"""
@@ -132,7 +177,10 @@ class DeviceDetector:
             "gpu_name": self.gpu_name,
             "gpu_memory_mb": self.gpu_memory_mb,
             "gpu_available": self.current_device == DeviceType.CUDA,
-            "mps_available": self.current_device == DeviceType.MPS
+            "mps_available": self.current_device == DeviceType.MPS,
+            "cuda_runtime_available": self.cuda_runtime_available,
+            "cuda_runtime_error": self.cuda_runtime_error,
+            "torch_cuda_version": self.torch_cuda_version,
         }
     
     def check_gpu_health(self) -> bool:

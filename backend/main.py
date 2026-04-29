@@ -78,7 +78,8 @@ app = FastAPI(
 # 請求超時中間件（防止 GPU 滿載時阻塞新請求）
 app.add_middleware(
     TimeoutMiddleware,
-    timeout=30.0  # 30 秒超時
+    timeout=30.0,  # 30 秒超時
+    excluded_paths=("/api/upload",),
 )
 
 # CORS 設定

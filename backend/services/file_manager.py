@@ -75,7 +75,7 @@ class FileManagerService:
         
         return True, ""
     
-    async def validate_file_size(self, file: UploadFile) -> Tuple[bool, str, int]:
+    async def validate_file_size(self, file: UploadFile, return_content: bool = False) -> Tuple[bool, str, int] | Tuple[bool, str, int, bytes]:
         """
         驗證檔案大小
         
@@ -90,11 +90,15 @@ class FileManagerService:
         await file.seek(0)
         
         if file_size > settings.max_file_size_bytes:
+            if return_content:
+                return False, f"檔案大小超過限制: {file_size / 1024 / 1024:.1f}MB > {settings.MAX_FILE_SIZE_MB}MB", file_size, content
             return False, f"檔案大小超過限制: {file_size / 1024 / 1024:.1f}MB > {settings.MAX_FILE_SIZE_MB}MB", file_size
         
+        if return_content:
+            return True, "", file_size, content
         return True, "", file_size
     
-    async def save_upload(self, file: UploadFile) -> Tuple[str, str, int]:
+    async def save_upload(self, file: UploadFile, content: Optional[bytes] = None) -> Tuple[str, str, int]:
         """
         儲存上傳的檔案
         
@@ -107,11 +111,11 @@ class FileManagerService:
         file_path = os.path.join(settings.uploads_dir, unique_filename)
         
         # 讀取並儲存檔案
-        content = await file.read()
-        file_size = len(content)
+        upload_content = content if content is not None else await file.read()
+        file_size = len(upload_content)
         
         async with aiofiles.open(file_path, 'wb') as f:
-            await f.write(content)
+            await f.write(upload_content)
         
         log.info(f"檔案已儲存: {unique_filename}, 大小: {file_size / 1024 / 1024:.2f}MB")
         

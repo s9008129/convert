@@ -113,7 +113,12 @@ async def upload_file(
         raise HTTPException(status_code=400, detail=error_msg)
     
     # 驗證檔案大小
-    valid, error_msg, file_size = await file_manager.validate_file_size(file)
+    size_validation = await file_manager.validate_file_size(file, return_content=True)
+    if len(size_validation) == 4:
+        valid, error_msg, file_size, file_content = size_validation
+    else:
+        valid, error_msg, file_size = size_validation
+        file_content = None
     if not valid:
         raise HTTPException(status_code=413, detail=error_msg)
     
@@ -131,7 +136,7 @@ async def upload_file(
         )
     
     # 儲存檔案
-    file_path, unique_filename, actual_size = await file_manager.save_upload(file)
+    file_path, unique_filename, actual_size = await file_manager.save_upload(file, content=file_content)
     
     # 加入排隊
     task = await task_queue.add_task(

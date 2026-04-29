@@ -334,6 +334,26 @@ class TestUploadEndpoint:
         call_kwargs = mock_services['task_queue'].add_task.call_args.kwargs
         assert call_kwargs['user_prompt'] == '請特別注意技術討論'
 
+    def test_upload_reuses_preloaded_file_content(self, test_client, mock_services, sample_task_info):
+        """Test upload route passes preloaded bytes to save_upload when available."""
+        preloaded_content = b"audio-bytes"
+        mock_services['file_manager'].validate_file.return_value = (True, "")
+        mock_services['file_manager'].validate_file_size = AsyncMock(
+            return_value=(True, "", len(preloaded_content), preloaded_content)
+        )
+        mock_services['file_manager'].save_upload = AsyncMock(
+            return_value=("/tmp/test.mp3", "test.mp3", len(preloaded_content))
+        )
+        mock_services['task_queue'].add_task = AsyncMock(return_value=sample_task_info)
+
+        files = {'file': ('test.mp3', preloaded_content, 'audio/mpeg')}
+        data = {'processing_mode': 'local'}
+
+        response = test_client.post("/api/upload", files=files, data=data)
+
+        assert response.status_code == 200
+        assert mock_services['file_manager'].save_upload.await_args.kwargs["content"] == preloaded_content
+
 
 # =============================================================================
 # Task Status Endpoint Tests

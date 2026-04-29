@@ -6,6 +6,7 @@ v3.5.4 - 防止 GPU 滿載時阻塞新請求
 """
 
 import asyncio
+from typing import Iterable
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -19,7 +20,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
     防止長時間阻塞的請求影響其他用戶
     """
     
-    def __init__(self, app, timeout: float = 30.0):
+    def __init__(self, app, timeout: float = 30.0, excluded_paths: Iterable[str] | None = None):
         """
         初始化中間件
         
@@ -29,6 +30,10 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.timeout = timeout
+        self.excluded_paths = tuple(excluded_paths or ())
+
+    def _is_excluded_path(self, path: str) -> bool:
+        return any(path == excluded or path.startswith(f"{excluded}/") for excluded in self.excluded_paths)
     
     async def dispatch(self, request: Request, call_next):
         """
@@ -41,6 +46,9 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         Returns:
             HTTP 響應
         """
+        if self._is_excluded_path(request.url.path):
+            return await call_next(request)
+
         try:
             # 為請求加入超時限制
             response = await asyncio.wait_for(
