@@ -18,6 +18,8 @@ const state = {
     modeLocked: false        // 模式是否已鎖定
 };
 
+const DEFAULT_MAX_FILE_SIZE_MB = 100;
+
 // 畫面元件對照表（先抓好元件，後續更新畫面會更容易）
 const elements = {
     // 狀態欄
@@ -75,20 +77,30 @@ const elements = {
 // ===== 初始化流程：載入設定、檢查服務狀態、綁定按鈕事件 =====
 // 頁面載入後依序完成：讀取設定 → 健康檢查 → 綁定事件
 // 這樣可確保使用者看到的按鈕狀態與後端實際能力一致
-document.addEventListener('DOMContentLoaded', async () => {
-    await loadConfig();
-    await checkHealth();
+document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
+    setDownloadButtonsEnabled(false);
+    void initializeApp();
     
     // 定期檢查健康狀態
     setInterval(checkHealth, 30000);
 });
+
+async function initializeApp() {
+    await Promise.allSettled([
+        loadConfig(),
+        checkHealth()
+    ]);
+}
 
 // ===== 與後端 API 溝通的函式 =====
 // 讀取後端設定：例如檔案大小上限、允許副檔名、雲端模式可用性
 async function loadConfig() {
     try {
         const response = await fetch('/api/config');
+        if (!response.ok) {
+            throw new Error(`配置載入失敗: ${response.status}`);
+        }
         state.config = await response.json();
         
         // 更新 UI
@@ -106,6 +118,7 @@ async function loadConfig() {
             }
         }
     } catch (error) {
+        state.config = null;
         console.error('載入配置失敗:', error);
     }
 }
@@ -243,6 +256,27 @@ async function uploadFile(file) {
     }
 }
 
+function getAllowedExtensions() {
+    const configuredExtensions = state.config?.allowed_extensions;
+    if (Array.isArray(configuredExtensions) && configuredExtensions.length > 0) {
+        return configuredExtensions;
+    }
+
+    return (elements.fileInput?.accept || '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean);
+}
+
+function setDownloadButtonsEnabled(enabled) {
+    if (elements.downloadBtn) {
+        elements.downloadBtn.disabled = !enabled;
+    }
+    if (elements.downloadDocxBtn) {
+        elements.downloadDocxBtn.disabled = !enabled;
+    }
+}
+
 // 🔒 鎖定/解鎖模式選擇
 // 目的：任務提交後避免使用者在中途改模式，造成「顯示模式」與「實際處理模式」不一致
 function lockModeSelection(locked) {
@@ -303,6 +337,14 @@ function showError(message) {
     if (elements.uploadArea && elements.uploadArea.parentElement) {
         elements.uploadArea.parentElement.style.display = 'none';
     }
+}
+
+function setDownloadButtonsEnabled(enabled) {
+    [elements.downloadBtn, elements.downloadDocxBtn].forEach(button => {
+        if (button) {
+            button.disabled = !enabled;
+        }
+    });
 }
 
 async function downloadResult() {
@@ -683,14 +725,14 @@ function handleFileSelect(e) {
 
 function handleFile(file) {
     // 驗證檔案大小（在前端先擋下過大檔案，減少無效等待）
-    const maxSize = (state.config?.max_file_size_mb || 100) * 1024 * 1024;
+    const maxSize = (state.config?.max_file_size_mb || DEFAULT_MAX_FILE_SIZE_MB) * 1024 * 1024;
     if (file.size > maxSize) {
-        showError(`檔案過大，上限: ${state.config?.max_file_size_mb || 100}MB`);
+        showError(`檔案過大，上限: ${state.config?.max_file_size_mb || DEFAULT_MAX_FILE_SIZE_MB}MB`);
         return;
     }
     
     // 驗證檔案類型（僅接受後端允許的副檔名）
-    const allowedExtensions = state.config?.allowed_extensions || [];
+    const allowedExtensions = getAllowedExtensions();
     const fileExt = '.' + file.name.split('.').pop().toLowerCase();
     if (!allowedExtensions.includes(fileExt)) {
         showError(`不支援的檔案格式: ${fileExt}`);
