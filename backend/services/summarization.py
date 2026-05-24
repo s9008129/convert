@@ -327,7 +327,7 @@ class SummarizationService:
         return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", text).lower()
 
     def _extract_action_item_keys(self, markdown: str) -> set[str]:
-        """從 Markdown 表格或編號條目中抽取待辦事項關鍵字。"""
+        """從 Markdown 表格或新格式編號條目中抽取待辦事項關鍵字。"""
         action_keys: set[str] = set()
 
         for line in markdown.splitlines():
@@ -353,9 +353,8 @@ class SummarizationService:
                 continue
 
             item_text = re.sub(r"^(?:[-*]|\d+[.)、])\s+", "", stripped)
-            item_text = re.split(r"[（(]主辦單位[:：]", item_text, maxsplit=1)[0].strip()
-            item_text = re.split(r"[（(]協辦單位[:：]", item_text, maxsplit=1)[0].strip()
-            item_text = re.split(r"[（(]辦理期程[:：]", item_text, maxsplit=1)[0].strip()
+            for field in ("主辦單位", "協辦單位", "辦理期程"):
+                item_text = re.split(rf"[（(]{field}[:：]", item_text, maxsplit=1)[0].strip()
             item_text = item_text.rstrip("。．；;")
             normalized = self._normalize_action_key(item_text)
             if normalized:

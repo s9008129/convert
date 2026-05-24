@@ -479,6 +479,8 @@ class TaskProcessor:
         確保摘要具有完整的結構
         針對地端模型可能省略某些區塊的情況進行補充
         """
+        missing_text = "逐字稿未提及"
+        default_fallback_line = f"- {missing_text}（主辦單位：{missing_text}，辦理期程：{missing_text}）"
         cleaned = summary.strip()
         if not cleaned:
             cleaned = ""
@@ -490,11 +492,11 @@ class TaskProcessor:
         header_lines = []
         section_lines = []
         required_fields = [
-            ("會議名稱", "逐字稿未提及"),
-            ("會議時間", "逐字稿未提及"),
-            ("會議地點", "逐字稿未提及"),
-            ("主  席", "逐字稿未提及"),
-            ("出席人員", "逐字稿未提及"),
+            ("會議名稱", missing_text),
+            ("會議時間", missing_text),
+            ("會議地點", missing_text),
+            ("主  席", missing_text),
+            ("出席人員", missing_text),
             ("列席人員", "無"),
             ("記  錄", "AI 會議助理"),
         ]
@@ -511,36 +513,36 @@ class TaskProcessor:
         if "二、 討論事項：" not in cleaned:
             section_lines.extend([
                 "二、 討論事項：",
-                "案由：逐字稿未提及",
-                "說明：逐字稿未提及",
+                f"案由：{missing_text}",
+                f"說明：{missing_text}",
                 "各單位意見（多方立場）：",
-                "- 逐字稿未提及：逐字稿未提及",
+                f"- {missing_text}：{missing_text}",
                 "決議：",
-                "1. 逐字稿未提及（主辦單位：逐字稿未提及，協辦單位：逐字稿未提及）",
+                f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
             ])
         else:
             if "案由：" not in cleaned:
-                section_lines.append("案由：逐字稿未提及")
+                section_lines.append(f"案由：{missing_text}")
             if "說明：" not in cleaned:
-                section_lines.append("說明：逐字稿未提及")
+                section_lines.append(f"說明：{missing_text}")
             if "各單位意見（多方立場）：" not in cleaned:
                 section_lines.extend([
                     "各單位意見（多方立場）：",
-                    "- 逐字稿未提及：逐字稿未提及",
+                    f"- {missing_text}：{missing_text}",
                 ])
             if "決議：" not in cleaned:
                 section_lines.extend([
                     "決議：",
-                    "1. 逐字稿未提及（主辦單位：逐字稿未提及，協辦單位：逐字稿未提及）",
+                    f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
                 ])
 
         if "三、 主席裁示事項（後續管考與追蹤）：" not in cleaned:
             section_lines.extend([
                 "三、 主席裁示事項（後續管考與追蹤）：",
-                "1. 逐字稿未提及（主辦單位：逐字稿未提及，辦理期程：逐字稿未提及）",
+                default_fallback_line,
             ])
         elif "辦理期程：" not in cleaned:
-            section_lines.append("1. 逐字稿未提及（主辦單位：逐字稿未提及，辦理期程：逐字稿未提及）")
+            section_lines.append(default_fallback_line)
 
         if header_lines:
             prefix = "\n".join(header_lines)
