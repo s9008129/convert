@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-System Prompt 驗證測試（v4.2.0）。
+System Prompt 驗證測試（v4.3.0）。
 
 重點驗證：
-1. 主提示詞改為較短的 extraction-first Markdown 契約
+1. 會議紀錄系統提示詞已統一為正式公務欄位格式
 2. backend / src / config.yaml 的核心規格維持一致
-3. 提示詞仍保留政府公文風格、待辦召回、待確認標記等關鍵要求
+3. 提示詞仍保留公文體、權責欄位與待確認標記等關鍵要求
 """
 
 import sys
@@ -76,9 +76,17 @@ class TestPromptContract:
     """驗證新提示詞核心契約。"""
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
-    def test_prompt_is_extraction_first(self, source_name: str, prompt: str):
-        assert "先抽取" in prompt, f"[{source_name}] 缺少 extraction-first 指示"
-        assert "再整理" in prompt, f"[{source_name}] 缺少第二階段整理指示"
+    def test_prompt_uses_new_public_official_contract(self, source_name: str, prompt: str):
+        required_phrases = [
+            "資深行政秘書與公務紀錄專家",
+            "會議原始文本（或逐字稿）",
+            "正式公文（或會議紀錄通報）",
+            "公務欄位結構",
+            "主辦單位",
+            "辦理期程",
+        ]
+        for phrase in required_phrases:
+            assert phrase in prompt, f"[{source_name}] 缺少核心契約：{phrase}"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_keeps_fidelity_and_fallback_markers(self, source_name: str, prompt: str):
@@ -88,34 +96,36 @@ class TestPromptContract:
         assert "不得補寫" in prompt or "不得捏造" in prompt, \
             f"[{source_name}] 應明確要求忠於逐字稿"
         assert "簡體中文" in prompt, f"[{source_name}] 應明確禁止簡體中文漂移"
-        assert "<think>" in prompt or "<thought>" in prompt, \
-            f"[{source_name}] 應明確禁止 thought tag 洩漏"
+        assert "<think>" in prompt and "<thought>" in prompt and "<details>" in prompt, \
+            f"[{source_name}] 應明確禁止 thought tag 與標籤洩漏"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_contains_required_sections(self, source_name: str, prompt: str):
         required_markers = [
-            "# 會議記錄摘要",
-            "## 1. 會議概況",
-            "## 2. 執行摘要 (Executive Summary)",
-            "## 3. 詳細議題與決議 (Discussion & Decisions)",
-            "## 4. 待辦事項 (Action Items) - 必填",
-            "## 5. 其他備註",
+            "會議名稱：[請從文本中提取",
+            "會議時間：[請從文本中提取",
+            "會議地點：[請從文本中提取",
+            "主  席：[請從文本中提取",
+            "出席人員：[請從文本中提取",
+            "列席人員：[請從文本中提取",
+            "記  錄：[請填寫「AI 會議助理」]",
+            "一、 報告事項：",
+            "二、 討論事項：",
+            "三、 主席裁示事項（後續管考與追蹤）：",
         ]
         for marker in required_markers:
             assert marker in prompt, f"[{source_name}] 缺少輸出區塊：{marker}"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
-    def test_prompt_contains_action_item_table_contract(self, source_name: str, prompt: str):
-        assert "| 待辦事項 | 負責人 | 期限 |" in prompt, \
-            f"[{source_name}] 缺少待辦事項表格標題"
-        assert "| :--- | :--- | :--- |" in prompt, \
-            f"[{source_name}] 缺少待辦事項表格分隔線"
-        assert "本次會議未明確指派待辦事項" in prompt, \
-            f"[{source_name}] 缺少無待辦時的保底列"
+    def test_prompt_contains_action_item_contract(self, source_name: str, prompt: str):
+        assert "各單位意見（多方立場）：" in prompt, f"[{source_name}] 缺少多方意見區塊"
+        assert "主辦單位" in prompt, f"[{source_name}] 缺少主辦單位欄位"
+        assert "協辦單位" in prompt, f"[{source_name}] 缺少協辦單位欄位"
+        assert "辦理期程" in prompt, f"[{source_name}] 缺少辦理期程欄位"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_mentions_government_document_style(self, source_name: str, prompt: str):
-        keywords = ["政府機關", "公文風格", "正式", "客觀"]
+        keywords = ["臺灣公務機關", "公文體", "正式", "客觀", "全形標點符號"]
         found = sum(1 for keyword in keywords if keyword in prompt)
         assert found >= 3, f"[{source_name}] 應保留政府公文風格與專業語氣要求"
 
@@ -144,20 +154,21 @@ class TestPromptConsistency:
         values = list(prompts.values())
         assert len(set(values)) == 1, "backend/core/config.py 與 src/summarizer.py 的主提示詞應保持一致"
 
-    def test_concise_prompt_is_shorter(self):
-        assert len(CONCISE_SYSTEM_PROMPT) < len(DEFAULT_SYSTEM_PROMPT), \
-            "簡潔版提示詞應短於預設主提示詞"
+    def test_concise_prompt_matches_default(self):
+        assert CONCISE_SYSTEM_PROMPT == DEFAULT_SYSTEM_PROMPT, \
+            "所有會議紀錄系統提示詞應保持一致"
 
     def test_config_yaml_prompt_keeps_same_core_contract(self):
         yaml_prompt = SystemPromptSource.get_config_yaml_prompt()
         required_phrases = [
-            "先抽取",
-            "再整理",
-            "專有名詞",
-            "（待確認）",
-            "簡體中文",
-            "# 會議記錄摘要",
-            "## 4. 待辦事項 (Action Items) - 必填",
+            "資深行政秘書與公務紀錄專家",
+            "會議原始文本（或逐字稿）",
+            "正式公文（或會議紀錄通報）",
+            "公務欄位結構",
+            "會議名稱：[請從文本中提取",
+            "主  席：[請從文本中提取",
+            "記  錄：[請填寫「AI 會議助理」]",
+            "三、 主席裁示事項（後續管考與追蹤）：",
         ]
         for phrase in required_phrases:
             assert phrase in yaml_prompt, f"[config.yaml] 缺少核心契約：{phrase}"
@@ -179,7 +190,7 @@ class TestMockTranscriptFixtures:
 
     @pytest.mark.parametrize("mock_transcript", ALL_MOCK_TRANSCRIPTS)
     def test_mock_transcript_expected_sections(self, mock_transcript: MockTranscript):
-        standard_sections = ["會議概況", "執行摘要", "待辦事項", "其他備註"]
+        standard_sections = ["會議名稱", "會議時間", "會議地點", "報告事項", "討論事項", "主席裁示事項"]
         for section in standard_sections:
             assert section in mock_transcript.expected_sections, \
                 f"模擬逐字稿 '{mock_transcript.name}' 缺少標準區塊：{section}"

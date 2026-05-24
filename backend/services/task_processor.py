@@ -485,44 +485,72 @@ class TaskProcessor:
 
         cleaned = re.sub(r'^```(?:markdown)?\s*', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\n?```$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
 
-        section_pattern = re.compile(r'^(?P<heading>#{1,3}\s*(?P<number>[1-5])\s*\.?\s*.*)$', re.MULTILINE)
-        matches = list(section_pattern.finditer(cleaned))
+        header_lines = []
+        section_lines = []
+        required_fields = [
+            ("會議名稱", "逐字稿未提及"),
+            ("會議時間", "逐字稿未提及"),
+            ("會議地點", "逐字稿未提及"),
+            ("主  席", "逐字稿未提及"),
+            ("出席人員", "逐字稿未提及"),
+            ("列席人員", "無"),
+            ("記  錄", "AI 會議助理"),
+        ]
+        for field, default in required_fields:
+            if not re.search(rf'^{re.escape(field)}[:：]', cleaned, flags=re.MULTILINE):
+                header_lines.append(f"{field}：{default}")
 
-        sections: dict[int, str] = {}
-        preamble = cleaned
-        if matches:
-            preamble = cleaned[:matches[0].start()].strip()
-            for index, match in enumerate(matches):
-                number = int(match.group('number'))
-                section_start = match.start()
-                section_end = matches[index + 1].start() if index + 1 < len(matches) else len(cleaned)
-                sections[number] = cleaned[section_start:section_end].strip()
+        if "一、 報告事項：" not in cleaned:
+            section_lines.extend([
+                "一、 報告事項：",
+                "無",
+            ])
 
-        preamble = re.sub(r'^#\s*會議記錄.*$', '', preamble, flags=re.MULTILINE).strip()
-        if preamble and not preamble.startswith("# "):
-            preamble = re.sub(r'^(以下是|會議記錄摘要[:：]?)', '', preamble).strip()
+        if "二、 討論事項：" not in cleaned:
+            section_lines.extend([
+                "二、 討論事項：",
+                "案由：逐字稿未提及",
+                "說明：逐字稿未提及",
+                "各單位意見（多方立場）：",
+                "- 逐字稿未提及：逐字稿未提及",
+                "決議：",
+                "1. 逐字稿未提及（主辦單位：逐字稿未提及，協辦單位：逐字稿未提及）",
+            ])
+        else:
+            if "案由：" not in cleaned:
+                section_lines.append("案由：逐字稿未提及")
+            if "說明：" not in cleaned:
+                section_lines.append("說明：逐字稿未提及")
+            if "各單位意見（多方立場）：" not in cleaned:
+                section_lines.extend([
+                    "各單位意見（多方立場）：",
+                    "- 逐字稿未提及：逐字稿未提及",
+                ])
+            if "決議：" not in cleaned:
+                section_lines.extend([
+                    "決議：",
+                    "1. 逐字稿未提及（主辦單位：逐字稿未提及，協辦單位：逐字稿未提及）",
+                ])
 
-        title = "# 會議記錄摘要"
-        section_titles = {
-            1: "會議概況",
-            2: "執行摘要 (Executive Summary)",
-            3: "詳細議題與決議 (Discussion & Decisions)",
-            4: "待辦事項 (Action Items) - 必填",
-            5: "其他備註",
-        }
+        if "三、 主席裁示事項（後續管考與追蹤）：" not in cleaned:
+            section_lines.extend([
+                "三、 主席裁示事項（後續管考與追蹤）：",
+                "1. 逐字稿未提及（主辦單位：逐字稿未提及，辦理期程：逐字稿未提及）",
+            ])
+        elif "辦理期程：" not in cleaned:
+            section_lines.append("1. 逐字稿未提及（主辦單位：逐字稿未提及，辦理期程：逐字稿未提及）")
 
-        normalized_sections = []
-        for number in range(1, 6):
-            section_text = sections.get(number, "")
-            if not section_text:
-                log.warning(f"[補充] 摘要缺少區塊: ## {number}. {section_titles[number]}")
-            fallback = preamble if number == 2 else ""
-            normalized_sections.append(
-                self._normalize_section_content(number, section_titles[number], section_text, fallback_text=fallback)
-            )
+        if header_lines:
+            prefix = "\n".join(header_lines)
+            cleaned = f"{prefix}\n\n{cleaned}" if cleaned else prefix
 
-        return "\n\n".join([title, *normalized_sections]).strip()
+        if section_lines:
+            suffix = "\n".join(section_lines)
+            cleaned = f"{cleaned}\n\n{suffix}" if cleaned else suffix
+
+        return cleaned.strip()
 
 
 # 全域任務處理器實例
