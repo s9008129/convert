@@ -240,7 +240,7 @@ def test_validate_summary_quality_flags_simplified_and_non_markdown_leakage():
 
 會議名稱：113年度第1次專案進度追蹤會議
 會議時間：中華民國113年3月1日 09時00分至10時30分
-会議地點：本部第2會議室
+會議地點：本部第2會議室
 """
 
     issues = service._validate_summary_quality(leaked_summary, _notes_with_two_actions())

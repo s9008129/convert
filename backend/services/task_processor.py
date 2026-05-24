@@ -22,14 +22,15 @@ from backend.services.device_detector import device_detector
 from backend.api.websocket import connection_manager
 
 
+MISSING_TEXT = "逐字稿未提及"
+
+
 class TaskProcessor:
     """
     任務處理器
     執行完整的轉錄和摘要流程
     """
 
-    MISSING_TEXT = "逐字稿未提及"
-    
     def __init__(self):
         """初始化處理器狀態，記錄目前是否運行與當前正在處理的任務。"""
         self._running = False
@@ -481,7 +482,7 @@ class TaskProcessor:
         確保摘要具有完整的結構
         針對地端模型可能省略某些區塊的情況進行補充
         """
-        missing_text = self.MISSING_TEXT
+        missing_text = MISSING_TEXT
         default_fallback_line = f"- {missing_text}（主辦單位：{missing_text}，辦理期程：{missing_text}）"
         cleaned = summary.strip()
         if not cleaned:
