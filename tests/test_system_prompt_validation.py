@@ -96,8 +96,10 @@ class TestPromptContract:
         assert "不得補寫" in prompt or "不得捏造" in prompt, \
             f"[{source_name}] 應明確要求忠於逐字稿"
         assert "簡體中文" in prompt, f"[{source_name}] 應明確禁止簡體中文漂移"
-        assert "嚴禁輸出簡體中文" in prompt and "<think>" in prompt and "<thought>" in prompt and "<details>" in prompt, \
-            f"[{source_name}] 應明確禁止 thought tag 與標籤洩漏"
+        assert "嚴禁輸出簡體中文" in prompt, f"[{source_name}] 應明確禁止簡體中文輸出"
+        assert "<think>" in prompt, f"[{source_name}] 應明確禁止 <think> 標籤洩漏"
+        assert "<thought>" in prompt, f"[{source_name}] 應明確禁止 <thought> 標籤洩漏"
+        assert "<details>" in prompt, f"[{source_name}] 應明確禁止 <details> 標籤洩漏"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_contains_required_sections(self, source_name: str, prompt: str):

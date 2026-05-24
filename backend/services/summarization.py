@@ -360,6 +360,9 @@ class SummarizationService:
             if normalized:
                 action_keys.add(normalized)
 
+        if not action_keys and markdown.strip():
+            log.warning("待辦事項關鍵字抽取結果為空，請檢查輸入格式是否符合會議記錄契約")
+
         return action_keys
 
     def _validate_summary_quality(self, summary: str, extracted_notes: str) -> list[str]:
