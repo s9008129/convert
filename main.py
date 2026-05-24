@@ -281,11 +281,11 @@ def main():
     # 語言品質檢查提示
     if system_prompt:
         logger.info("[設定] 系統提示詞已啟用（%d 字元）", len(system_prompt))
-        if "100% 使用正體中文" in system_prompt or "禁止英文" in system_prompt:
-            logger.info("[品質] 已啟用中文強制約束機制 ✓")
+        if "資深行政秘書與公務紀錄專家" in system_prompt and "主辦單位" in system_prompt:
+            logger.info("[品質] 已啟用正式公務紀錄約束機制 ✓")
         else:
-            logger.warning("[警告] 系統提示詞未包含英文禁止約束")
-            logger.warning("[建議] 更新 config.yaml 的 system_prompt 以啟用語言檢查")
+            logger.warning("[警告] 系統提示詞未包含正式公務紀錄格式約束")
+            logger.warning("[建議] 更新 config.yaml 的 system_prompt 以啟用新格式檢查")
     else:
         logger.error("[錯誤] 未設定系統提示詞，可能導致輸出語言混亂")
     

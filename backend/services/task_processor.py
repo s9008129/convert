@@ -22,12 +22,15 @@ from backend.services.device_detector import device_detector
 from backend.api.websocket import connection_manager
 
 
+MISSING_TEXT = "逐字稿未提及"
+
+
 class TaskProcessor:
     """
     任務處理器
     執行完整的轉錄和摘要流程
     """
-    
+
     def __init__(self):
         """初始化處理器狀態，記錄目前是否運行與當前正在處理的任務。"""
         self._running = False
@@ -479,50 +482,84 @@ class TaskProcessor:
         確保摘要具有完整的結構
         針對地端模型可能省略某些區塊的情況進行補充
         """
+        missing_text = MISSING_TEXT
+        default_fallback_line = f"- {missing_text}（主辦單位：{missing_text}，辦理期程：{missing_text}）"
         cleaned = summary.strip()
         if not cleaned:
             cleaned = ""
 
         cleaned = re.sub(r'^```(?:markdown)?\s*', '', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\n?```$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
 
-        section_pattern = re.compile(r'^(?P<heading>#{1,3}\s*(?P<number>[1-5])\s*\.?\s*.*)$', re.MULTILINE)
-        matches = list(section_pattern.finditer(cleaned))
+        header_lines = []
+        section_lines = []
+        required_fields = [
+            ("會議名稱", missing_text),
+            ("會議時間", missing_text),
+            ("會議地點", missing_text),
+            ("主  席", missing_text),
+            ("出席人員", missing_text),
+            ("列席人員", "無"),
+            ("記  錄", "AI 會議助理"),
+        ]
+        field_patterns = [
+            (field, default, re.compile(rf'^{re.escape(field)}[:：]', re.MULTILINE))
+            for field, default in required_fields
+        ]
+        for field, default, pattern in field_patterns:
+            if not pattern.search(cleaned):
+                header_lines.append(f"{field}：{default}")
 
-        sections: dict[int, str] = {}
-        preamble = cleaned
-        if matches:
-            preamble = cleaned[:matches[0].start()].strip()
-            for index, match in enumerate(matches):
-                number = int(match.group('number'))
-                section_start = match.start()
-                section_end = matches[index + 1].start() if index + 1 < len(matches) else len(cleaned)
-                sections[number] = cleaned[section_start:section_end].strip()
+        if "一、 報告事項：" not in cleaned:
+            section_lines.extend([
+                "一、 報告事項：",
+                "無",
+            ])
 
-        preamble = re.sub(r'^#\s*會議記錄.*$', '', preamble, flags=re.MULTILINE).strip()
-        if preamble and not preamble.startswith("# "):
-            preamble = re.sub(r'^(以下是|會議記錄摘要[:：]?)', '', preamble).strip()
+        if "二、 討論事項：" not in cleaned:
+            section_lines.extend([
+                "二、 討論事項：",
+                f"案由：{missing_text}",
+                f"說明：{missing_text}",
+                "各單位意見（多方立場）：",
+                f"- {missing_text}：{missing_text}",
+                "決議：",
+                f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
+            ])
+        else:
+            if "案由：" not in cleaned:
+                section_lines.append(f"案由：{missing_text}")
+            if "說明：" not in cleaned:
+                section_lines.append(f"說明：{missing_text}")
+            if "各單位意見（多方立場）：" not in cleaned:
+                section_lines.extend([
+                    "各單位意見（多方立場）：",
+                    f"- {missing_text}：{missing_text}",
+                ])
+            if "決議：" not in cleaned:
+                section_lines.extend([
+                    "決議：",
+                    f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
+                ])
 
-        title = "# 會議記錄摘要"
-        section_titles = {
-            1: "會議概況",
-            2: "執行摘要 (Executive Summary)",
-            3: "詳細議題與決議 (Discussion & Decisions)",
-            4: "待辦事項 (Action Items) - 必填",
-            5: "其他備註",
-        }
+        if "三、 主席裁示事項（後續管考與追蹤）：" not in cleaned:
+            section_lines.extend([
+                "三、 主席裁示事項（後續管考與追蹤）：",
+                default_fallback_line,
+            ])
+        elif "辦理期程：" not in cleaned:
+            section_lines.append(default_fallback_line)
 
-        normalized_sections = []
-        for number in range(1, 6):
-            section_text = sections.get(number, "")
-            if not section_text:
-                log.warning(f"[補充] 摘要缺少區塊: ## {number}. {section_titles[number]}")
-            fallback = preamble if number == 2 else ""
-            normalized_sections.append(
-                self._normalize_section_content(number, section_titles[number], section_text, fallback_text=fallback)
-            )
+        if header_lines:
+            prefix = "\n".join(header_lines)
+            cleaned = f"{prefix}\n\n{cleaned}" if cleaned else prefix
 
-        return "\n\n".join([title, *normalized_sections]).strip()
+        if section_lines:
+            suffix = "\n".join(section_lines)
+            cleaned = f"{cleaned}\n\n{suffix}" if cleaned else suffix
+
+        return cleaned.strip()
 
 
 # 全域任務處理器實例

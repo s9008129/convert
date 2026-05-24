@@ -50,29 +50,32 @@ def _notes_with_two_actions() -> str:
 
 
 def _complete_summary() -> str:
-    return """# 會議記錄摘要
+    return """會議名稱：113年度第1次專案進度追蹤會議
+會議時間：中華民國113年3月1日 09時00分至10時30分
+會議地點：本部第2會議室
+主  席：王主任○○
+出席人員：王主任、陳科長
+列席人員：資訊室林專員
+記  錄：AI 會議助理
 
-## 1. 會議概況
-- **日期**：113年3月1日
-- **參與者**：王主任、陳科長
-- **會議主題**：專案進度追蹤
+一、 報告事項：
+1. 專案整體進度維持如期。
 
-## 2. 執行摘要 (Executive Summary)
-本次會議確認專案整體進度仍維持月底上線，重點聚焦於整合測試與公告準備，並明確交辦兩項後續工作。
+二、 討論事項：
+案由：關於專案里程碑與上線前準備事宜，提請 審議。
+說明：
+1. 專案已完成整合測試。
+2. 上線公告草案待確認。
+各單位意見（多方立場）：
+- 王主任：建議依原定期程推進。
+- 陳科長：應先完成公告草案。
+決議：
+1. 維持月底上線時程。（主辦單位：資訊室，協辦單位：行政室）
+2. 完成整合測試及上線公告草案。（主辦單位：資訊室，協辦單位：行政室）
 
-## 3. 詳細議題與決議 (Discussion & Decisions)
-- **議題 1**：專案里程碑
-  - *討論重點*：確認測試與上線時程，檢視是否有延後風險。
-  - *最終決議*：維持月底上線，並依既定時程完成測試與公告準備。
-
-## 4. 待辦事項 (Action Items) - 必填
-| 待辦事項 | 負責人 | 期限 |
-| :--- | :--- | :--- |
-| 完成整合測試 | 王主任 | 下週三 |
-| 提交上線公告草案 | 陳科長 | 本週五 |
-
-## 5. 其他備註
-- 無"""
+三、 主席裁示事項（後續管考與追蹤）：
+1. 請於下週三前完成整合測試。（主辦單位：王主任，辦理期程：下週三前）
+2. 請於本週五前提交上線公告草案。（主辦單位：陳科長，辦理期程：本週五前）"""
 
 
 def test_resolve_compatible_model_prefers_gemma4_q4_variant_for_same_base_model():
@@ -189,18 +192,21 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
 
 def test_validate_summary_quality_flags_missing_sections_and_actions():
     service = SummarizationService()
-    incomplete_summary = """# 會議記錄摘要
+    incomplete_summary = """會議名稱：113年度第1次專案進度追蹤會議
+會議時間：中華民國113年3月1日 09時00分至10時30分
+會議地點：本部第2會議室
+主  席：王主任○○
+出席人員：王主任、陳科長
+列席人員：資訊室林專員
+記  錄：AI 會議助理
 
-## 1. 會議概況
-- **日期**：113年3月1日
-
-## 2. 執行摘要 (Executive Summary)
-會議確認月底上線。"""
+一、 報告事項：
+1. 專案整體進度維持如期。"""
 
     issues = service._validate_summary_quality(incomplete_summary, _notes_with_two_actions())
 
     assert any("缺少區塊" in issue for issue in issues)
-    assert any("缺少待辦事項表格" in issue for issue in issues)
+    assert any("缺少主辦單位資訊" in issue for issue in issues)
     assert any("待辦事項遺漏" in issue for issue in issues)
 
 
@@ -218,26 +224,23 @@ def test_clean_ollama_output_removes_gemma4_thought_block():
 先想一下格式
 </think>
 
-# 會議記錄摘要
-
-## 1. 會議概況
-- **日期**：113年3月1日
+會議名稱：113年度第1次專案進度追蹤會議
+會議時間：中華民國113年3月1日 09時00分至10時30分
 """
 
     cleaned = service._clean_ollama_output(raw_output)
 
     assert "<think>" not in cleaned
-    assert cleaned.startswith("# 會議記錄摘要")
+    assert cleaned.startswith("會議名稱：")
 
 
 def test_validate_summary_quality_flags_simplified_and_non_markdown_leakage():
     service = SummarizationService()
     leaked_summary = """<think>推理中</think>
 
-# 会议记录摘要
-
-## 1. 會議概況
-- **日期**：113年3月1日
+會議名稱：113年度第1次專案進度追蹤會議
+會議時間：中華民國113年3月1日 09時00分至10時30分
+會議地點：本部第2會議室
 """
 
     issues = service._validate_summary_quality(leaked_summary, _notes_with_two_actions())
@@ -306,7 +309,7 @@ async def test_local_pipeline_chunks_merges_and_refines(monkeypatch):
 
     summary = await service._summarize_with_local_pipeline(transcript, settings.DEFAULT_SYSTEM_PROMPT)
 
-    assert summary.startswith("# 會議記錄摘要")
-    assert "## 4. 待辦事項 (Action Items) - 必填" in summary
+    assert summary.startswith("會議名稱：")
+    assert "三、 主席裁示事項（後續管考與追蹤）：" in summary
     assert generator.await_count == 5
     assert "問題清單" in generator.await_args_list[-1].args[2]

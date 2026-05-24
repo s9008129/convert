@@ -327,27 +327,41 @@ class SummarizationService:
         return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", text).lower()
 
     def _extract_action_item_keys(self, markdown: str) -> set[str]:
-        """從 Markdown 表格中抽取待辦事項第一欄。"""
+        """從 Markdown 表格或新格式編號條目中抽取待辦事項關鍵字。"""
         action_keys: set[str] = set()
 
         for line in markdown.splitlines():
             stripped = line.strip()
-            if not (stripped.startswith("|") and stripped.endswith("|")):
-                continue
-            if ":---" in stripped or re.fullmatch(r"\|\s*-+\s*(\|\s*-+\s*)+\|", stripped):
+            if stripped.startswith("|") and stripped.endswith("|"):
+                if ":---" in stripped or re.fullmatch(r"\|\s*-+\s*(\|\s*-+\s*)+\|", stripped):
+                    continue
+
+                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+                if len(cells) < 3:
+                    continue
+                if cells[0] in {"待辦事項", "事項說明"}:
+                    continue
+                if "本次會議未明確指派待辦事項" in cells[0] or "未於本段確認" in cells[0]:
+                    continue
+
+                normalized = self._normalize_action_key(cells[0])
+                if normalized:
+                    action_keys.add(normalized)
                 continue
 
-            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-            if len(cells) < 3:
-                continue
-            if cells[0] in {"待辦事項", "事項說明"}:
-                continue
-            if "本次會議未明確指派待辦事項" in cells[0] or "未於本段確認" in cells[0]:
+            if not re.match(r"^(?:[-*]|\d+[.)、])\s+", stripped):
                 continue
 
-            normalized = self._normalize_action_key(cells[0])
+            item_text = re.sub(r"^(?:[-*]|\d+[.)、])\s+", "", stripped)
+            for field in ("主辦單位", "協辦單位", "辦理期程"):
+                item_text = re.split(rf"[（(]{field}[:：]", item_text, maxsplit=1)[0].strip()
+            item_text = item_text.rstrip("。．；;")
+            normalized = self._normalize_action_key(item_text)
             if normalized:
                 action_keys.add(normalized)
+
+        if not action_keys and markdown.strip():
+            log.warning("待辦事項關鍵字抽取結果為空，請檢查輸入格式是否符合會議記錄契約")
 
         return action_keys
 
@@ -357,22 +371,33 @@ class SummarizationService:
         cleaned = self._clean_ollama_output(summary)
 
         required_sections = [
-            "# 會議記錄摘要",
-            "## 1. 會議概況",
-            "## 2. 執行摘要",
-            "## 3. 詳細議題與決議",
-            "## 4. 待辦事項",
-            "## 5. 其他備註",
+            "會議名稱：",
+            "會議時間：",
+            "會議地點：",
+            "主  席：",
+            "出席人員：",
+            "列席人員：",
+            "記  錄：AI 會議助理",
+            "一、 報告事項：",
+            "二、 討論事項：",
+            "案由：",
+            "說明：",
+            "各單位意見（多方立場）：",
+            "決議：",
+            "三、 主席裁示事項（後續管考與追蹤）：",
         ]
         for marker in required_sections:
             if marker not in cleaned:
                 issues.append(f"缺少區塊：{marker}")
 
-        if "| 待辦事項 | 負責人 | 期限 |" not in cleaned:
-            issues.append("缺少待辦事項表格")
+        if "主辦單位：" not in cleaned:
+            issues.append("缺少主辦單位資訊")
 
-        if cleaned.count("- **議題") == 0 and cleaned.count("**議題") == 0:
-            issues.append("詳細議題與決議內容不足")
+        if "辦理期程：" not in cleaned:
+            issues.append("缺少辦理期程資訊")
+
+        if cleaned.count("各單位意見（多方立場）") == 0:
+            issues.append("各單位意見內容不足")
 
         if len(cleaned) < 250:
             issues.append("摘要內容過短")

@@ -83,11 +83,12 @@ STANDARD_GOVERNMENT_MEETING = MockTranscript(
 沒有其他動議的話，今天會議到此結束，散會。
 """,
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "113年1月15日",
@@ -160,11 +161,12 @@ AWS雲端環境的資源都準備好了，
 專案經理：好，那就維持原定時程。散會。
 """,
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "React",
@@ -258,11 +260,12 @@ COMPLEX_MEETING_WITH_MULTIPLE_ACTIONS = MockTranscript(
 今天會議到此結束，謝謝各位。
 """,
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "為民服務",
@@ -321,11 +324,12 @@ MEETING_WITH_AMBIGUOUS_INFO = MockTranscript(
 主席：請秘書追蹤一下這件事。散會。
 """,
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "10月",
@@ -351,11 +355,12 @@ VERY_SHORT_TRANSCRIPT = MockTranscript(
 主席：好，散會。
 """,
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "核定",
@@ -414,11 +419,12 @@ VERY_LONG_TRANSCRIPT = MockTranscript(
     description="包含20個議題討論的極長會議記錄",
     transcript=_generate_long_transcript(),
     expected_sections=[
-        "會議概況",
-        "執行摘要",
-        "議題與決議",
-        "待辦事項",
-        "其他備註"
+        "會議名稱",
+        "會議時間",
+        "會議地點",
+        "報告事項",
+        "討論事項",
+        "主席裁示事項"
     ],
     expected_keywords=[
         "113年12月10日",

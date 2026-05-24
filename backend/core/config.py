@@ -183,12 +183,11 @@ class Settings(BaseSettings):
     
     # ========================================
     # System Prompt 設定
-    # v4.2.0：改為較短的 extraction-first Markdown 提示詞
-    # 目標：提升本地 Gemma 類模型的待辦召回率與長逐字稿穩定性
+    # v4.3.0：統一為臺灣公務機關正式會議紀錄格式提示詞
     # ========================================
     DEFAULT_SYSTEM_PROMPT: str = Field(
         default=DEFAULT_MEETING_RECORD_PROMPT,
-        description="Extraction-first 會議記錄系統提示詞（v4.2.0，針對本地長逐字稿與待辦召回優化）"
+        description="臺灣公務機關會議紀錄系統提示詞（正式公務欄位格式）"
     )
     
     @property
