@@ -103,20 +103,40 @@ class TestPromptContract:
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_contains_required_sections(self, source_name: str, prompt: str):
+        # 新版提示詞移除方括號填寫模板（避免被模型原樣回吐），只保留欄位標頭字面。
         required_markers = [
-            "會議名稱：[請從文本中提取",
-            "會議時間：[請從文本中提取",
-            "會議地點：[請從文本中提取",
-            "主  席：[請從文本中提取",
-            "出席人員：[請從文本中提取",
-            "列席人員：[請從文本中提取",
-            "記  錄：[請填寫「AI 會議助理」]",
+            "會議名稱：",
+            "會議時間：",
+            "會議地點：",
+            "主  席：",
+            "出席人員：",
+            "列席人員：",
+            "記  錄：AI 會議助理",
             "一、 報告事項：",
             "二、 討論事項：",
+            "案由：",
+            "說明：",
             "三、 主席裁示事項（後續管考與追蹤）：",
         ]
         for marker in required_markers:
             assert marker in prompt, f"[{source_name}] 缺少輸出區塊：{marker}"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_has_no_bracket_template(self, source_name: str, prompt: str):
+        # 方括號模板（[請從文本中提取…]）是提示詞被回吐到成品的主因，必須完全移除。
+        assert "[請" not in prompt, f"[{source_name}] 不應殘留方括號填寫模板"
+        assert "請從文本中提取" not in prompt, f"[{source_name}] 不應殘留範例模板用語"
+        assert "Evaluation Criteria" not in prompt, f"[{source_name}] 不應出現會被回吐的英文評估標準"
+        assert "評估標準" not in prompt, f"[{source_name}] 不應出現會被回吐的評估標準小節"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_forbids_english_preamble(self, source_name: str, prompt: str):
+        # 必須有「只輸出本文、從會議名稱開頭、禁止前言/分析」的硬性規則。
+        assert "會議名稱：" in prompt
+        assert "前言" in prompt, f"[{source_name}] 應明確禁止前言"
+        assert "分析" in prompt, f"[{source_name}] 應明確禁止分析段"
+        assert ("第一個字元" in prompt or "第一行" in prompt or "開頭" in prompt), \
+            f"[{source_name}] 應要求輸出自「會議名稱：」起始"
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_contains_action_item_contract(self, source_name: str, prompt: str):
@@ -167,13 +187,22 @@ class TestPromptConsistency:
             "會議原始文本（或逐字稿）",
             "正式公文（或會議紀錄通報）",
             "公務欄位結構",
-            "會議名稱：[請從文本中提取",
-            "主  席：[請從文本中提取",
-            "記  錄：[請填寫「AI 會議助理」]",
+            "會議名稱：",
+            "主  席：",
+            "記  錄：AI 會議助理",
             "三、 主席裁示事項（後續管考與追蹤）：",
         ]
         for phrase in required_phrases:
             assert phrase in yaml_prompt, f"[config.yaml] 缺少核心契約：{phrase}"
+        assert "[請" not in yaml_prompt, "[config.yaml] 不應殘留方括號填寫模板"
+
+    def test_config_yaml_prompt_matches_python_source(self):
+        # 把「靠人記得同步」升級為 CI 擋住：config.yaml 與 prompts.py 正規化後須完全一致。
+        from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
+
+        yaml_prompt = " ".join(SystemPromptSource.get_config_yaml_prompt().split())
+        py_prompt = " ".join(DEFAULT_MEETING_RECORD_PROMPT.split())
+        assert yaml_prompt == py_prompt, "config.yaml 與 prompts.py 提示詞已漂移，請同步"
 
     def test_config_yaml_context_budget_is_synced(self):
         config_path = Path(__file__).parent.parent / "config.yaml"

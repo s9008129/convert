@@ -234,6 +234,48 @@ def test_clean_ollama_output_removes_gemma4_thought_block():
     assert cleaned.startswith("會議名稱：")
 
 
+def test_clean_ollama_output_strips_english_preamble_before_record():
+    """正式格式以「會議名稱：」開頭（非 #），英文分析前言必須被裁掉。"""
+    service = SummarizationService()
+    raw_output = """Analysis of the Transcript: Meeting Name: Not explicitly stated, but the content revolves around a project review. Let's infer a name.
+
+Evaluation Criteria: Legal Compliance, Responsibility Clarity.
+
+會議名稱：113年度第1次專案進度追蹤會議
+會議時間：中華民國113年3月1日 09時00分至10時30分"""
+
+    cleaned = service._clean_ollama_output(raw_output)
+
+    assert cleaned.startswith("會議名稱：")
+    assert "Analysis of the Transcript" not in cleaned
+    assert "Evaluation Criteria" not in cleaned
+    assert "Let's infer" not in cleaned
+
+
+def test_validate_summary_quality_flags_english_and_rubric_leakage():
+    service = SummarizationService()
+    leaked = _complete_summary() + (
+        "\n\nEvaluation Criteria: Legal Compliance: Full-width punctuation, government tone."
+    )
+
+    issues = service._validate_summary_quality(leaked, _notes_with_two_actions())
+
+    assert any("英文前言" in issue or "評估標準" in issue for issue in issues)
+
+
+def test_validate_summary_quality_does_not_flag_clean_summary_with_tech_terms():
+    """合法的英文技術名詞（OAuth2、GitHub Actions）不應被誤判為英文洩漏。"""
+    service = SummarizationService()
+    summary = _complete_summary().replace(
+        "1. 專案已完成整合測試。",
+        "1. 專案已完成 OAuth2 與 GitHub Actions 整合測試。",
+    )
+
+    issues = service._validate_summary_quality(summary, _notes_with_two_actions())
+
+    assert all("英文" not in issue and "評估標準" not in issue for issue in issues)
+
+
 def test_validate_summary_quality_flags_simplified_and_non_markdown_leakage():
     service = SummarizationService()
     leaked_summary = """<think>推理中</think>
@@ -241,6 +283,7 @@ def test_validate_summary_quality_flags_simplified_and_non_markdown_leakage():
 會議名稱：113年度第1次專案進度追蹤會議
 會議時間：中華民國113年3月1日 09時00分至10時30分
 會議地點：本部第2會議室
+備註：会议记录这项进度已录入（含簡體漂移）
 """
 
     issues = service._validate_summary_quality(leaked_summary, _notes_with_two_actions())

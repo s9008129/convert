@@ -326,42 +326,32 @@ class SummarizationService:
         """將待辦事項文字正規化，方便比對是否遺漏。"""
         return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", text).lower()
 
-    def _extract_action_item_keys(self, markdown: str) -> set[str]:
-        """從 Markdown 表格或新格式編號條目中抽取待辦事項關鍵字。"""
+    def _extract_action_table_keys(self, markdown: str) -> set[str]:
+        """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦關鍵字。
+
+        僅取表格第一欄（待辦事項本身），刻意忽略議題、日期、參與者等非待辦
+        條列，避免把會議資訊誤判成待辦而造成假性「遺漏」。
+        """
         action_keys: set[str] = set()
 
         for line in markdown.splitlines():
             stripped = line.strip()
-            if stripped.startswith("|") and stripped.endswith("|"):
-                if ":---" in stripped or re.fullmatch(r"\|\s*-+\s*(\|\s*-+\s*)+\|", stripped):
-                    continue
-
-                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-                if len(cells) < 3:
-                    continue
-                if cells[0] in {"待辦事項", "事項說明"}:
-                    continue
-                if "本次會議未明確指派待辦事項" in cells[0] or "未於本段確認" in cells[0]:
-                    continue
-
-                normalized = self._normalize_action_key(cells[0])
-                if normalized:
-                    action_keys.add(normalized)
+            if not (stripped.startswith("|") and stripped.endswith("|")):
+                continue
+            if ":---" in stripped or re.fullmatch(r"\|\s*-+\s*(\|\s*-+\s*)+\|", stripped):
                 continue
 
-            if not re.match(r"^(?:[-*]|\d+[.)、])\s+", stripped):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) < 3:
+                continue
+            if cells[0] in {"待辦事項", "事項說明"}:
+                continue
+            if "本次會議未明確指派待辦事項" in cells[0] or "未於本段確認" in cells[0]:
                 continue
 
-            item_text = re.sub(r"^(?:[-*]|\d+[.)、])\s+", "", stripped)
-            for field in ("主辦單位", "協辦單位", "辦理期程"):
-                item_text = re.split(rf"[（(]{field}[:：]", item_text, maxsplit=1)[0].strip()
-            item_text = item_text.rstrip("。．；;")
-            normalized = self._normalize_action_key(item_text)
+            normalized = self._normalize_action_key(cells[0])
             if normalized:
                 action_keys.add(normalized)
-
-        if not action_keys and markdown.strip():
-            log.warning("待辦事項關鍵字抽取結果為空，請檢查輸入格式是否符合會議記錄契約")
 
         return action_keys
 
@@ -408,9 +398,15 @@ class SummarizationService:
         if self._contains_non_markdown_leakage(summary) or self._contains_non_markdown_leakage(cleaned):
             issues.append("包含思考標籤或非 Markdown 洩漏內容")
 
-        expected_actions = self._extract_action_item_keys(extracted_notes)
-        actual_actions = self._extract_action_item_keys(cleaned)
-        missing_actions = expected_actions - actual_actions
+        if self._contains_english_or_rubric_leakage(summary) or self._contains_english_or_rubric_leakage(cleaned):
+            issues.append("包含英文前言、英文整句或回吐的評估標準")
+
+        # 待辦召回採「包含」比對：待辦清單中的事項只要其文字出現在最終摘要任一處
+        # 即視為已涵蓋，容許摘要改寫或補充字詞（如「完成整合測試」→「請於下週三前完成整合測試」），
+        # 避免逐字不符就誤判遺漏而觸發不必要的補強輪次。
+        expected_actions = self._extract_action_table_keys(extracted_notes)
+        normalized_summary = self._normalize_action_key(cleaned)
+        missing_actions = {key for key in expected_actions if key not in normalized_summary}
         if missing_actions:
             issues.append(f"待辦事項遺漏 {len(missing_actions)} 項")
 
@@ -438,6 +434,49 @@ class SummarizationService:
             r"```",
         ]
         return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in leakage_patterns)
+
+    @staticmethod
+    def _contains_english_or_rubric_leakage(text: str) -> bool:
+        """偵測英文前言/分析、回吐的評估標準、方括號模板殘留與整行英文。
+
+        會議紀錄應為純繁體中文公文；模型若輸出英文推理段（如
+        "Analysis of the Transcript"）、原樣回吐提示詞的「評估標準」，或殘留
+        「[請從文本中提取…]」模板，皆視為洩漏，交由 refine 流程要求重寫。
+        """
+        if not text:
+            return False
+
+        leakage_patterns = [
+            # 英文分析/前言慣用語
+            r"\bAnalysis of the Transcript\b",
+            r"\bEvaluation Criteria\b",
+            r"\bMeeting (?:Name|Time|Location)\s*[:：]",
+            r"\bLet'?s\s+(?:infer|name|call|assume)\b",
+            r"\bA suitable name\b",
+            r"\bNot (?:explicitly )?stated\b",
+            # 回吐本提示詞的評估標準小節
+            r"評估標準",
+            r"法制合規性",
+            r"權責明確度",
+            r"意見真實性",
+            # 方括號模板殘留（提示詞改寫後不應再出現）
+            r"\[請從文本中提取",
+            r"\[請填寫",
+        ]
+        if any(re.search(p, text, flags=re.IGNORECASE) for p in leakage_patterns):
+            return True
+
+        # 啟發式：整行英文（單行英文單字 >= 6 且幾乎無中日韓字），用以攔截
+        # 提示詞未列舉到的英文敘述段；標題/清單/表格/引言行先排除以免誤殺技術名詞。
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("|", "-", "*", "#", ">")):
+                continue
+            english_words = len(re.findall(r"[A-Za-z]+", stripped))
+            cjk_chars = len(re.findall(r"[㐀-鿿]", stripped))
+            if english_words >= 6 and cjk_chars <= 2:
+                return True
+        return False
 
     @staticmethod
     def _empty_extraction_notes() -> str:
@@ -538,6 +577,21 @@ class SummarizationService:
 
 逐字稿：
 {transcript}"""
+
+    def _build_cloud_refinement_message(self, original_user_message: str, issues: list[str]) -> str:
+        """雲端模式的補強訊息：重附原逐字稿並列出必須修正的問題。"""
+        issue_lines = "\n".join(f"- {issue}" for issue in issues)
+        return f"""你剛才輸出的會議記錄不合格，請依問題清單完整重新輸出（不要只補修補片段）。
+
+必須修正的問題：
+{issue_lines}
+
+務必遵守：
+- 第一行必須以「會議名稱：」開頭，不得有任何前言、分析段、評估說明或英文整句
+- 全文使用繁體中文（台灣用語）；不得輸出簡體中文、<think>、<thought>、<details>、XML/HTML 標籤或 code fence
+- 未明確提及者填「（待確認）」，不得杜撰或臆測
+
+{original_user_message}"""
 
     def _group_texts_by_budget(self, texts: list[str], budget_tokens: int) -> list[list[str]]:
         """將多段文字依 token 預算分組。"""
@@ -901,10 +955,16 @@ class SummarizationService:
         cleaned = re.sub(r"</?(?:think|thought|details)[^>]*>", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
 
-        if not cleaned.startswith("#"):
-            match = re.search(r"^#\s", cleaned, re.MULTILINE)
-            if match:
-                cleaned = cleaned[match.start():]
+        # 會議紀錄正式格式以「會議名稱：」開頭（並非 Markdown 標題），萃取筆記則以「# 萃取筆記」開頭。
+        # 兩種錨點都要支援，才能裁掉模型可能加在前面的英文分析/前言或評估標準回吐。
+        # 取兩者中最靠前者，避免英文前言內含 # 而誤切到垃圾文字中段。
+        record_anchor = re.search(r"^會議名稱[：:]", cleaned, re.MULTILINE)
+        md_anchor = re.search(r"^#\s", cleaned, re.MULTILINE)
+        anchor_starts = [m.start() for m in (record_anchor, md_anchor) if m]
+        if anchor_starts:
+            first = min(anchor_starts)
+            if first > 0:
+                cleaned = cleaned[first:]
 
         return cleaned.strip()
 
@@ -966,7 +1026,45 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
     ) -> str:
-        """使用 Gemini API 雲端模式生成摘要（異步流式響應）"""
+        """使用 Gemini API 雲端模式生成摘要，並比照本地流程做品質驗證與補強重寫。
+
+        雲端為單次直接摘要（無萃取筆記），故召回類檢查退化處理（傳入空筆記，
+        不誤報待辦遺漏），重點放在英文前言/回吐評估標準、簡體漂移、思考標籤
+        洩漏與公務欄位結構是否完整——出問題的歷史輸出正是雲端路徑。
+        """
+        summary = await self._gemini_chat(system_prompt, user_message, temperature, progress_callback)
+
+        issues = self._validate_summary_quality(summary, "")
+        attempts = 0
+        while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
+            attempts += 1
+            self._emit_progress(
+                progress_callback,
+                min(94.0, 90.0 + attempts),
+                f"補強雲端摘要品質（第 {attempts} 輪）...",
+            )
+            log.info(f"Gemini 摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
+            summary = await self._gemini_chat(
+                system_prompt,
+                self._build_cloud_refinement_message(user_message, issues),
+                0.15,
+                progress_callback,
+            )
+            issues = self._validate_summary_quality(summary, "")
+
+        if issues:
+            log.warning(f"Gemini 摘要仍有待補強問題: {'; '.join(issues)}")
+
+        return summary
+
+    async def _gemini_chat(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float = 0.2,
+        progress_callback: Optional[callable] = None,
+    ) -> str:
+        """對 Gemini 發出單次（異步流式）對話請求並回傳清理後的內容。"""
         client = self._get_gemini_async_client()
 
         try:

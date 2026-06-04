@@ -24,6 +24,14 @@ from backend.api.websocket import connection_manager
 
 MISSING_TEXT = "逐字稿未提及"
 
+# 英文前言/分析句首樣式：這些行即使夾帶少量中文也應整行移除，
+# 用以攔截模型在會議紀錄前輸出的英文推理段（如 "Analysis of the Transcript"）。
+_ENGLISH_PREAMBLE_RE = re.compile(
+    r"^(?:Analysis of the Transcript|Evaluation Criteria|Let'?s\b|Here'?s\b|"
+    r"Below is\b|Okay[,，]?\s*(?:let|here)|Sure[,，]?\b)",
+    re.IGNORECASE,
+)
+
 
 class TaskProcessor:
     """
@@ -214,8 +222,18 @@ class TaskProcessor:
         for line in lines:
             stripped = line.lstrip()
 
+            # 保護含「（待確認）」的行，避免被英文比例規則誤刪（合法的缺漏標記）。
+            if "（待確認）" in stripped:
+                cleaned_lines.append(line)
+                continue
+
             if not stripped or stripped.startswith(('#', '*', '|', '-', '>')):
                 cleaned_lines.append(line)
+                continue
+
+            # 英文前言/分析句首：整行移除（即使夾帶少量中文），攔截英文推理段殘留。
+            if _ENGLISH_PREAMBLE_RE.match(stripped):
+                log.warning(f"[清理] 移除英文前言行: {stripped[:50]}...")
                 continue
 
             if stripped[0].isascii() and stripped[0].isalpha():

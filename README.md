@@ -1,11 +1,37 @@
 # MeetingScribe - 會議轉錄系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.0-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.1-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 
 > 將會議錄音自動轉換為結構化會議記錄的智能系統，支援 Markdown 與 Word (DOCX) 雙格式下載
+
+## 🆕 v4.1 會議紀錄品質根治與提示詞硬化（2026-06-04）
+
+### 🎯 問題：會議紀錄混入英文、贅字、校正過程與杜撰內容
+
+實測發現產出的會議紀錄品質不佳——夾雜非必要英文、口語贅字、語意校正過程，甚至杜撰不存在的單位／人名／決議。根因分析（含一次 Gemini 雲端實證 `tests/會議記錄_20260604.docx`）確認：**問題不在模型能力，而在 System Prompt 架構與輸出後處理**。
+
+### 🔧 根因與修正
+
+- **提示詞誘發回吐（主因）**：舊版 System Prompt 以 `### 評估標準` 收尾、並使用 `[請從文本中提取…]` 方括號模板，會被模型原樣回吐（輸出 `Evaluation Criteria:`），並先吐出整段英文分析（`Analysis of the Transcript:`），正式欄位反而留空。
+  - → 以「政府機關承辦人員」視角，採**多代理對抗硬化**全面重寫 `backend/core/prompts.py`：移除評估標準與方括號模板；新增「只輸出本文／第一個字元必為『會議名稱：』」硬規則；閉合式**不杜撰**規則（未明示一律「（待確認）」、禁臆測、禁套用範例人名）；**去贅字**與**去自我更正過程**規則；台灣公務用語＋陸式用語對照表；修正公文挪抬法制（僅尊長挪抬，一般職稱不挪抬）。
+- **清理器裁不掉新格式前言（程式 bug）**：`_clean_ollama_output` 原只裁切到第一個 Markdown 標題，但正式格式以「會議名稱：」開頭，英文前言因此永遠殘留。
+  - → 裁切錨點改為同時支援「會議名稱：」與 Markdown 標題，取最靠前者。
+- **缺英文／回吐偵測**：新增 `_contains_english_or_rubric_leakage`，接入品質驗證，並**將「驗證＋自動補強重寫」迴圈也套用到 Gemini 雲端路徑**（原本僅本地路徑有此防護，而出問題的正是雲端路徑）。
+- **待辦召回假陽性**：原以逐字精確比對，導致良好摘要僅因改寫待辦字句即被誤判「待辦遺漏」而無止盡觸發補強；改為「包含式比對 + 僅取待辦清單表格」。
+- **後處理強化**：`task_processor` 移除英文前言行、保護「（待確認）」標記、保留技術名詞（OAuth2、GitHub Actions 等）。
+- **防漂移**：`config.yaml` 由 `backend/core/prompts.py` 程式化同步，並新增測試鎖死兩者一致性（CI 擋住，不再靠人記得）。
+
+### ✅ 驗證
+
+- 提示詞契約／清理／驗證／後處理離線單元測試 **60 項全數通過**（全庫 284 passed；whisper 相關失敗為本機未裝 `faster_whisper` 之環境因素，與本次修改無關）。
+- 功能煙霧測試重現實際英文洩漏輸入 → 清理後零殘留、乾淨繁中紀錄零誤判。
+
+> ⚠️ **Docker 部署者注意**：本次修正涉及容器內嵌的 System Prompt 與後端程式，需**重新建置／部署映像**後方可生效（提示詞無法經 API 注入）。
+
+---
 
 ## 🆕 v4.0 重大更新（2026-02-28）
 
@@ -470,6 +496,13 @@ cat data/logs/app.log
 
 ## 📝 版本歷史
 
+### [v4.1] - 2026-06-04
+- ✅ 會議紀錄品質根治：消除非必要英文、口語贅字、語意校正過程與杜撰內容
+- ✅ System Prompt 多代理對抗硬化（移除評估標準/方括號模板、加入只輸出本文與不杜撰硬規則）
+- ✅ 修正 `_clean_ollama_output` 裁切錨點（支援「會議名稱：」開頭格式）
+- ✅ 英文/回吐偵測接入品質驗證，並將補強重寫迴圈擴及 Gemini 雲端路徑
+- ✅ 修正待辦召回假陽性、強化後處理英文清理、`config.yaml` 防漂移同步測試
+
 ### [v4.0] - 2026-02-28
 - ✅ 新增 DOCX (Word) 下載功能，相容 Office 2024 / M365
 - ✅ 專業 CJK 排版（微軟正黑體標題、新細明體內文）
@@ -511,4 +544,4 @@ cat data/logs/app.log
 
 **Made with ❤️ by the MeetingScribe Team**
 
-Last updated: 2026-02-28
+Last updated: 2026-06-04

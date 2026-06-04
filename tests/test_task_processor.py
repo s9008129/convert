@@ -116,6 +116,33 @@ def test_excessive_english_detection_is_not_triggered_by_mixed_technical_summary
     assert processor._has_excessive_english(summary) is False
 
 
+def test_remove_english_segments_drops_preamble_but_keeps_record_and_terms():
+    text = "\n".join([
+        "Analysis of the Transcript: the content revolves around a project review meeting.",
+        "Evaluation Criteria: Legal Compliance, Responsibility Clarity.",
+        "會議名稱：113年度第1次專案進度追蹤會議",
+        "會議地點：（待確認）",
+        "案由：關於 OAuth2 與 GitHub Actions 上線事宜，提請 審議。",
+    ])
+
+    cleaned = TaskProcessor._remove_english_segments(text)
+
+    assert "Analysis of the Transcript" not in cleaned
+    assert "Evaluation Criteria" not in cleaned
+    assert "會議名稱：113年度第1次專案進度追蹤會議" in cleaned
+    assert "會議地點：（待確認）" in cleaned
+    assert "OAuth2" in cleaned and "GitHub Actions" in cleaned
+
+
+def test_remove_english_segments_protects_pending_marker_even_when_line_is_english():
+    """含（待確認）的合法缺漏標記不可被英文比例規則誤刪。"""
+    text = "TBD location info （待確認）"
+
+    cleaned = TaskProcessor._remove_english_segments(text)
+
+    assert "（待確認）" in cleaned
+
+
 def test_format_result_normalizes_common_local_output_artifacts(monkeypatch):
     processor = TaskProcessor()
     task = TaskInfo(
