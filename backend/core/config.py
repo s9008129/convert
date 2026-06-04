@@ -75,7 +75,7 @@ class Settings(BaseSettings):
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description="Gemini API 端點"
     )
-    GEMINI_MODEL: str = Field(default="gemini-2.5-flash-lite", description="Gemini 模型名稱")
+    GEMINI_MODEL: str = Field(default="gemini-3.1-flash-lite", description="Gemini 模型名稱")
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
     LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: int = Field(
         default=8192,
