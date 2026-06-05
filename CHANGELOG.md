@@ -18,6 +18,46 @@
 - 修復 Windows + NVIDIA 原生安裝容易誤裝 `torch ... +cpu` 的問題：新增 `requirements.windows-cuda.txt` 精確鎖定 CUDA wheel、`install_deps.py` 自動選擇 GPU 安裝路徑，並讓 `scripts/verify_env.py` 明確攔截 CPU-only torch
 - 新增 60 秒與 10 分鐘驗收產物，詳見 `data/validation/` 與 `驗收報告.md`
 
+## [v4.1] - 2026-06-04
+
+### 🎯 主題：會議紀錄品質根治與 System Prompt 硬化
+
+實測發現「音檔→逐字稿→會議紀錄」流程產出的會議紀錄品質不佳：夾雜非必要英文、口語贅字、語意校正過程，甚至杜撰不存在的單位／人名／決議。以一次 Gemini 雲端實測（`tests/會議記錄_20260604.docx`）為證據進行根因分析，確認 **問題不在模型能力，而在 System Prompt 架構與輸出後處理**。本版以「政府機關承辦人員」視角，採多代理對抗方式硬化提示詞並修補相關程式碼。
+
+### ✨ 變更
+
+- **重寫 System Prompt（`backend/core/prompts.py`）**
+  - 移除會誘發「原樣回吐」的 `### 評估標準` 區塊與 `[請從文本中提取…]` 方括號模板。
+  - 新增「只輸出本文」硬規則：回應第一個字元必須是「會議名稱：」，嚴禁前言、開場白、英文分析、複述提示詞。
+  - 新增閉合式 **不杜撰** 規則：未明示一律標註「（待確認）」，禁臆測、禁套用範例人名、不得補寫／捏造。
+  - 新增 **去贅字／去自我更正** 規則（呃、嗯、那個…；自我更正只採最終版本）。
+  - 加入台灣公務用語與陸式用語對照表（信息→資訊、質量→品質、項目→計畫、落實→確實辦理），並修正公文挪抬法制（僅尊長挪抬）。
+  - `config.yaml` 的 `system_prompt` 由 `prompts.py` 程式化同步，避免雙來源漂移。
+- **雲端模型升級**：預設 Gemini 模型 `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite`（同步更新 `backend/core/config.py`、`docker/docker-compose.yml`、`config.macos.yaml`、`.env.example`）。
+- **`VERSION`**：4.0 → 4.1。
+
+### 🐛 修復
+
+- **清理器裁不掉新格式英文前言（`summarization._clean_ollama_output`）**：原僅裁切到第一個 Markdown 標題，但正式公文以「會議名稱：」開頭，英文前言因此永遠殘留；裁切錨點改為同時支援「會議名稱：」與 Markdown 標題，取最靠前者。
+- **缺英文／回吐偵測**：新增 `_contains_english_or_rubric_leakage`，偵測 `Analysis of the Transcript`、`Evaluation Criteria`、`Let's infer`、回吐評估標準字串、方括號殘留與整行英文啟發式，並接入 `_validate_summary_quality`。
+- **雲端路徑無防護**：將「驗證＋自動補強重寫」迴圈擴及 Gemini 雲端路徑（原僅本地萃取式管線有此防護，而出問題的正是雲端路徑）；重構出共用的 `_gemini_chat` 與 `_build_cloud_refinement_message`。
+- **待辦召回假陽性**：原以逐字精確比對，導致良好摘要僅因改寫待辦字句即被誤判「待辦遺漏」而無止盡觸發補強；改為「包含式比對 ＋ 僅取待辦清單表格」（`_extract_action_table_keys`）。
+- **後處理強化（`task_processor._remove_english_segments`）**：移除英文前言行（模組層級 `_ENGLISH_PREAMBLE_RE`）、保護含「（待確認）」的合法缺漏標記不被英文比例規則誤刪、保留技術名詞（OAuth2、GitHub Actions 等）。
+
+### ✅ 測試
+
+- 新增／更新提示詞契約、清理、驗證、後處理離線單元測試（`tests/test_system_prompt_validation.py`、`tests/test_summarization_service.py`、`tests/test_task_processor.py`），涵蓋：無方括號模板、禁英文前言、`config.yaml` 與 Python 來源一致性、英文／回吐偵測、（待確認）與技術名詞保護。
+- 新增 `test_config_yaml_prompt_matches_python_source` 將提示詞雙來源漂移由「靠人記得」升級為 CI 擋住。
+
+### 📄 文件
+
+- 新增 [部署更新手冊_v4.1.md](部署更新手冊_v4.1.md)：給非技術人員的逐步更新部署手冊，含「要不要重建映像／會不會吃網路流量」的精確判斷（標準版免重建、GPU 版用普通 `build` 不下載、僅套件清單變動才需 `--no-cache`）。
+- 精簡 README.md：移除內嵌的逐版變更深掘段落，回歸「介紹用途／架構／理念／簡易操作」定位，變更紀錄統一回歸本檔。
+
+> ⚠️ **Docker 部署注意**：System Prompt 內嵌於容器映像（GPU 版）或經 volume 連動（標準版），需重新套用映像／重啟容器後方可生效，提示詞無法經 API 注入。詳見 [部署更新手冊_v4.1.md](部署更新手冊_v4.1.md)。
+
+---
+
 ## [v4.0] - 2026-02-28
 
 ### ✨ 新增 DOCX (Word) 下載功能
