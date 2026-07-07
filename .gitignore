@@ -124,3 +124,9 @@ models/
 
 # MAC 舊版 Docker 部署方案（已廢棄，改用原生服務模式）
 old_mac/
+
+# 大型二進位與本機資料（禁止入版控，見系統改善及優化計畫 P0-9）
+Faster-Whisper-XXL/
+*.7z
+input/
+output/
