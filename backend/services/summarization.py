@@ -21,8 +21,6 @@ from backend.core.logger import log
 from backend.core.platform_config import (
     get_global_config,
     get_config_value,
-    get_llm_provider,
-    get_platform
 )
 from backend.models.schemas import ProcessingMode
 
@@ -249,12 +247,19 @@ class SummarizationService:
         )
         chunk_input_budget = max(1200, context_window - output_budget - extraction_overhead)
         chunk_input_budget = min(chunk_input_budget, 3200)
+        # P0-6：合併後筆記會進入「最終生成」步驟，該步驟使用完整公務紀錄
+        # System Prompt（約 1,200 tokens）＋補強重寫時還會再附一份當前摘要。
+        # 預算必須以「合併 prompt」與「最終生成（含補強）」兩者中較大的
+        # 開銷計算，否則最終步驟輸入會超過 num_ctx 被 Ollama 靜默截斷。
+        merge_overhead = self._estimate_tokens(self.LOCAL_NOTES_MERGE_PROMPT) + 250
+        final_overhead = (
+            self._estimate_tokens(system_prompt)
+            + output_budget  # 補強輪會把當前摘要附進輸入，以輸出預算上限估計
+            + 400  # 最終生成模板與問題清單
+        )
         notes_merge_budget = max(
             900,
-            context_window
-            - output_budget
-            - self._estimate_tokens(self.LOCAL_NOTES_MERGE_PROMPT)
-            - 250
+            context_window - output_budget - max(merge_overhead, final_overhead),
         )
         effective_chunk_step = max(chunk_input_budget - 220, 1)
         estimated_chunk_count = max(1, (transcript_tokens + effective_chunk_step - 1) // effective_chunk_step)
@@ -355,39 +360,39 @@ class SummarizationService:
 
         return action_keys
 
+    # P1-8：欄位驗證改為容錯 regex（允許空格數量與全半形冒號差異），
+    # 驗證「欄位存在性」而非字面完全一致；欄位標準化交由記錄級後處理。
+    _REQUIRED_SECTION_PATTERNS = [
+        ("會議名稱", re.compile(r"會議名稱\s*[:：]")),
+        ("會議時間", re.compile(r"會議時間\s*[:：]")),
+        ("會議地點", re.compile(r"會議地點\s*[:：]")),
+        ("主席", re.compile(r"主\s*席\s*[:：]")),
+        ("出席人員", re.compile(r"出席人員\s*[:：]")),
+        ("列席人員", re.compile(r"列席人員\s*[:：]")),
+        ("記錄", re.compile(r"記\s*錄\s*[:：]")),
+        ("一、報告事項", re.compile(r"一、\s*報告事項")),
+        ("二、討論事項", re.compile(r"二、\s*討論事項")),
+        ("案由", re.compile(r"案由\s*[:：]")),
+        ("說明", re.compile(r"說明\s*[:：]")),
+        ("各單位意見", re.compile(r"各單位意見")),
+        ("決議", re.compile(r"決議\s*[:：]")),
+        ("三、主席裁示事項", re.compile(r"三、\s*主席裁示事項")),
+    ]
+
     def _validate_summary_quality(self, summary: str, extracted_notes: str) -> list[str]:
         """針對最終摘要做結構與召回檢查。"""
         issues: list[str] = []
         cleaned = self._clean_ollama_output(summary)
 
-        required_sections = [
-            "會議名稱：",
-            "會議時間：",
-            "會議地點：",
-            "主  席：",
-            "出席人員：",
-            "列席人員：",
-            "記  錄：AI 會議助理",
-            "一、 報告事項：",
-            "二、 討論事項：",
-            "案由：",
-            "說明：",
-            "各單位意見（多方立場）：",
-            "決議：",
-            "三、 主席裁示事項（後續管考與追蹤）：",
-        ]
-        for marker in required_sections:
-            if marker not in cleaned:
-                issues.append(f"缺少區塊：{marker}")
+        for label, pattern in self._REQUIRED_SECTION_PATTERNS:
+            if not pattern.search(cleaned):
+                issues.append(f"缺少區塊：{label}")
 
-        if "主辦單位：" not in cleaned:
+        if not re.search(r"主辦單位\s*[:：]", cleaned):
             issues.append("缺少主辦單位資訊")
 
-        if "辦理期程：" not in cleaned:
+        if not re.search(r"辦理期程\s*[:：]", cleaned):
             issues.append("缺少辦理期程資訊")
-
-        if cleaned.count("各單位意見（多方立場）") == 0:
-            issues.append("各單位意見內容不足")
 
         if len(cleaned) < 250:
             issues.append("摘要內容過短")
@@ -414,12 +419,10 @@ class SummarizationService:
 
     @staticmethod
     def _contains_simplified_chinese(text: str) -> bool:
-        """偵測常見簡體字漂移，交由 refine 流程要求重寫。"""
-        if not text:
-            return False
+        """偵測簡體字漂移（P1-2：改用 OpenCC 全字覆蓋，取代 45 字硬編碼表）。"""
+        from backend.core.text_postprocess import contains_simplified_chinese
 
-        simplified_only_chars = "为会体们动办务发叶号启实对开当录总应数术样气没点产监着类统网规让议话这进项"
-        return any(char in text for char in simplified_only_chars)
+        return contains_simplified_chinese(text)
 
     @staticmethod
     def _contains_non_markdown_leakage(text: str) -> bool:
@@ -626,8 +629,30 @@ class SummarizationService:
         if not current_notes:
             return self._empty_extraction_notes()
 
+        # 收斂保護（v4.2）：整併輸出若無法縮到預算內，舊邏輯會無限重壓縮。
+        # 三重防線：輪數上限、縮減停滯偵測、最終硬截斷保底。
         round_index = 1
+        previous_total_tokens: Optional[int] = None
+        merge_predict_cap = min(
+            settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+            max(notes_merge_budget_tokens, 512),
+        )
         while len(current_notes) > 1 or self._estimate_tokens(current_notes[0]) > notes_merge_budget_tokens:
+            total_tokens = sum(self._estimate_tokens(note) for note in current_notes)
+            if round_index > settings.LOCAL_LLM_MAX_MERGE_ROUNDS:
+                log.warning(
+                    "筆記整併達輪數上限（{} 輪）仍超出預算（{} tokens > {}），改用硬截斷",
+                    settings.LOCAL_LLM_MAX_MERGE_ROUNDS, total_tokens, notes_merge_budget_tokens,
+                )
+                break
+            if previous_total_tokens is not None and total_tokens >= previous_total_tokens * 0.9:
+                log.warning(
+                    "筆記整併縮減停滯（{} → {} tokens），停止整併改用硬截斷",
+                    previous_total_tokens, total_tokens,
+                )
+                break
+            previous_total_tokens = total_tokens
+
             note_groups = self._group_texts_by_budget(current_notes, notes_merge_budget_tokens)
             if len(note_groups) == 1 and len(current_notes) == 1:
                 break
@@ -637,21 +662,43 @@ class SummarizationService:
                 self._emit_progress(
                     progress_callback,
                     min(84.0, 75.0 + group_index),
-                    f"整併萃取筆記 {group_index}/{len(note_groups)}..."
+                    f"整併萃取筆記 第{round_index}輪 {group_index}/{len(note_groups)}..."
                 )
                 merged = await self._generate_with_local_engine(
                     engine,
                     self.LOCAL_NOTES_MERGE_PROMPT,
                     self._build_notes_merge_message(note_group, round_index, len(note_groups)),
                     temperature=0.1,
-                    num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                    # 輸出上限綁定預算：讓整併輸出「物理上」不可能超過預算太多
+                    num_predict=merge_predict_cap,
                 )
                 merged_round.append(self._clean_ollama_output(merged))
 
             current_notes = merged_round
             round_index += 1
 
-        return current_notes[0] if len(current_notes) == 1 else "\n\n".join(current_notes)
+        combined = current_notes[0] if len(current_notes) == 1 else "\n\n".join(current_notes)
+        return self._truncate_to_token_budget(combined, notes_merge_budget_tokens)
+
+    def _truncate_to_token_budget(self, text: str, budget_tokens: int) -> str:
+        """最後保底：仍超出預算時依行硬截斷（保留前段，行界不切半句）。"""
+        if self._estimate_tokens(text) <= budget_tokens:
+            return text
+
+        kept_lines: list[str] = []
+        used = 0
+        for line in text.splitlines():
+            line_tokens = self._estimate_tokens(line) + 1
+            if used + line_tokens > budget_tokens:
+                break
+            kept_lines.append(line)
+            used += line_tokens
+        truncated = "\n".join(kept_lines).strip()
+        log.warning(
+            "整併筆記硬截斷：{} → {} tokens（預算 {}）；後段內容未進入最終生成",
+            self._estimate_tokens(text), self._estimate_tokens(truncated), budget_tokens,
+        )
+        return truncated or text[: budget_tokens * 2]
 
     async def _select_local_engine(self) -> str:
         """選擇可用的本地 LLM 引擎。"""
@@ -752,7 +799,9 @@ class SummarizationService:
             temperature=0.2,
             num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
         )
-        summary = self._clean_ollama_output(summary)
+        # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
+        # 驗證是最後一關，通過後不得再被任何流程改寫。
+        summary = self._finalize_record_text(self._clean_ollama_output(summary))
 
         issues = self._validate_summary_quality(summary, merged_notes)
         attempts = 0
@@ -766,7 +815,7 @@ class SummarizationService:
                 temperature=0.15,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
             )
-            summary = self._clean_ollama_output(summary)
+            summary = self._finalize_record_text(self._clean_ollama_output(summary))
             issues = self._validate_summary_quality(summary, merged_notes)
 
         if issues:
@@ -774,41 +823,35 @@ class SummarizationService:
 
         return summary
 
+    @staticmethod
+    def _finalize_record_text(summary: str) -> str:
+        """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。"""
+        from backend.core.glossary import english_protected_terms
+        from backend.core.text_postprocess import finalize_record
 
-    async def _summarize_with_local_llm(
+        try:
+            protected = english_protected_terms()
+        except Exception:  # noqa: BLE001
+            protected = set()
+        return finalize_record(summary, protected_terms=protected)
+
+
+    async def generate_local(
         self,
         system_prompt: str,
         user_message: str,
-        progress_callback: Optional[callable] = None
+        temperature: float = 0.0,
+        num_predict: Optional[int] = None,
     ) -> str:
-        """
-        使用本地 LLM 生成摘要
-        v3.5.0: 根據平台配置自動選擇 LLM 提供者
-        - macOS: 優先 LM Studio，其次 Ollama
-        - Windows/Linux: 優先 Ollama，其次 LM Studio
-        """
-        # 獲取平台配置的 LLM 提供者
-        config = get_global_config()
-        provider = get_config_value(config, 'llm.provider', 'ollama')
-        platform_name = get_platform()
-        log.info(f"平台: {platform_name}, 配置的 LLM 提供者: {provider}")
-
-        preferred_engines = ["lmstudio", "ollama"] if provider == "lmstudio" or platform_name == "macos" else ["ollama", "lmstudio"]
-
-        for engine in preferred_engines:
-            is_available = await (self.check_lmstudio_health() if engine == "lmstudio" else self.check_ollama_health())
-            if is_available:
-                return await self._generate_with_local_engine(
-                    engine,
-                    system_prompt,
-                    user_message,
-                    progress_callback=progress_callback,
-                )
-
-        if self._ollama_model_error:
-            raise RuntimeError(self._ollama_model_error)
-
-        raise RuntimeError("本地 LLM 不可用：請確認 Ollama 或 LM Studio 已啟動")
+        """以本地引擎執行單次生成（供逐字稿語意校正等模組共用，P1-3）。"""
+        engine = await self._select_local_engine()
+        return await self._generate_with_local_engine(
+            engine,
+            system_prompt,
+            user_message,
+            temperature=temperature,
+            num_predict=num_predict,
+        )
 
     async def _summarize_with_ollama(
         self,
@@ -840,44 +883,58 @@ class SummarizationService:
             effective_model = self._get_effective_model()
             log.info(f"使用模型: {effective_model}")
 
-            response = await client.post(
-                "/api/chat",
-                json={
-                    "model": effective_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
-                    "stream": False,
-                    "keep_alive": "0",  # v3.5.2: 關鍵！使用完畢後立即釋放 VRAM
-                    "options": {
-                        "temperature": temperature,
-                        "top_p": 0.95,
-                        "top_k": 64,
-                        "repeat_penalty": 1.08,
-                        "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
-                        "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                        "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
-                    }
-                },
-                timeout=600.0
-            )
-            response.raise_for_status()
+            # 空回應偶發（實測 gemma4:31b 偶爾回空 content）→ 自動重試一次
+            summary = ""
+            for attempt in range(2):
+                response = await client.post(
+                    "/api/chat",
+                    json={
+                        "model": effective_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message}
+                        ],
+                        "stream": False,
+                        # P0-7：三階段流程會連續呼叫十數次，keep_alive=0 會導致每階段
+                        # 重載 20GB 模型。改為可設定（預設 10m），流程結束後自然逾時釋放。
+                        "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
+                        "options": {
+                            # 重試時略升溫度以跳出空回應狀態
+                            "temperature": temperature if attempt == 0 else max(temperature, 0.3),
+                            "top_p": 0.95,
+                            "top_k": 64,
+                            "repeat_penalty": 1.08,
+                            "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+                            "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                            "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
+                        }
+                    },
+                    timeout=600.0
+                )
+                response.raise_for_status()
 
-            self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+                self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
 
-            data = response.json()
-            summary = data.get("message", {}).get("content", "")
+                data = response.json()
+                raw_content = data.get("message", {}).get("content", "")
+                summary = self._clean_ollama_output(raw_content)
 
-            # 後處理：清理不需要的前綴
-            summary = self._clean_ollama_output(summary)
+                # 清理後為空但原始輸出非空 → 用原始輸出（後續驗證/補強會把關格式）
+                if (not summary or not summary.strip()) and raw_content.strip():
+                    log.warning(
+                        "清理後為空但模型原始輸出非空（{} 字元），改用原始輸出", len(raw_content)
+                    )
+                    summary = raw_content.strip()
+
+                if summary and summary.strip():
+                    break
+                log.warning("Ollama 回傳空內容（第 {} 次），{}", attempt + 1, "重試中" if attempt == 0 else "放棄")
 
             # 檢查摘要是否為空
             if not summary or not summary.strip():
-                log.warning("Ollama 摘要生成結果為空")
                 raise RuntimeError("摘要生成失敗：結果為空")
 
-            log.info(f"Ollama 摘要生成成功，模型: {effective_model}，VRAM 將自動釋放")
+            log.info(f"Ollama 摘要生成成功，模型: {effective_model}")
             return summary
 
         except httpx.ConnectError:
@@ -1032,7 +1089,9 @@ class SummarizationService:
         不誤報待辦遺漏），重點放在英文前言/回吐評估標準、簡體漂移、思考標籤
         洩漏與公務欄位結構是否完整——出問題的歷史輸出正是雲端路徑。
         """
-        summary = await self._gemini_chat(system_prompt, user_message, temperature, progress_callback)
+        summary = self._finalize_record_text(
+            await self._gemini_chat(system_prompt, user_message, temperature, progress_callback)
+        )
 
         issues = self._validate_summary_quality(summary, "")
         attempts = 0
@@ -1044,11 +1103,13 @@ class SummarizationService:
                 f"補強雲端摘要品質（第 {attempts} 輪）...",
             )
             log.info(f"Gemini 摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
-            summary = await self._gemini_chat(
-                system_prompt,
-                self._build_cloud_refinement_message(user_message, issues),
-                0.15,
-                progress_callback,
+            summary = self._finalize_record_text(
+                await self._gemini_chat(
+                    system_prompt,
+                    self._build_cloud_refinement_message(user_message, issues),
+                    0.15,
+                    progress_callback,
+                )
             )
             issues = self._validate_summary_quality(summary, "")
 

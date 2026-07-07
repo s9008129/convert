@@ -1,6 +1,8 @@
 """
-MeetingScribe 系統配置
-v2.1 - 完整參數化設計
+MeetingScribe 系統配置（版本以根目錄 VERSION 檔為唯一來源）
+
+注意：後端僅讀取「環境變數 / .env」；config.yaml 只供舊版 CLI 使用，
+修改 config.yaml 對後端服務無效（詳見系統改善及優化計畫 P0-3）。
 """
 
 import os
@@ -93,6 +95,42 @@ class Settings(BaseSettings):
         default=2,
         description="本地摘要品質驗證後的最大補強輪數"
     )
+    LOCAL_LLM_KEEP_ALIVE: str = Field(
+        default="10m",
+        description="Ollama keep_alive；三階段流程期間保留模型於記憶體，避免每階段重載大模型（P0-7）"
+    )
+    LOCAL_LLM_MAX_MERGE_ROUNDS: int = Field(
+        default=3,
+        description="萃取筆記整併的最大輪數；超過或縮減停滯即停止整併改用硬截斷，防止無窮迴圈"
+    )
+
+    # ========================================
+    # 逐字稿語意校正（P1-2 ~ P1-4 語意校正機制）
+    # ========================================
+    ENABLE_TRANSCRIPT_CORRECTION: bool = Field(
+        default=True,
+        description="是否啟用逐字稿 LLM 語意校正（同音錯字/專有名詞修正，含同音驗證閘門）"
+    )
+    CORRECTION_SCOPE: str = Field(
+        default="all",
+        description="校正範圍：all=全部段落（閘門把關）、auto=僅詞彙表模糊命中段落、off=停用"
+    )
+    CORRECTION_MAX_SEGMENT_CHARS: int = Field(
+        default=400,
+        description="校正分段長度上限（字元）"
+    )
+    CORRECTION_CONTEXT_CHARS: int = Field(
+        default=60,
+        description="校正時附帶的前文唯讀上下文長度（字元）"
+    )
+    CORRECTION_MAX_CHANGE_RATIO: float = Field(
+        default=0.10,
+        description="單段允許的最大改動比例，超過即整段放棄校正（防過度改寫）"
+    )
+    GLOSSARY_DIR: str = Field(
+        default="",
+        description="機關詞彙表目錄（空值 = 專案內 data/glossary）"
+    )
     
     # ========================================
     # Whisper / ASR 設定
@@ -135,8 +173,8 @@ class Settings(BaseSettings):
         description="最短語音持續時間（毫秒）"
     )
     ASR_VAD_MIN_SILENCE_MS: int = Field(
-        default=2000,
-        description="觸發分割的最短靜音時間（毫秒）"
+        default=500,
+        description="觸發分割的最短靜音時間（毫秒）；P1-6 依實證由 2000 調降為 500"
     )
     ASR_VAD_SPEECH_PAD_MS: int = Field(
         default=400,
@@ -145,6 +183,35 @@ class Settings(BaseSettings):
     ASR_BEAM_SIZE: int = Field(
         default=5,
         description="Beam Search 大小"
+    )
+    # ---- P1-6 實證參數組（faster-whisper 路徑）----
+    ASR_CONDITION_ON_PREVIOUS_TEXT: bool = Field(
+        default=False,
+        description="是否以前段輸出作為後段條件；長檔防重複迴圈第一要務，預設關閉"
+    )
+    ASR_COMPRESSION_RATIO_THRESHOLD: float = Field(
+        default=2.2,
+        description="壓縮比幻覺門檻；中文建議 2.2（原預設 2.4）"
+    )
+    ASR_NO_SPEECH_THRESHOLD: float = Field(
+        default=0.5,
+        description="無語音判定門檻（原預設 0.6）"
+    )
+    ASR_REPETITION_PENALTY: float = Field(
+        default=1.1,
+        description="重複懲罰；中文重複字幻覺抑制"
+    )
+    ASR_NO_REPEAT_NGRAM_SIZE: int = Field(
+        default=3,
+        description="禁止重複的 n-gram 長度；0 = 停用"
+    )
+    ASR_ENABLE_HOTWORDS: bool = Field(
+        default=True,
+        description="是否將機關詞彙表注入 ASR（faster-whisper hotwords / transformers prompt）"
+    )
+    ASR_CHUNK_STRIDE_SECONDS: int = Field(
+        default=5,
+        description="Transformers 長音檔分塊的左右重疊秒數（P0-2 重疊解碼）"
     )
     ASR_RETURN_TIMESTAMPS: bool = Field(
         default=True,
@@ -159,7 +226,7 @@ class Settings(BaseSettings):
         description="是否只使用本地快取模型檔"
     )
     ASR_SAFE_ALLOW_PATTERNS: str = Field(
-        default="config.json,generation_config.json,preprocessor_config.json,tokenizer_config.json,special_tokens_map.json,normalizer.json,merges.txt,vocab.json,added_tokens.json,model.safetensors.index.json,model-*.safetensors",
+        default="config.json,generation_config.json,preprocessor_config.json,tokenizer_config.json,special_tokens_map.json,normalizer.json,merges.txt,vocab.json,added_tokens.json,model.safetensors.index.json,model-*.safetensors,model.safetensors",
         description="允許下載的模型檔案模式"
     )
     ASR_SAFE_DENY_PATTERNS: str = Field(
@@ -180,6 +247,14 @@ class Settings(BaseSettings):
     # ========================================
     LOG_LEVEL: str = Field(default="INFO", description="日誌等級")
     DATA_DIR: str = Field(default="/app/data", description="資料目錄")
+    ALLOWED_ORIGINS: str = Field(
+        default="*",
+        description="CORS 允許來源（逗號分隔）；* 時自動停用 credentials（P2-7）"
+    )
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
     
     # ========================================
     # System Prompt 設定

@@ -60,3 +60,40 @@ DEFAULT_MEETING_RECORD_PROMPT = MEETING_RECORD_SYSTEM_PROMPT
 
 # 精簡版與預設版共用同一份正式公務提示詞
 CONCISE_MEETING_RECORD_PROMPT = MEETING_RECORD_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# 逐字稿語意校正提示詞（語意校正機制第三層）
+# 依 Confidence-Guided EC / ChineseHP 實證設計：只修同音近音錯字、嚴禁改寫，
+# 每個替換之後還會經過「同音驗證閘門」（backend/services/correction.py）把關。
+# ---------------------------------------------------------------------------
+
+TRANSCRIPT_CORRECTION_SYSTEM_PROMPT = """你是臺灣公務機關的逐字稿校對員。任務只有一個：修正下列逐字稿中「明顯的語音辨識錯字」，特別是同音或近音字誤植與專有名詞錯誤。
+
+規則（違反任一條即視為失敗）：
+1. 逐字忠於原文：不改寫句子、不增刪內容、不調整語氣、不刪除口語贅詞、不加標點以外的新字。
+2. 只在「發音相同或相近、且依上下文明顯是辨識錯誤」時才替換該詞。
+3. 無法確定時一律保留原文；整段沒有錯誤就原樣輸出。
+4. 全文使用台灣慣用繁體中文；不得輸出簡體字。
+5. 只輸出校正後的段落本文，不要輸出任何說明、前言、標題或 code fence。
+
+範例：
+原文：本案已進成核，預計下週發文。
+輸出：本案已陳核，預計下週發文。
+原文：這個公文要用簡任第十職等去派。
+輸出：這個公文要用簡任第十職等去派。
+原文：依權責前辦後再送科長。
+輸出：依權責簽辦後再送科長。
+原文：今天天氣很好，我們開始開會。
+輸出：今天天氣很好，我們開始開會。"""
+
+
+def build_correction_user_message(segment: str, context_before: str = "", glossary_block: str = "") -> str:
+    """組出單一段落的校正訊息（前文唯讀、詞彙表注入）。"""
+    parts: list[str] = []
+    if glossary_block:
+        parts.append(f"本場會議專有名詞表（優先依此校正）：\n{glossary_block}")
+    if context_before:
+        parts.append(f"【前文參考，勿輸出】\n{context_before}")
+    parts.append(f"【待校正段落，只輸出此段校正結果】\n{segment}")
+    return "\n\n".join(parts)

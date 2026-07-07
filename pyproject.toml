@@ -1,0 +1,78 @@
+# ============================================
+# MeetingScribe — uv 專案定義
+#
+# 環境管理一律建議使用 uv（不再手動維護 venv）：
+#   安裝 uv：winget install astral-sh.uv  （或 curl -LsSf https://astral.sh/uv/install.sh | sh）
+#   建環境＋裝依賴：uv sync            （自動建立 .venv、依 uv.lock 精準還原）
+#   跑服務：        uv run uvicorn backend.main:app --host 0.0.0.0 --port 9527
+#   跑測試：        uv run pytest tests/ -q
+#
+# requirements.txt 仍保留給 Docker build 使用，兩邊依賴請同步維護。
+# ============================================
+
+[project]
+name = "meetingscribe"
+version = "4.2.0"
+description = "會議轉錄系統：Whisper/Breeze-ASR 語音辨識 + 本地/雲端 LLM 生成臺灣公務機關會議紀錄"
+requires-python = ">=3.11"
+dependencies = [
+    # Web 框架
+    "fastapi==0.109.2",
+    "uvicorn[standard]==0.27.1",
+    "python-multipart==0.0.9",
+    "websockets==12.0",
+    # Whisper / ASR
+    "faster-whisper==1.2.1",
+    "ctranslate2>=4.5.0",
+    "torch>=2.1.0,<3.0.0",
+    "transformers>=4.49.0,<5.0.0",
+    "accelerate>=0.27.0,<2.0.0",
+    "safetensors>=0.4.2,<1.0.0",
+    "huggingface_hub>=0.20.0",
+    "requests>=2.28.0",
+    # LLM 客戶端
+    "openai==1.12.0",
+    "httpx==0.26.0",
+    # 資料驗證
+    "pydantic==2.6.1",
+    "pydantic-settings==2.1.0",
+    # 非同步任務
+    "asyncio-throttle==1.0.2",
+    # 工具
+    "python-dotenv==1.0.1",
+    "aiofiles==23.2.1",
+    "PyYAML==6.0.1",
+    "packaging>=21.0",
+    "loguru==0.7.2",
+    # 音訊處理
+    "ffmpeg-python==0.2.0",
+    "av>=12.0.0",
+    # DOCX
+    "python-docx>=0.8.11",
+    # 語意校正機制（v4.2）
+    "opencc-python-reimplemented>=0.1.7",
+    "pypinyin>=0.53.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.uv]
+# CPU 版 torch（Windows/macOS 開發機不需 CUDA wheel，省下 2GB+ 下載；
+# GPU 部署走 Docker 或 requirements.windows-cuda.txt）
+index-strategy = "unsafe-best-match"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

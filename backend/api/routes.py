@@ -98,7 +98,7 @@ async def upload_file(
     """
     上傳音訊/視訊檔案
     
-    - **file**: 音訊或視訊檔案（最大 100MB）
+    - **file**: 音訊或視訊檔案（大小上限依 MAX_FILE_SIZE_MB 設定，預設 200MB）
     - **processing_mode**: 處理模式 (local/cloud)
     - **user_prompt**: 使用者自訂 prompt（選填）
     """

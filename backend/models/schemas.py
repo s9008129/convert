@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
+from backend.core.version import __version__
+
 
 class TaskStatus(str, Enum):
     """任務狀態"""
@@ -97,7 +99,7 @@ class UploadResponse(BaseModel):
 class HealthStatus(BaseModel):
     """健康狀態"""
     status: str
-    version: str = "2.1.0"
+    version: str = __version__  # P0-8：版本以 VERSION 檔為唯一來源
     gpu_available: bool
     gpu_name: Optional[str] = None
     ollama_available: bool

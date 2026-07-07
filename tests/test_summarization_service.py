@@ -140,7 +140,7 @@ async def test_check_ollama_health_reports_clear_model_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_summarize_with_local_llm_surfaces_model_resolution_error(monkeypatch):
+async def test_generate_local_surfaces_model_resolution_error(monkeypatch):
     service = SummarizationService()
     service._ollama_model_error = "設定的 Ollama 模型不存在。"
 
@@ -148,7 +148,7 @@ async def test_summarize_with_local_llm_surfaces_model_resolution_error(monkeypa
     monkeypatch.setattr(service, "check_lmstudio_health", AsyncMock(return_value=False))
 
     with pytest.raises(RuntimeError, match="設定的 Ollama 模型不存在"):
-        await service._summarize_with_local_llm("system", "user")
+        await service.generate_local("system", "user")
 
 
 def test_build_local_context_plan_assumes_effective_8192_window(monkeypatch):

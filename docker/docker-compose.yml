@@ -75,11 +75,24 @@ services:
       
       # ========================================
       # Whisper 轉錄設定
+      # P0-4：與 docker-compose-windows-gpu.yml 統一為同一組 ASR 預設，
+      # 差異只允許出現在裝置層（CPU/GPU）。
+      # 若需回滾 faster-whisper 路徑，改用：
+      #   ASR_BACKEND=faster_whisper
+      #   WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
       # ========================================
-      - ASR_BACKEND=faster_whisper
-      - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
-      - WHISPER_LANGUAGE=zh
+      - ASR_BACKEND=transformers
+      - WHISPER_MODEL=MediaTek-Research/Breeze-ASR-26
+      - WHISPER_MODEL_REVISION=949c87bca9dbe90e160cf739460cc765e80805f3
+      - WHISPER_LANGUAGE=auto
       - WHISPER_DEVICE=auto
+
+      # ========================================
+      # 語意校正（v4.2 新增，詳見系統改善及優化計畫 P1-2~P1-4）
+      # ========================================
+      - ENABLE_TRANSCRIPT_CORRECTION=${ENABLE_TRANSCRIPT_CORRECTION:-true}
+      - CORRECTION_SCOPE=${CORRECTION_SCOPE:-all}
+      - LOCAL_LLM_KEEP_ALIVE=${LOCAL_LLM_KEEP_ALIVE:-10m}
       
       # ========================================
       # 排隊系統設定（v2.1 新增）
@@ -99,6 +112,8 @@ services:
       - ../data/uploads:/app/data/uploads
       - ../data/outputs:/app/data/outputs
       - ../data/cache:/app/data/cache
+      # 機關詞彙表（v4.2 語意校正；.dockerignore 排除 data/，必須掛載）
+      - ../data/glossary:/app/data/glossary
       - meetingscribe-whisper-models:/app/models
       # 開發模式：前端檔案即時同步（修改後重整瀏覽器即可）
       - ../frontend:/app/frontend

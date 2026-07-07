@@ -1,5 +1,51 @@
 # MeetingScribe - 變更紀錄
 
+## [v4.2.0] - 2026-07-07
+
+### 🎯 主題：語意校正機制上線＋《系統改善及優化計畫》P0/P1/P2 落地
+
+依《系統改善及優化計畫.md》逐項執行（各項編號對照該計畫），本版重點：
+
+### ✨ 新增：語意校正機制（四層防線）
+
+- **第一層（P1-1）機關詞彙表 hotwords**：新增 `data/glossary/公務詞彙.txt` 與 `backend/core/glossary.py`；faster-whisper 路徑經 `hotwords` 每視窗注入，transformers 路徑併入 initial prompt；支援「錯誤寫法=>正確寫法」登錄已知誤辨
+- **第二層（P1-2）確定性後處理** `backend/core/text_postprocess.py`：OpenCC s2twp 統一台灣正體（取代 45 字硬編碼偵測）、Whisper 幻覺黑名單（請訂閱／字幕由…提供）、連續重複句去重、公務用字白名單
+- **第三層（P1-3）選擇性 LLM 校正** `backend/services/correction.py`：分段 400 字、附前文唯讀上下文、temperature=0、詞彙表注入、few-shot 含「無錯誤原樣輸出」負例；可由 `ENABLE_TRANSCRIPT_CORRECTION` / `CORRECTION_SCOPE` 開關
+- **第四層（P1-4）同音驗證閘門**：LLM 的每處替換以 pypinyin 注音比對（含台灣口音 zh/z、in/ing 等近音容錯），非同音近音一律退回原文；單段改動 >10% 整段放棄；全部修改輸出「語意校正對照表」供人工複核
+
+### 🐛 P0 嚴重缺陷修復
+
+- **P0-1** `initial_prompt` 在 `language=auto` 下永不套用 → 無論語言模式一律套用
+- **P0-2** transformers 生產路徑 30 秒硬切 → 改用 pipeline 原生重疊分塊解碼（`chunk_length_s=30, stride=(5,5)`），保留舊視窗切割為回退
+- **P0-3** 設定黑洞 → `config.yaml` 頂部加大字警告（後端只讀環境變數）；後端啟動時記錄全部實際生效參數
+- **P0-4** 兩套 compose ASR 設定統一為 transformers＋Breeze-ASR-26＋auto
+- **P0-5** 摘要失敗不再偽裝成功 → 輸出檔標題與首段顯著警告「僅逐字稿」、進度訊息明示
+- **P0-6** 最終生成 token 預算納入完整 System Prompt 開銷，杜絕 Ollama 靜默截斷
+- **E2E 實測追修**：筆記整併迴圈加入收斂保護（輪數上限＋縮減停滯偵測＋輸出綁定預算＋硬截斷保底），修復預算收緊後 merge 無限重壓縮的無窮迴圈；校正分段器支援無標點 ASR 逐字稿；transformers `prompt_ids` 需 `return_tensors="pt"`；ASR allow-pattern 補 `model.safetensors`
+- **P0-7** Ollama `keep_alive` 0 → 10m（可設定），多階段流程不再反覆重載 20GB 模型
+- **P0-8** 版本號單一來源（VERSION 檔）；清理 main.py/schemas.py/config.py 等陳舊版號
+
+### ✨ P1 品質建設
+
+- **P1-6** faster-whisper 實證參數組：`condition_on_previous_text=False`、`compression_ratio_threshold=2.2`、`no_speech_threshold=0.5`、`repetition_penalty=1.1`、`no_repeat_ngram_size=3`、VAD `min_silence` 2000→500ms
+- **P1-8** 驗證器改容錯 regex（允許空格/全半形差異），降低無謂補強輪次
+- **P1-9** 後處理與驗證順序重構：記錄級清理（英文移除/結構補全）移入 summarization 於「驗證前」執行，驗證成為最後一關，本地與雲端路徑一致
+- **P1-10** 英文行清理加入詞彙表白名單保護，刪除行為記入 log
+
+### 🚀 P2 部署與效能
+
+- **P2-1** Docker 零 rebuild：windows-gpu compose 掛載 backend/frontend/VERSION/glossary，改 code/prompt 只需 `restart`；刪除所有 `--no-cache` 教學；明文禁止 `down -v`（防 6GB 模型 volume 被清）
+- **P2-2** `.env.example` 完整補充 ASR/校正/keep_alive/num_ctx 參數與 Ollama 主機建議（`OLLAMA_FLASH_ATTENTION=1`、`OLLAMA_KV_CACHE_TYPE=q8_0`）
+- **P2-7** CORS 收斂：`ALLOWED_ORIGINS` 環境變數；`*` 時依規範停用 credentials
+- **P2-8** 死碼清理：`_summarize_with_local_llm`、app.js 重複 `setDownloadButtonsEnabled`、task_processor 廢棄結構修補函式
+- **uv 環境管理**：新增 `pyproject.toml`（uv sync 一鍵還原環境；CPU torch 索引，開發機不再誤載 2GB CUDA wheel）
+
+### 🧪 測試
+
+- 新增 `tests/test_correction_service.py`（同音閘門/校正流程/確定性清理）
+- 更新 `tests/test_task_processor.py`（P0-5 失敗顯性化、P1-9 不改寫已驗證本文、P1-10 白名單）
+- 全套件 308 passed
+
 ## [Unreleased]
 
 ### 🚀 Breeze-ASR-26 升級

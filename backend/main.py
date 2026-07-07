@@ -2,7 +2,7 @@
 MeetingScribe 後端主程式。
 
 負責啟動 API 服務、背景任務處理器與檔案清理排程，並在關閉時做完整收尾。
-v3.5.4 - 統一版本號管理 + 請求超時控制
+（版本號以根目錄 VERSION 檔為唯一來源，見 backend/core/version.py）
 """
 
 import asyncio
@@ -47,6 +47,32 @@ async def lifespan(app: FastAPI):
     log.info(f"最大檔案大小: {settings.MAX_FILE_SIZE_MB}MB")
     log.info(f"批次上傳: {'啟用' if settings.ENABLE_BATCH_UPLOAD else '停用'}")
     log.info(f"最大同時處理: {settings.MAX_CONCURRENT_TASKS}")
+    # P0-3(c)：啟動時記錄「實際生效」的關鍵參數，杜絕「改了 config.yaml
+    # 卻沒生效」的除錯黑洞（後端僅讀環境變數 / .env）
+    log.info("-" * 50)
+    log.info("實際生效設定（來源：環境變數 / .env，非 config.yaml）：")
+    log.info(
+        f"  ASR: backend={settings.ASR_BACKEND}, model={settings.WHISPER_MODEL}, "
+        f"language={settings.WHISPER_LANGUAGE}, beam={settings.ASR_BEAM_SIZE}"
+    )
+    log.info(
+        f"  ASR VAD: enabled={settings.ASR_VAD_ENABLED}, threshold={settings.ASR_VAD_THRESHOLD}, "
+        f"min_silence={settings.ASR_VAD_MIN_SILENCE_MS}ms（僅 faster_whisper 路徑）"
+    )
+    log.info(
+        f"  ASR 參數: initial_prompt={'有' if settings.ASR_INITIAL_PROMPT else '無'}, "
+        f"hotwords={'啟用' if settings.ASR_ENABLE_HOTWORDS else '停用'}, "
+        f"cond_prev={settings.ASR_CONDITION_ON_PREVIOUS_TEXT}, "
+        f"chunk={settings.ASR_CHUNK_LENGTH_SECONDS}s+stride{settings.ASR_CHUNK_STRIDE_SECONDS}s"
+    )
+    log.info(
+        f"  LLM: model={settings.LOCAL_LLM_MODEL}, num_ctx={settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS}, "
+        f"keep_alive={settings.LOCAL_LLM_KEEP_ALIVE}, cloud={settings.GEMINI_MODEL}"
+    )
+    log.info(
+        f"  語意校正: {'啟用' if settings.ENABLE_TRANSCRIPT_CORRECTION else '停用'}"
+        f"（scope={settings.CORRECTION_SCOPE}, 改動上限={settings.CORRECTION_MAX_CHANGE_RATIO:.0%}）"
+    )
     log.info("=" * 50)
     
     yield
@@ -82,12 +108,14 @@ app.add_middleware(
     excluded_paths=("/api/upload",),
 )
 
-# CORS 設定
-# 注意：生產環境應限制 allow_origins 為特定域名
+# CORS 設定（P2-7）
+# 預設 "*"（內網部署）；此時依 CORS 規範不得同時允許 credentials。
+# 生產環境請以 ALLOWED_ORIGINS 環境變數設定明確來源清單。
+_cors_origins = settings.allowed_origins_list or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: 生產環境應設定為特定域名
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

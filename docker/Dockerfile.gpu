@@ -89,6 +89,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     # 安裝支援 CUDA 12 的 PyTorch
     pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121
 
+# v4.2 語意校正依賴（獨立小層，~3MB；勿併入上面的大層，會毀掉快取）
+COPY requirements-correction.txt .
+RUN pip install --no-cache-dir -r requirements-correction.txt
+
 # ========== 運行階段 ==========
 FROM base AS runtime
 
@@ -99,7 +103,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     ENABLE_BATCH_UPLOAD=false \
     MAX_CONCURRENT_TASKS=1 \
     QUEUE_MAX_SIZE=50 \
-    # v4.0.0: 模型快取目錄設定（支援 Breeze-ASR-25 持久化）
+    # 模型快取目錄設定（Breeze-ASR-26 持久化於 named volume）
     # 這樣模型只需下載一次，rebuild 時自動使用快取
     HF_HOME=/app/models/huggingface \
     XDG_CACHE_HOME=/app/models/cache \

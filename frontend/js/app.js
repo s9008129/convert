@@ -268,15 +268,6 @@ function getAllowedExtensions() {
         .filter(Boolean);
 }
 
-function setDownloadButtonsEnabled(enabled) {
-    if (elements.downloadBtn) {
-        elements.downloadBtn.disabled = !enabled;
-    }
-    if (elements.downloadDocxBtn) {
-        elements.downloadDocxBtn.disabled = !enabled;
-    }
-}
-
 // 🔒 鎖定/解鎖模式選擇
 // 目的：任務提交後避免使用者在中途改模式，造成「顯示模式」與「實際處理模式」不一致
 function lockModeSelection(locked) {

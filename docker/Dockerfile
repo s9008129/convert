@@ -31,6 +31,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir av==12.0.0 && \
     pip install --no-cache-dir -r requirements.txt
 
+# v4.2 語意校正依賴（獨立小層，~3MB；勿併入上面的大層，會毀掉快取）
+COPY requirements-correction.txt .
+RUN pip install --no-cache-dir -r requirements-correction.txt
+
 # ========== 運行階段 ==========
 FROM python:3.11-slim-bookworm
 
@@ -40,7 +44,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Taipei \
     PATH="/opt/venv/bin:$PATH" \
     # 預設配置
-    MAX_FILE_SIZE_MB=100 \
+    MAX_FILE_SIZE_MB=200 \
     ENABLE_BATCH_UPLOAD=false \
     MAX_CONCURRENT_TASKS=1 \
     QUEUE_MAX_SIZE=50 \

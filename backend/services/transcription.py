@@ -259,17 +259,37 @@ class TranscriptionService:
             raise RuntimeError(f"無法讀取音訊資料: {audio_path}")
         return np.concatenate(frames).astype(np.float32) / 32768.0
 
+    def _compose_initial_prompt(self) -> str:
+        """組合初始提示詞：繁體/標點誘導 ＋ 機關詞彙表 hotwords（P0-1 / P1-1）。"""
+        parts: list[str] = []
+        if settings.ASR_INITIAL_PROMPT:
+            parts.append(settings.ASR_INITIAL_PROMPT)
+        if settings.ASR_ENABLE_HOTWORDS:
+            try:
+                from backend.core.glossary import build_hotwords_string
+
+                hotwords = build_hotwords_string()
+                if hotwords:
+                    parts.append(f"詞彙：{hotwords}。")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("載入詞彙表失敗，略過 hotwords: {}", exc)
+        return "".join(parts)
+
     def _build_transformers_generate_kwargs(self) -> dict:
         kwargs = {"task": "transcribe"}
         if settings.WHISPER_LANGUAGE and settings.WHISPER_LANGUAGE != "auto":
             kwargs["language"] = settings.WHISPER_LANGUAGE
 
+        # P0-1：initial_prompt 無論語言模式（含 auto）一律套用
         tokenizer = getattr(self._model, "tokenizer", None)
-        if settings.ASR_INITIAL_PROMPT and settings.WHISPER_LANGUAGE != "auto" and tokenizer:
+        initial_prompt = self._compose_initial_prompt()
+        if initial_prompt and tokenizer:
             get_prompt_ids = getattr(tokenizer, "get_prompt_ids", None)
             if callable(get_prompt_ids):
                 try:
-                    kwargs["prompt_ids"] = get_prompt_ids(settings.ASR_INITIAL_PROMPT)
+                    # 必須指定 return_tensors="pt"：預設回傳 numpy，
+                    # 會在 generate 內部 torch.cat 時炸出 TypeError
+                    kwargs["prompt_ids"] = get_prompt_ids(initial_prompt, return_tensors="pt")
                 except Exception as exc:  # noqa: BLE001
                     log.warning("無法套用 transformers prompt_ids，忽略初始提示詞: {}", exc)
         return kwargs
@@ -281,17 +301,33 @@ class TranscriptionService:
             min_silence_ms=settings.ASR_VAD_MIN_SILENCE_MS,
             speech_pad_ms=settings.ASR_VAD_SPEECH_PAD_MS,
         )
-        segments, info = self._model.transcribe(
-            audio_path,
+        # P1-6 實證參數組：hotwords 每視窗注入、關閉前段條件化防重複迴圈、
+        # 中文收緊壓縮比門檻、n-gram 重複抑制
+        hotwords = None
+        if settings.ASR_ENABLE_HOTWORDS:
+            try:
+                from backend.core.glossary import build_hotwords_string
+
+                hotwords = build_hotwords_string() or None
+            except Exception as exc:  # noqa: BLE001
+                log.warning("載入詞彙表失敗，略過 hotwords: {}", exc)
+
+        transcribe_kwargs = dict(
             language=settings.WHISPER_LANGUAGE if settings.WHISPER_LANGUAGE != "auto" else None,
             beam_size=settings.ASR_BEAM_SIZE,
             initial_prompt=settings.ASR_INITIAL_PROMPT or None,
+            hotwords=hotwords,
             vad_filter=settings.ASR_VAD_ENABLED,
             vad_parameters=vad_params,
-            condition_on_previous_text=True,
-            no_speech_threshold=0.6,
-            compression_ratio_threshold=2.4,
+            condition_on_previous_text=settings.ASR_CONDITION_ON_PREVIOUS_TEXT,
+            no_speech_threshold=settings.ASR_NO_SPEECH_THRESHOLD,
+            compression_ratio_threshold=settings.ASR_COMPRESSION_RATIO_THRESHOLD,
+            repetition_penalty=settings.ASR_REPETITION_PENALTY,
         )
+        if settings.ASR_NO_REPEAT_NGRAM_SIZE > 0:
+            transcribe_kwargs["no_repeat_ngram_size"] = settings.ASR_NO_REPEAT_NGRAM_SIZE
+
+        segments, info = self._model.transcribe(audio_path, **transcribe_kwargs)
 
         chunks: list[TranscriptionChunk] = []
         texts: list[str] = []
@@ -311,9 +347,47 @@ class TranscriptionService:
         )
 
     def _transcribe_with_transformers(self, audio_path: str) -> DetailedTranscriptionResult:
+        """Transformers 路徑：使用 pipeline 原生重疊分塊解碼（P0-2）。
+
+        以 chunk_length_s + stride_length_s 讓相鄰視窗重疊解碼並自動對齊合併，
+        取代舊版固定 30 秒硬切（會切斷字詞造成丟字/重複）。若 pipeline 分塊
+        參數不被當前版本支援，退回舊版視窗切割以維持可用性。
+        """
         audio_array = self._load_audio_array(audio_path)
-        chunk_samples = max(settings.ASR_CHUNK_LENGTH_SECONDS, 1) * 16000
         generate_kwargs = self._build_transformers_generate_kwargs()
+        chunk_seconds = max(settings.ASR_CHUNK_LENGTH_SECONDS, 1)
+        stride_seconds = max(min(settings.ASR_CHUNK_STRIDE_SECONDS, chunk_seconds // 2), 0)
+
+        try:
+            result = self._model(
+                {"array": audio_array, "sampling_rate": 16000},
+                chunk_length_s=chunk_seconds,
+                stride_length_s=(stride_seconds, stride_seconds),
+                return_timestamps=settings.ASR_RETURN_TIMESTAMPS,
+                generate_kwargs=generate_kwargs,
+            )
+            chunks = self._normalize_chunks(result.get("chunks", []))
+            text = (result.get("text") or "").strip()
+            if not text and chunks:
+                text = " ".join(chunk.text for chunk in chunks)
+            return DetailedTranscriptionResult(
+                text=text,
+                duration_seconds=len(audio_array) / 16000.0,
+                language=result.get("language") or settings.WHISPER_LANGUAGE or "auto",
+                chunks=chunks,
+                backend="transformers",
+            )
+        except (TypeError, ValueError) as exc:
+            log.warning("pipeline 重疊分塊不可用（{}），退回固定視窗切割", exc)
+            return self._transcribe_with_transformers_windowed(audio_array, generate_kwargs)
+
+    def _transcribe_with_transformers_windowed(
+        self,
+        audio_array: np.ndarray,
+        generate_kwargs: dict,
+    ) -> DetailedTranscriptionResult:
+        """舊版固定視窗切割（僅作為重疊分塊失敗時的回退路徑）。"""
+        chunk_samples = max(settings.ASR_CHUNK_LENGTH_SECONDS, 1) * 16000
         texts: list[str] = []
         chunks: list[TranscriptionChunk] = []
         detected_language = settings.WHISPER_LANGUAGE or "auto"

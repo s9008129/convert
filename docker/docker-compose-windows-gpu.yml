@@ -6,21 +6,28 @@
 # 此配置針對 Windows 11/10 + NVIDIA RTX 4090 GPU 優化
 # 使用 NVIDIA CUDA 12 + cuDNN 8/9 基底映像支援 faster-whisper GPU 加速
 #
-# v4.0.0 升級：
-# - ASR 模型升級至 Breeze-ASR-25（台灣專用）
-# - Gemma4 預設 + q4 相容解析（4090 若安裝 q4 變體會由後端優先採用）
-# - 模型持久化 Volume 確保不重複下載
+# v4.2 更新：
+# - ASR 模型：Breeze-ASR-26（transformers 路徑；重疊分塊解碼）
+# - 語意校正機制（詞彙表 hotwords ＋ LLM 校正 ＋ 同音閘門）
+# - 程式碼 volume 掛載（零 rebuild）；模型持久化 Volume 確保不重複下載
 #
 # 重要依賴（參見 INSTRUCTIONS.md）：
 # - cuDNN 8 庫：Whisper 語音識別必需
 # - cuDNN 9 庫：CTranslate2 推理引擎
 # - 參考: https://opennmt.net/CTranslate2/installation.html
 # 
-# 使用方式：
+# 使用方式（P2-1 零 rebuild 策略）：
 #   cd docker
-#   docker compose -f docker-compose-windows-gpu.yml build --no-cache
+#   docker compose -f docker-compose-windows-gpu.yml build   # 僅首次或依賴變更時
 #   docker compose -f docker-compose-windows-gpu.yml up -d
-# 
+#
+#   改 backend/frontend 程式碼或提示詞 → 只需：
+#   docker compose -f docker-compose-windows-gpu.yml restart
+#   （程式碼已用 volume 掛載，不需 rebuild、不會下載任何東西）
+#
+# 🚫 頻寬紅線：
+#   - 嚴禁 build --no-cache（會重抓 apt/pip 數百 MB～數 GB）
+#   - 嚴禁 docker compose down -v（會清空 6GB ASR 模型 volume，重新下載）
 # ============================================================
 
 name: meetingscribe-win-gpu
@@ -80,7 +87,7 @@ services:
       - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
-      # Whisper / ASR 設定（官方 Breeze-ASR-26）
+      # Whisper / ASR 設定（官方 Breeze-ASR-26，與 docker-compose.yml 一致）
       # ========================================
       - ASR_BACKEND=transformers
       - WHISPER_MODEL=MediaTek-Research/Breeze-ASR-26
@@ -88,6 +95,13 @@ services:
       - WHISPER_LANGUAGE=auto
       - WHISPER_DEVICE=auto
       - WHISPER_COMPUTE_TYPE=float16
+
+      # ========================================
+      # 語意校正（v4.2 新增）＋ LLM keep_alive（P0-7）
+      # ========================================
+      - ENABLE_TRANSCRIPT_CORRECTION=${ENABLE_TRANSCRIPT_CORRECTION:-true}
+      - CORRECTION_SCOPE=${CORRECTION_SCOPE:-all}
+      - LOCAL_LLM_KEEP_ALIVE=${LOCAL_LLM_KEEP_ALIVE:-10m}
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）
@@ -108,9 +122,13 @@ services:
       - ../data/uploads:/app/data/uploads
       - ../data/outputs:/app/data/outputs
       - ../data/cache:/app/data/cache
+      - ../data/glossary:/app/data/glossary
       - meetingscribe-whisper-models:/app/models
-      # 部署模式：前端由映像提供，避免與後端/依賴版本漂移
-      # 需要即時同步前後端程式碼時，請改用 docker-compose.yml + override.yml
+      # P2-1 零 rebuild：程式碼與提示詞用 volume 掛載，
+      # 改 code/prompt 只需 docker compose restart，不需 rebuild
+      - ../backend:/app/backend
+      - ../frontend:/app/frontend
+      - ../VERSION:/app/VERSION:ro
     
     # 允許連接主機網路（存取 Ollama）
     extra_hosts:
@@ -165,21 +183,24 @@ volumes:
 
 # ============================================================
 # Windows RTX 4090 部署檢查清單：
-# 
+#
 # ✅ Docker Desktop GPU 支援已啟用
 # ✅ NVIDIA Container Toolkit 已安裝
 # ✅ NVIDIA 驅動版本 >= 520
 # ✅ nvidia-smi 正常工作
-# ✅ Ollama 服務運行中
-# 
-# 部署命令（必須使用 --no-cache 確保使用新 Dockerfile.gpu）：
+# ✅ Ollama 服務運行中（建議環境變數：OLLAMA_FLASH_ATTENTION=1、OLLAMA_KV_CACHE_TYPE=q8_0）
+#
+# 部署命令（首次或 requirements.txt / Dockerfile 變更時才需要 build）：
 #   cd docker
-#   docker compose -f docker-compose-windows-gpu.yml build --no-cache
+#   docker compose -f docker-compose-windows-gpu.yml build
 #   docker compose -f docker-compose-windows-gpu.yml up -d
-# 
+#
+# 日常更新（改程式碼/提示詞後）：
+#   git pull && docker compose -f docker-compose-windows-gpu.yml restart
+#
 # 監控 GPU 使用：
 #   nvidia-smi -l 1
-# 
+#
 # 驗證 CUDA 是否可用：
 #   docker exec meetingscribe-app python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 # ============================================================
