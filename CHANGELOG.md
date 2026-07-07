@@ -62,7 +62,7 @@
 - 修復 DOCX 下載失敗時前端/後端錯誤處理，避免只看到 JSON 錯誤內容
 - 修復前端上傳流程遺失 `setDownloadButtonsEnabled()` 輔助函式，避免選檔後在送出 `/api/upload` 前就因 `ReferenceError` 完全無反應
 - 修復 Windows + NVIDIA 原生安裝容易誤裝 `torch ... +cpu` 的問題：新增 `requirements.windows-cuda.txt` 精確鎖定 CUDA wheel、`install_deps.py` 自動選擇 GPU 安裝路徑，並讓 `scripts/verify_env.py` 明確攔截 CPU-only torch
-- 新增 60 秒與 10 分鐘驗收產物，詳見 `data/validation/` 與 `驗收報告.md`
+- 新增 60 秒與 10 分鐘驗收產物，詳見 `data/validation/` 與 `doc/計畫與報告/驗收報告.md`
 
 ## [v4.1] - 2026-06-04
 
@@ -97,10 +97,10 @@
 
 ### 📄 文件
 
-- 新增 [部署更新手冊_v4.1.md](部署更新手冊_v4.1.md)：給非技術人員的逐步更新部署手冊，含「要不要重建映像／會不會吃網路流量」的精確判斷（標準版免重建、GPU 版用普通 `build` 不下載、僅套件清單變動才需 `--no-cache`）。
+- 新增 [部署更新手冊_v4.1.md](doc/操作手冊/部署更新手冊_v4.1.md)：給非技術人員的逐步更新部署手冊，含「要不要重建映像／會不會吃網路流量」的精確判斷（標準版免重建、GPU 版用普通 `build` 不下載、僅套件清單變動才需 `--no-cache`）。
 - 精簡 README.md：移除內嵌的逐版變更深掘段落，回歸「介紹用途／架構／理念／簡易操作」定位，變更紀錄統一回歸本檔。
 
-> ⚠️ **Docker 部署注意**：System Prompt 內嵌於容器映像（GPU 版）或經 volume 連動（標準版），需重新套用映像／重啟容器後方可生效，提示詞無法經 API 注入。詳見 [部署更新手冊_v4.1.md](部署更新手冊_v4.1.md)。
+> ⚠️ **Docker 部署注意**：System Prompt 內嵌於容器映像（GPU 版）或經 volume 連動（標準版），需重新套用映像／重啟容器後方可生效，提示詞無法經 API 注入。詳見 [部署更新手冊_v4.1.md](doc/操作手冊/部署更新手冊_v4.1.md)。
 
 ---
 

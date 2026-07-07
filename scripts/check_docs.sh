@@ -23,7 +23,7 @@ NC='\033[0m' # No Color
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-CURRENT_VERSION="4.0"
+CURRENT_VERSION="$(cat VERSION 2>/dev/null || echo unknown)"
 ERRORS=0
 WARNINGS=0
 
@@ -76,7 +76,7 @@ fi
 # 搜尋舊版本號
 OLD_VERSIONS=("3.5.4" "3.5.3" "3.5.2")
 for old_ver in "${OLD_VERSIONS[@]}"; do
-    COUNT=$(grep -r "v${old_ver}" . --include="*.md" --exclude-dir={node_modules,.git,old,venv,venv.backup.*} 2>/dev/null | grep -v "歷史" | grep -v "版本" | wc -l | tr -d ' ')
+    COUNT=$(grep -r "v${old_ver}" . --include="*.md" --exclude-dir={node_modules,.git,old,歷史封存,venv,.venv,archive,venv.backup.*} 2>/dev/null | grep -v "歷史" | grep -v "版本" | wc -l | tr -d ' ')
     if [ "$COUNT" -gt 0 ]; then
         echo -e "  ${YELLOW}⚠️ 發現 v${old_ver} 引用: ${COUNT} 處${NC}"
         WARNINGS=$((WARNINGS + 1))
@@ -92,24 +92,24 @@ echo -e "${BLUE}【檢查 2】文件命名規範${NC}"
 echo "─────────────────────────────────────────"
 
 # 檢查是否有大寫字母（除中文檔案外）
-BAD_NAMES=$(find doc/ -name "*.md" -type f | grep -E '[A-Z]' | grep -v "README" | grep -v old | wc -l | tr -d ' ')
+BAD_NAMES=$(find doc/ -name "*.md" -type f | grep -E '[A-Z]' | grep -v "README" | grep -v "old\|歷史封存" | wc -l | tr -d ' ')
 if [ "$BAD_NAMES" -eq 0 ]; then
     echo -e "  ${GREEN}✅ 所有檔案名稱符合小寫規範${NC}"
 else
     echo -e "  ${YELLOW}⚠️ 發現 ${BAD_NAMES} 個檔案包含大寫字母${NC}"
-    find doc/ -name "*.md" -type f | grep -E '[A-Z]' | grep -v "README" | grep -v old | head -5 | while read file; do
+    find doc/ -name "*.md" -type f | grep -E '[A-Z]' | grep -v "README" | grep -v "old\|歷史封存" | head -5 | while read file; do
         echo -e "      - ${file}"
     done
     WARNINGS=$((WARNINGS + 1))
 fi
 
 # 檢查是否有空格（應使用底線）
-SPACE_NAMES=$(find doc/ -name "*.md" -type f | grep " " | grep -v old | wc -l | tr -d ' ')
+SPACE_NAMES=$(find doc/ -name "*.md" -type f | grep " " | grep -v "old\|歷史封存" | wc -l | tr -d ' ')
 if [ "$SPACE_NAMES" -eq 0 ]; then
     echo -e "  ${GREEN}✅ 所有檔案名稱使用底線分隔${NC}"
 else
     echo -e "  ${RED}❌ 發現 ${SPACE_NAMES} 個檔案名稱包含空格${NC}"
-    find doc/ -name "*.md" -type f | grep " " | grep -v old | head -5 | while read file; do
+    find doc/ -name "*.md" -type f | grep " " | grep -v "old\|歷史封存" | head -5 | while read file; do
         echo -e "      - ${file}"
     done
     ERRORS=$((ERRORS + 1))
@@ -124,7 +124,7 @@ echo -e "${BLUE}【檢查 3】文件結構完整性${NC}"
 echo "─────────────────────────────────────────"
 
 # 檢查必要目錄
-REQUIRED_DIRS=("doc/guides" "doc/evidence" "doc/reports" "doc/analysis" "doc/old")
+REQUIRED_DIRS=("doc/操作手冊" "doc/計畫與報告" "doc/規格與設計" "doc/research" "doc/歷史封存")
 for dir in "${REQUIRED_DIRS[@]}"; do
     if [ -d "$dir" ]; then
         echo -e "  ${GREEN}✅ ${dir}/ 存在${NC}"
