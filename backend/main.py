@@ -135,8 +135,16 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 # 首頁
 @app.get("/")
 async def index():
-    """首頁 - 返回前端頁面"""
-    return FileResponse("frontend/index.html")
+    """首頁 - 返回前端頁面。
+
+    no-cache：改版後使用者不必按 Ctrl+F5 也能拿到新頁面（v4.2.3，
+    修正「已部署新版但瀏覽器仍顯示舊頁面」問題）；搭配 index.html 內
+    靜態資源網址的 ?v= 版本參數，JS/CSS 也會隨版本自動換新。
+    """
+    return FileResponse(
+        "frontend/index.html",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 if __name__ == "__main__":

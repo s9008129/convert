@@ -221,7 +221,12 @@ def test_format_result_does_not_rewrite_validated_summary(monkeypatch):
     result = processor._format_result(_make_task(), "逐字稿內容", summary)
 
     assert summary in result
-    assert "原始逐字稿" in result
+    # v4.2.3：交付文件只留紀錄本文——逐字稿改由獨立下載、處理資訊只進 log
+    assert result.startswith("# 會議紀錄")
+    assert "原始逐字稿" not in result
+    assert "逐字稿內容" not in result
+    assert "處理模式" not in result
+    assert "運算裝置" not in result
 
 
 def test_format_result_marks_summary_failure_explicitly(monkeypatch):

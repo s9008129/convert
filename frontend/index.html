@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20241202">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.2.3">
 </head>
 <body>
     <!-- 主畫面容器：所有流程區塊都在這裡，由 JS 依任務狀態切換顯示/隱藏 -->
@@ -150,10 +150,11 @@
             <div class="footer-mode" id="footerMode">
                 🔒 本地模式：完全離線，資料不外傳
             </div>
-            <div class="footer-version">MeetingScribe v4.0.0</div>
+            <!-- 版本號由 app.js 從 /api/health 動態帶入（唯一來源：VERSION 檔），不再寫死 -->
+            <div class="footer-version" id="footerVersion">MeetingScribe</div>
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=20260429-upload-fix1"></script>
+    <script src="/static/js/app.js?v=4.2.3"></script>
 </body>
 </html>

@@ -206,7 +206,7 @@ async def get_task_transcript(task_id: str):
     return FileResponse(
         transcript_path,
         media_type="text/plain",
-        filename=os.path.basename(transcript_path),
+        filename=f"{task.created_at.strftime('%Y%m%d%H%M%S')}_逐字稿.txt",
     )
 
 
@@ -245,16 +245,20 @@ async def get_task_result(task_id: str, format: str = "md"):
     safe_base_name = "".join(c for c in base_name if c.isalnum() or c in ('_', '-', ' ', '.') or '\u4e00' <= c <= '\u9fff')
     result_filename = f"{safe_base_name}_{task_id}.md"
     result_path = os.path.join(settings.outputs_dir, result_filename)
-    
+
     if not os.path.exists(result_path):
         raise HTTPException(status_code=404, detail="結果檔案不存在")
-    
+
+    # 下載檔名統一為「YYYYMMDDhhmmss_會議紀錄」（v4.2.3）；
+    # 磁碟檔仍以 task_id 命名，保證唯一性與 docx 快取判斷不受影響
+    download_stamp = task.created_at.strftime("%Y%m%d%H%M%S")
+
     # Markdown 格式（原始行為）
     if format == "md":
         return FileResponse(
             result_path,
             media_type="text/markdown",
-            filename=result_filename
+            filename=f"{download_stamp}_會議紀錄.md"
         )
     
     docx_filename = f"{safe_base_name}_{task_id}.docx"
@@ -285,7 +289,7 @@ async def get_task_result(task_id: str, format: str = "md"):
     return FileResponse(
         docx_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=docx_filename
+        filename=f"{download_stamp}_會議紀錄.docx"
     )
 
 

@@ -266,8 +266,11 @@ class TaskProcessor:
         """整理最終輸出內容。
 
         會議紀錄本文在 summarization 已完成「後處理→驗證」（P1-9），
-        此處只負責包裝標頭、附錄（逐字稿、校正對照表）與失敗警告，
-        不再改寫紀錄本文。
+        此處只負責包裝標題與失敗警告，不再改寫紀錄本文。
+
+        v4.2.3：交付文件只保留會議紀錄本文——處理資訊（檔案/時間/模式/裝置）
+        與語意校正對照表改記錄於 log；逐字稿由「下載逐字稿」獨立提供，
+        不再附錄於文件內。
         """
         if not device_detector.current_device:
             device_detector.detect_best_device()
@@ -276,14 +279,19 @@ class TaskProcessor:
         summary_failed = not summary
         body = summary if summary else transcript
 
-        header_lines = [
-            f"> 檔案：{task.original_filename}  ",
-            f"> 處理時間：{task.created_at.strftime('%Y-%m-%d %H:%M:%S')}  ",
-            f"> 處理模式：{'本地模式 (Ollama)' if task.processing_mode == ProcessingMode.LOCAL else '雲端模式 (Gemini)'}  ",
-            f"> 運算裝置：{device_info.get('current_device', 'unknown').upper() if device_info.get('gpu_available') or device_info.get('mps_available') else device_info.get('current_device', 'cpu').upper()}  ",
-        ]
+        log.info(
+            f"任務 {task.task_id} 處理資訊: 檔案={task.original_filename}, "
+            f"處理時間={task.created_at.strftime('%Y-%m-%d %H:%M:%S')}, "
+            f"模式={'本地 (Ollama)' if task.processing_mode == ProcessingMode.LOCAL else '雲端 (Gemini)'}, "
+            f"裝置={device_info.get('current_device', 'unknown')}"
+        )
+        if correction_report and correction_report.accepted_changes:
+            log.info(
+                f"任務 {task.task_id} 語意校正對照表（僅記錄於 log，供人工複核）:\n"
+                f"{correction_report.to_markdown()}"
+            )
 
-        title = "# 會議記錄"
+        title = "# 會議紀錄"
         sections: list[str] = []
 
         if summary_failed:
@@ -293,26 +301,7 @@ class TaskProcessor:
                 failure_note += f"\n> 失敗原因：{summary_error[:200]}"
             sections.append(failure_note)
 
-        sections.append("\n".join(header_lines))
-        sections.append("---")
         sections.append(body)
-
-        if correction_report and correction_report.accepted_changes:
-            sections.append("---")
-            sections.append(
-                "## 語意校正對照表（供人工複核）\n\n"
-                f"{correction_report.to_markdown()}"
-            )
-
-        if not summary_failed:
-            sections.append("---")
-            sections.append(
-                "## 原始逐字稿\n\n"
-                "<details>\n"
-                "<summary>點擊展開逐字稿</summary>\n\n"
-                f"{transcript}\n\n"
-                "</details>"
-            )
 
         result = f"{title}\n\n" + "\n\n".join(sections) + "\n"
 

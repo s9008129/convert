@@ -64,6 +64,7 @@ const elements = {
     
     // 頁尾
     footerMode: document.getElementById('footerMode'),
+    footerVersion: document.getElementById('footerVersion'),
     
     // 本地模式資訊
     localModelInfo: document.getElementById('localModelInfo'),
@@ -135,6 +136,11 @@ async function checkHealth() {
         
         const data = await response.json();
         
+        // 更新頁尾版本號（唯一來源：後端 VERSION 檔，避免前端寫死過期版本）
+        if (elements.footerVersion && data.version) {
+            elements.footerVersion.textContent = `MeetingScribe v${data.version}`;
+        }
+
         // 更新系統狀態
         if (elements.systemStatus) {
             elements.systemStatus.className = data.status === 'healthy' ? 'status-ok' : 'status-error';
@@ -331,6 +337,33 @@ function showError(message) {
     }
 }
 
+// 下載檔名以後端 Content-Disposition 為唯一來源（v4.2.3：YYYYMMDDhhmmss_會議紀錄）
+// 後端對中文檔名會使用 RFC 5987 的 filename*=utf-8'' 編碼形式
+function filenameFromResponse(response, fallback) {
+    const header = response.headers.get('Content-Disposition') || '';
+    const star = header.match(/filename\*=utf-8''([^;]+)/i);
+    if (star) {
+        try {
+            return decodeURIComponent(star[1].trim());
+        } catch (e) {
+            console.warn('檔名解碼失敗，改用預設檔名:', e);
+        }
+    }
+    const plain = header.match(/filename="?([^";]+)"?/);
+    if (plain) {
+        return plain[1].trim();
+    }
+    return fallback;
+}
+
+// 後端不可用時的備援檔名時間戳（與後端同格式 YYYYMMDDhhmmss）
+function timestampForFilename() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+        `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
 function setDownloadButtonsEnabled(enabled) {
     [elements.downloadBtn, elements.downloadDocxBtn, elements.downloadTranscriptBtn].forEach(button => {
         if (button) {
@@ -352,7 +385,7 @@ async function downloadResult() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `會議記錄_${state.taskId}.md`;
+        a.download = filenameFromResponse(response, `${timestampForFilename()}_會議紀錄.md`);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -377,7 +410,7 @@ async function downloadDocxResult() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `會議記錄_${state.taskId}.docx`;
+        a.download = filenameFromResponse(response, `${timestampForFilename()}_會議紀錄.docx`);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -403,7 +436,7 @@ async function downloadTranscript() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `逐字稿_${state.taskId}.txt`;
+        a.download = filenameFromResponse(response, `${timestampForFilename()}_逐字稿.txt`);
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
