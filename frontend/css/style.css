@@ -219,11 +219,11 @@ svg { flex-shrink: 0; }
 /* ---- 處理中卡（排隊＋進度合併為一張卡，閱讀寬度置中） ---- */
 .process-card { max-width: 760px; margin-left: auto; margin-right: auto; }
 
-.queue-info { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; padding: 8px 0; }
+.queue-info { display: flex; gap: 48px; flex-wrap: wrap; justify-content: center; padding: 8px 0; }
 .queue-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .queue-label { font-size: 0.8125rem; color: var(--text-secondary); }
 .queue-value { font-size: 1.5rem; font-weight: 600; color: var(--primary-dark); }
-.queue-unit { font-size: 0.8125rem; color: var(--text-secondary); }
+.queue-status-line { text-align: center; padding: 8px 0 4px; }
 
 /* 四段小步驟（.stage 的 active/completed 由 app.js 依進度切換） */
 .progress-stages {

@@ -14,6 +14,24 @@ from backend.core.config import settings
 from backend.models.schemas import ProgressMessage, TaskStatus
 from backend.services import task_queue
 
+# v4.3.2：推送給使用者的狀態一律中文（原本直接吐出英文 enum 值，
+# 造成畫面「一下中文一下英文」）
+STATUS_LABELS = {
+    TaskStatus.QUEUED: "排隊等候中",
+    TaskStatus.PENDING: "準備處理中",
+    TaskStatus.UPLOADING: "檔案上傳中",
+    TaskStatus.TRANSCRIBING: "語音轉錄中",
+    TaskStatus.SUMMARIZING: "生成會議紀錄中",
+    TaskStatus.COMPLETED: "處理完成",
+    TaskStatus.FAILED: "處理失敗",
+    TaskStatus.CANCELLED: "已取消",
+}
+
+
+def status_label(status: TaskStatus) -> str:
+    """把任務狀態轉成使用者看得懂的中文標籤。"""
+    return STATUS_LABELS.get(status, str(status.value))
+
 
 def _get_result_preview(task_id: str, original_filename: str) -> Optional[str]:
     """
@@ -138,7 +156,7 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 status=task.status,
                 progress=task.progress,
                 stage=task.stage,
-                message=f"目前狀態: {task.status.value}",
+                message=status_label(task.status),
                 eta_seconds=task.estimated_wait_seconds,
                 queue_position=task.queue_position,
                 queue_total=queue_status.total_queued,

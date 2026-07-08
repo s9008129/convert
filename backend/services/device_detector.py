@@ -36,6 +36,9 @@ class DeviceDetector:
         self.cuda_runtime_available: bool = False
         self.cuda_runtime_error: Optional[str] = None
         self.torch_cuda_version: Optional[str] = None
+        # v4.3.2：「GPU 存在」與「目前有足夠 VRAM 可再載入模型」是兩件事。
+        # 處理中 VRAM 被占滿（正是在用 GPU！）不得被回報成「GPU 未偵測」。
+        self.gpu_present: bool = False
         
     def detect_best_device(self) -> Tuple[DeviceType, str]:
         """
@@ -86,6 +89,7 @@ class DeviceDetector:
                         name = parts[0].strip()
                         memory_free = int(parts[1].strip())
                         memory_total = int(parts[2].strip())
+                        self.gpu_present = True  # nvidia-smi 成功回報 → GPU 確實存在
                         self.gpu_name = name
                         self.gpu_memory_mb = memory_free
                         self.cuda_runtime_available = False
@@ -117,8 +121,12 @@ class DeviceDetector:
                                 "memory_total": memory_total
                             }
                         else:
-                            log.warning(f"⚠️ GPU 記憶體不足: {memory_free}MB 可用，需要至少 4000MB")
+                            log.warning(
+                                f"⚠️ GPU 使用中：可用 VRAM 僅 {memory_free}MB（<4000MB），"
+                                "本次載入暫用 CPU；GPU 本身存在且正被其他模型使用"
+                            )
         except FileNotFoundError:
+            self.gpu_present = False
             log.debug("nvidia-smi 未找到，CUDA 不可用")
         except subprocess.TimeoutExpired:
             log.warning("nvidia-smi 執行逾時")
@@ -169,14 +177,22 @@ class DeviceDetector:
         return DeviceType.CPU, "int8"
     
     def get_device_info(self) -> Dict:
-        """取得目前裝置資訊"""
+        """取得目前裝置資訊。
+
+        v4.3.2：gpu_available 代表「GPU 存在」（給狀態列顯示用），
+        不再與「本次工作負載被排到哪個裝置」(current_device) 混為一談——
+        處理中 VRAM 被占滿時 current_device 可能暫時是 CPU，
+        但 GPU 未偵測的顯示是錯的。gpu_busy 標示這種「存在但忙碌」狀態。
+        """
+        gpu_available = self.gpu_present or self.current_device == DeviceType.CUDA
         return {
             "current_device": self.current_device.value if self.current_device else "unknown",
             "compute_type": self.current_compute_type,
             "fallback_count": self.fallback_count,
             "gpu_name": self.gpu_name,
             "gpu_memory_mb": self.gpu_memory_mb,
-            "gpu_available": self.current_device == DeviceType.CUDA,
+            "gpu_available": gpu_available,
+            "gpu_busy": gpu_available and self.current_device != DeviceType.CUDA,
             "mps_available": self.current_device == DeviceType.MPS,
             "cuda_runtime_available": self.cuda_runtime_available,
             "cuda_runtime_error": self.cuda_runtime_error,

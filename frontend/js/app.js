@@ -165,10 +165,15 @@ async function checkHealth() {
             if (data.gpu_available && data.gpu_name) {
                 gpuText = `GPU: ${data.gpu_name}`;
                 statusClass = 'status-ok';
-                
+
+                // GPU 存在但 VRAM 正被模型占用（v4.3.2：不再誤報為「未偵測」）
+                if (data.device_info && data.device_info.gpu_busy) {
+                    gpuText += '（使用中）';
+                }
+
                 // 特別處理 MPS
                 if (data.gpu_name.includes('MPS') || data.gpu_name.includes('Metal')) {
-                    gpuText = `🍎 ${data.gpu_name}`;
+                    gpuText = `${data.gpu_name}`;
                 }
             }
             

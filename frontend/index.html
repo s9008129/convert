@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>政府智慧會議紀錄生成系統 MeetingScribe</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23005EA2'/%3E%3Cpath d='M7 7h10M7 12h10M7 17h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/css/style.css?v=4.3.1">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.3.2">
 </head>
 <body>
     <!-- v4.3.0 依《前端網頁設計改版》提案全面改版（已批准）。
@@ -129,24 +129,20 @@
         <section class="card process-card" id="processCard" style="display: none;">
             <h2>處理進度</h2>
 
-            <!-- 排隊狀態（任務尚未開始執行時） -->
+            <!-- 排隊狀態（任務尚未開始執行時）：兩個數字欄＋狀態 badge 置中 -->
             <div id="queueSection" style="display: none;" aria-live="polite">
                 <div class="queue-info">
                     <div class="queue-item">
-                        <span class="queue-label">目前排隊</span>
+                        <span class="queue-label">目前排隊件數</span>
                         <span class="queue-value" id="queueTotal">0</span>
-                        <span class="queue-unit">件</span>
                     </div>
                     <div class="queue-item">
-                        <span class="queue-label">您的位置</span>
+                        <span class="queue-label">您的順位</span>
                         <span class="queue-value" id="queuePosition">--</span>
-                        <span class="queue-unit">&nbsp;</span>
                     </div>
-                    <div class="queue-item">
-                        <span class="queue-label">狀態</span>
-                        <span class="queue-value" id="queueStatus" style="font-size: 1rem;">等待中</span>
-                        <span class="queue-unit">&nbsp;</span>
-                    </div>
+                </div>
+                <div class="queue-status-line">
+                    <span class="badge badge-info" id="queueStatus">排隊等候中</span>
                 </div>
             </div>
 
@@ -239,6 +235,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=4.3.1"></script>
+    <script src="/static/js/app.js?v=4.3.2"></script>
 </body>
 </html>

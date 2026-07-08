@@ -500,3 +500,44 @@ class TestEndToEnd:
         # DOCX 至少有基本結構 (> 5KB)，不應超過 1MB（純文字內容）
         assert size > 5000, f"檔案過小: {size} bytes"
         assert size < 1_000_000, f"檔案過大: {size} bytes"
+
+
+# =============================================================================
+# v4.3.2：公文紀錄結構樣式（純文字紀錄不再是同大小字牆）
+# =============================================================================
+
+class TestRecordStructureStyling:
+    def test_section_and_label_lines_are_styled(self, tmp_path):
+        """「一、報告事項」章節應加粗放大；「案由：/決議：」標籤應加粗。"""
+        md = (
+            "# 會議紀錄\n\n"
+            "會議名稱：測試會議\n"
+            "主  席：局長\n\n"
+            "一、 報告事項：\n"
+            "無。\n\n"
+            "二、 討論事項：\n"
+            "案由：測試案由內容。\n"
+            "決議：照案通過。\n"
+        )
+        out = str(tmp_path / "record.docx")
+        MarkdownToDocxConverter().convert(md, out)
+
+        doc = Document(out)
+        by_text = {p.text: p for p in doc.paragraphs if p.text}
+
+        section = by_text["一、 報告事項："]
+        assert section.runs[0].bold is True
+        assert section.runs[0].font.size.pt == 15
+
+        label = by_text["案由：測試案由內容。"]
+        assert label.runs[0].text == "案由："
+        assert label.runs[0].bold is True
+        assert label.runs[1].bold is not True  # 內容不加粗
+
+        meta = by_text["會議名稱：測試會議"]
+        assert meta.runs[0].text == "會議名稱："
+        assert meta.runs[0].bold is True
+
+        # 全形空白欄位（主  席）也要能辨識
+        chair = by_text["主  席：局長"]
+        assert chair.runs[0].bold is True

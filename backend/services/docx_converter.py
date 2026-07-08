@@ -31,6 +31,17 @@ FONT_BODY_ALT = "SimSun"             # 宋體（備用）
 # 粗體 pattern
 BOLD_PATTERN = re.compile(r'\*\*(.+?)\*\*')
 
+# 公文紀錄結構 pattern（v4.3.2）：
+# 紀錄本文是純文字（非 markdown 標題），若不辨識結構，Word 會是一片
+# 同大小的字牆。以下兩個 pattern 讓「一、報告事項」等章節與
+# 「案由：/決議：」等欄位標籤在 Word 中呈現公文應有的層次。
+RECORD_SECTION_PATTERN = re.compile(r'^[一二三四五六七八九十]+、')
+RECORD_LABEL_PATTERN = re.compile(
+    r'^(會議名稱|會議時間|會議地點|主\s*席|出席人員|列席人員|記\s*錄|'
+    r'案由|說明|決議|各單位意見（多方立場）|各單位意見|'
+    r'主辦單位|協辦單位|辦理期程)\s*([：:])\s*(.*)$'
+)
+
 
 class MarkdownToDocxConverter:
     """
@@ -186,6 +197,17 @@ class MarkdownToDocxConverter:
                 i += 1
                 continue
 
+            # 公文紀錄章節（一、報告事項 / 二、討論事項 / 三、主席裁示事項…）
+            if RECORD_SECTION_PATTERN.match(stripped):
+                self._add_record_section(doc, stripped)
+                i += 1
+                continue
+
+            # 公文欄位標籤（會議名稱：/案由：/決議：…）→ 標籤加粗
+            if self._try_add_labeled_paragraph(doc, stripped):
+                i += 1
+                continue
+
             # 一般段落（包括 details 內的逐字稿文字）
             self._add_paragraph(doc, stripped)
             i += 1
@@ -213,6 +235,40 @@ class MarkdownToDocxConverter:
         """新增一般段落。"""
         para = doc.add_paragraph()
         self._add_formatted_runs(para, text)
+
+    def _add_record_section(self, doc: Document, text: str):
+        """公文紀錄章節列（如「一、 報告事項：」）：加粗、放大、段前留白。"""
+        para = doc.add_paragraph()
+        para.paragraph_format.space_before = Pt(14)
+        para.paragraph_format.space_after = Pt(6)
+        run = para.add_run(text)
+        run.bold = True
+        run.font.size = Pt(15)
+        run.font.name = FONT_HEADING
+        run.font.color.rgb = RGBColor(0x1A, 0x44, 0x80)
+        rPr = run.font.element.rPr
+        if rPr is not None:
+            rPr.rFonts.set(qn('w:eastAsia'), FONT_HEADING)
+
+    def _try_add_labeled_paragraph(self, doc: Document, text: str) -> bool:
+        """公文欄位標籤列（會議名稱：/案由：/決議：…）：標籤加粗，內容照常。
+
+        Returns:
+            True 表示本行已處理；False 表示非欄位標籤列，交回一般段落流程。
+        """
+        match = RECORD_LABEL_PATTERN.match(text)
+        if not match:
+            return False
+
+        para = doc.add_paragraph()
+        label_run = para.add_run(f"{match.group(1)}{match.group(2)}")
+        label_run.bold = True
+        self._set_run_font(label_run)
+
+        rest = match.group(3)
+        if rest:
+            self._add_formatted_runs(para, rest)
+        return True
 
     def _add_blockquote(self, doc: Document, text: str):
         """新增引用區塊（斜體、灰色、左縮排）。"""

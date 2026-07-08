@@ -242,3 +242,30 @@ def test_format_result_marks_summary_failure_explicitly(monkeypatch):
     assert "僅包含逐字稿" in result
     assert "Ollama 服務不可用" in result
     assert result.startswith("# 逐字稿（會議紀錄生成失敗）")
+
+
+def test_device_info_reports_gpu_present_even_when_busy():
+    """v4.3.2：VRAM 被占滿（current_device 暫為 CPU）時，GPU 仍應回報存在。"""
+    from backend.services.device_detector import DeviceDetector, DeviceType
+
+    detector = DeviceDetector()
+    detector.gpu_present = True
+    detector.gpu_name = "NVIDIA GeForce RTX 4090"
+    detector.current_device = DeviceType.CPU  # 忙碌時被排到 CPU
+
+    info = detector.get_device_info()
+
+    assert info["gpu_available"] is True   # 存在（顯示用）
+    assert info["gpu_busy"] is True        # 但目前忙碌
+    assert info["gpu_name"] == "NVIDIA GeForce RTX 4090"
+
+
+def test_websocket_status_labels_are_chinese():
+    """v4.3.2：推送給使用者的狀態不得是英文 enum 值。"""
+    from backend.api.websocket import status_label
+    from backend.models.schemas import TaskStatus
+
+    for status in TaskStatus:
+        label = status_label(status)
+        assert label
+        assert not label.isascii(), f"{status} 的標籤仍是英文: {label}"

@@ -8,6 +8,7 @@ v3.5.0 改進：
 - 優化本地模型摘要品質：改善參數和提示詞策略
 """
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -195,8 +196,7 @@ class SummarizationService:
 
         try:
             if mode == ProcessingMode.CLOUD:
-                user_message = self._build_direct_summary_message(transcript)
-                summary = await self._summarize_with_gemini(system_prompt, user_message, progress_callback)
+                summary = await self._summarize_with_gemini(system_prompt, transcript, progress_callback)
             else:
                 summary = await self._summarize_with_local_pipeline(transcript, system_prompt, progress_callback)
 
@@ -567,34 +567,9 @@ class SummarizationService:
 - 只能輸出最終 Markdown
 - 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence"""
 
-    def _build_direct_summary_message(self, transcript: str) -> str:
-        """雲端模式直接摘要訊息。"""
-        return f"""請根據以下逐字稿整理會議記錄。
-
-要求：
-- 輸出以繁體中文（台灣用語）為主
-- 專有名詞、產品名、英文縮寫若影響準確性可保留
-- 不要遺漏明確待辦、日期、責任人、數字與最終決議
-- 只輸出最終 Markdown
-- 不要輸出簡體中文、<think>、<thought>、<details>、XML/HTML 標籤或 code fence
-
-逐字稿：
-{transcript}"""
-
-    def _build_cloud_refinement_message(self, original_user_message: str, issues: list[str]) -> str:
-        """雲端模式的補強訊息：重附原逐字稿並列出必須修正的問題。"""
-        issue_lines = "\n".join(f"- {issue}" for issue in issues)
-        return f"""你剛才輸出的會議記錄不合格，請依問題清單完整重新輸出（不要只補修補片段）。
-
-必須修正的問題：
-{issue_lines}
-
-務必遵守：
-- 第一行必須以「會議名稱：」開頭，不得有任何前言、分析段、評估說明或英文整句
-- 全文使用繁體中文（台灣用語）；不得輸出簡體中文、<think>、<thought>、<details>、XML/HTML 標籤或 code fence
-- 未明確提及者填「（待確認）」，不得杜撰或臆測
-
-{original_user_message}"""
+    # v4.3.2：雲端已改用與本地相同的「萃取→生成→補強」訊息模板，
+    # 舊的單發直出訊息建構器（_build_direct_summary_message /
+    # _build_cloud_refinement_message）已移除。
 
     def _group_texts_by_budget(self, texts: list[str], budget_tokens: int) -> list[list[str]]:
         """將多段文字依 token 預算分組。"""
@@ -1091,21 +1066,46 @@ class SummarizationService:
     async def _summarize_with_gemini(
         self,
         system_prompt: str,
-        user_message: str,
+        transcript: str,
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
     ) -> str:
-        """使用 Gemini API 雲端模式生成摘要，並比照本地流程做品質驗證與補強重寫。
+        """使用 Gemini API 雲端模式生成摘要（v4.3.2 改為與本地相同的兩段式管線）。
 
-        雲端為單次直接摘要（無萃取筆記），故召回類檢查退化處理（傳入空筆記，
-        不誤報待辦遺漏），重點放在英文前言/回吐評估標準、簡體漂移、思考標籤
-        洩漏與公務欄位結構是否完整——出問題的歷史輸出正是雲端路徑。
+        歷史根因：雲端原為「單發直出」——沒有萃取階段、驗證時筆記傳空字串，
+        召回/涵蓋度檢查全部停用，導致 103 分鐘會議只產出 855 字且裁示事項
+        大量遺漏（實測輸給地端 gemma4）。改法：
+        1. 第一段：整份逐字稿一次結構化萃取（Gemini 長上下文無需分塊）
+        2. 第二段：依萃取筆記生成正式紀錄（與本地共用同一組訊息模板）
+        3. 驗證與補強「帶著筆記」進行——涵蓋度檢查真正生效
         """
+        # 第一段：結構化萃取（涵蓋度的關鍵——先把事實逼出來）
+        self._emit_progress(progress_callback, 70.0, "萃取逐字稿重點（雲端）...")
+        notes = self._clean_ollama_output(
+            await self._gemini_chat(
+                self.LOCAL_EXTRACTION_PROMPT,
+                self._build_chunk_extraction_message(transcript, 1, 1),
+                0.1,
+                progress_callback,
+            )
+        )
+        if not notes.strip():
+            notes = self._empty_extraction_notes()
+
+        # 第二段：依筆記生成正式紀錄（與本地最終生成共用訊息模板）
+        self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
         summary = self._finalize_record_text(
-            await self._gemini_chat(system_prompt, user_message, temperature, progress_callback)
+            self._clean_ollama_output(
+                await self._gemini_chat(
+                    system_prompt,
+                    self._build_summary_from_notes_message(notes),
+                    temperature,
+                    progress_callback,
+                )
+            )
         )
 
-        issues = self._validate_summary_quality(summary, "")
+        issues = self._validate_summary_quality(summary, notes)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
@@ -1116,14 +1116,16 @@ class SummarizationService:
             )
             log.info(f"Gemini 摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
             summary = self._finalize_record_text(
-                await self._gemini_chat(
-                    system_prompt,
-                    self._build_cloud_refinement_message(user_message, issues),
-                    0.15,
-                    progress_callback,
+                self._clean_ollama_output(
+                    await self._gemini_chat(
+                        system_prompt,
+                        self._build_refinement_message(summary, notes, issues),
+                        0.15,
+                        progress_callback,
+                    )
                 )
             )
-            issues = self._validate_summary_quality(summary, "")
+            issues = self._validate_summary_quality(summary, notes)
 
         if issues:
             log.warning(f"Gemini 摘要仍有待補強問題: {'; '.join(issues)}")
@@ -1161,10 +1163,10 @@ class SummarizationService:
                         summary_parts.append(content)
                         chunk_count += 1
 
-                        # 定期更新進度（每 5 個 chunk 更新一次）
+                        # 定期更新進度（每 5 個 chunk 更新一次；訊息一律中文）
                         if progress_callback and chunk_count % 5 == 0:
                             progress = 65.0 + min((chunk_count / 10) * 10, 30)  # 65-95%
-                            progress_callback(progress, f"生成摘要中... ({chunk_count} chunks)")
+                            progress_callback(progress, "雲端回應接收中...")
 
             summary = "".join(summary_parts)
 
@@ -1475,7 +1477,18 @@ class SummarizationService:
                 json={"model": self._get_effective_model(), "keep_alive": 0},
                 timeout=30.0,
             )
-            log.info("已請求 Ollama 釋放模型 VRAM（供 ASR 使用）")
+            # v4.3.2：Ollama 卸載是非同步的——若不等它真的卸完，緊接著的
+            # ASR 裝置偵測會看到 VRAM 仍被佔用而誤降級 CPU（實測根因）。
+            # 輪詢 /api/ps 直到已載入模型清空，最多等 15 秒。
+            for _ in range(15):
+                try:
+                    ps = await client.get("/api/ps", timeout=5.0)
+                    if ps.status_code == 200 and not ps.json().get("models"):
+                        break
+                except Exception:  # noqa: BLE001
+                    break
+                await asyncio.sleep(1.0)
+            log.info("已請求 Ollama 釋放模型 VRAM（供 ASR 使用），並確認卸載狀態")
         except Exception as exc:  # noqa: BLE001
             log.debug("釋放 Ollama 模型失敗（不影響流程）: {}", exc)
 
