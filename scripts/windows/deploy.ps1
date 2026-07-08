@@ -1,5 +1,5 @@
 # ============================================
-# MeetingScribe - Windows 部署腳本
+# 政府智慧會議紀錄生成系統 - Windows 部署腳本
 # ============================================
 # 執行政策說明：
 # - 此腳本需要透過 deploy.bat 執行，或使用以下命令：
@@ -74,7 +74,7 @@ function Invoke-Up {
             Write-Success "服務已啟動！"
             Write-Host ""
             Write-Host "=====================================" -ForegroundColor Green
-            Write-Host "  MeetingScribe 已就緒！" -ForegroundColor Green
+            Write-Host "  政府智慧會議紀錄生成系統 已就緒！" -ForegroundColor Green
             Write-Host "=====================================" -ForegroundColor Green
             Write-Host "  網址: http://localhost:9527" -ForegroundColor Cyan
             Write-Host "=====================================" -ForegroundColor Green
@@ -109,7 +109,7 @@ function Invoke-Logs {
 }
 
 # 主程式
-Write-Host "MeetingScribe 部署工具啟動" -ForegroundColor Green
+Write-Host "政府智慧會議紀錄生成系統 部署工具啟動" -ForegroundColor Green
 Write-Host "命令: $Command" -ForegroundColor Gray
 
 Test-Docker
@@ -123,7 +123,7 @@ switch ($Command.ToLower()) {
     "logs" { Invoke-Logs }
     default {
         Write-Host ""
-        Write-Host "MeetingScribe Docker 部署工具" -ForegroundColor Cyan
+        Write-Host "政府智慧會議紀錄生成系統 Docker 部署工具" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "使用方式: .\deploy.bat [command]"
         Write-Host ""

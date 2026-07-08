@@ -1,6 +1,6 @@
 @echo off
 REM ============================================
-REM MeetingScribe - Windows 健康檢查腳本
+REM 政府智慧會議紀錄生成系統 - Windows 健康檢查腳本
 REM ============================================
 
 setlocal enabledelayedexpansion
@@ -9,7 +9,7 @@ cd /d "%~dp0.."
 cls
 echo.
 echo ╔═══════════════════════════════════════════════════════════════╗
-echo ║         🩺 MeetingScribe 系統健康檢查                        ║
+echo ║         🩺 政府智慧會議紀錄生成系統 系統健康檢查                        ║
 echo ╚═══════════════════════════════════════════════════════════════╝
 echo.
 
@@ -22,9 +22,9 @@ if errorlevel 1 (
     echo    ✅ Docker 運行中
 )
 
-REM 檢查 MeetingScribe 容器
+REM 檢查 政府智慧會議紀錄生成系統 容器
 echo.
-echo 2. MeetingScribe 服務
+echo 2. 政府智慧會議紀錄生成系統 服務
 docker ps --filter "name=meetingscribe-app" --format "{{.Names}}" >nul 2>&1
 if errorlevel 1 (
     echo    ❌ 服務未啟動

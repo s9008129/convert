@@ -3,20 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>政府智慧會議紀錄生成系統 MeetingScribe</title>
+    <title>政府智慧會議紀錄生成系統</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23005EA2'/%3E%3Cpath d='M7 7h10M7 12h10M7 17h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/css/style.css?v=4.3.2">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.3.3">
 </head>
 <body>
     <!-- v4.3.0 依《前端網頁設計改版》提案全面改版（已批准）。
          注意：所有 id 與 app.js 綁定，改動前先確認 js/app.js。 -->
     <div class="container">
 
-        <!-- 標題區（v4.3.1：貼近政府機關且帶智慧語意；MeetingScribe 保留為品牌小字） -->
+        <!-- 標題區（v4.3.3：品牌字樣移除，副標精簡並放大） -->
         <header class="header">
-            <div class="brand">MeetingScribe</div>
             <h1 class="title">政府智慧會議紀錄生成系統</h1>
-            <p class="subtitle">AI轉錄・智慧生成，一鍵產出正式會議紀錄</p>
+            <p class="subtitle">AI轉錄・智慧生成</p>
         </header>
 
         <!-- 常駐三步驟流程列：讓使用者隨時知道流程全貌（狀態由 app.js 切換） -->
@@ -231,10 +230,10 @@
             <div>
                 <span class="footer-mode local" id="footerMode">本地模式：完全離線，資料不外傳</span>
             </div>
-            <div class="footer-version" id="footerVersion">MeetingScribe</div>
+            <div class="footer-version" id="footerVersion"></div>
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=4.3.2"></script>
+    <script src="/static/js/app.js?v=4.3.3"></script>
 </body>
 </html>

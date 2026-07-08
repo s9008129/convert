@@ -1,5 +1,5 @@
 """
-MeetingScribe WebSocket 即時進度推送。
+WebSocket 即時進度推送。
 
 當使用者上傳檔案後，前端會透過這裡即時收到排隊、轉錄、摘要與完成通知。
 """

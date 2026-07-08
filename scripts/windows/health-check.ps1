@@ -1,5 +1,5 @@
 # ============================================
-# MeetingScribe - 系統健康檢查工具
+# 政府智慧會議紀錄生成系統 - 系統健康檢查工具
 # ============================================
 
 # 取得腳本所在目錄
@@ -9,7 +9,7 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 Clear-Host
 Write-Host ""
 Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║         🩺 MeetingScribe 系統健康檢查                         ║" -ForegroundColor Cyan
+Write-Host "║         🩺 政府智慧會議紀錄生成系統 系統健康檢查                         ║" -ForegroundColor Cyan
 Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
@@ -27,9 +27,9 @@ try {
     Write-Host "   ❌ 無法連接 Docker" -ForegroundColor Red
 }
 
-# 檢查 MeetingScribe 容器
+# 檢查 政府智慧會議紀錄生成系統 容器
 Write-Host ""
-Write-Host "2. MeetingScribe 服務" -ForegroundColor White
+Write-Host "2. 政府智慧會議紀錄生成系統 服務" -ForegroundColor White
 $container = docker ps --filter "name=meetingscribe-app" --format "{{.Status}}" 2>$null
 if ($container) {
     $health = docker inspect --format='{{.State.Health.Status}}' meetingscribe-app 2>$null

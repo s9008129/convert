@@ -1,6 +1,6 @@
 @echo off
 REM ============================================
-REM MeetingScribe - Windows Deployment Tool
+REM 政府智慧會議紀錄生成系統 - Windows Deployment Tool
 REM ============================================
 REM Pure batch script - no PowerShell execution policy restrictions
 
@@ -137,7 +137,7 @@ if "!HEALTH!"=="healthy" (
     echo [OK] Service started successfully!
     echo.
     echo =====================================
-    echo   MeetingScribe is ready!
+    echo   政府智慧會議紀錄生成系統 is ready!
     echo =====================================
     echo   URL: http://localhost:9527
     echo =====================================
@@ -214,7 +214,7 @@ REM HELP COMMAND
 REM ==============================================
 :cmd_help
 echo.
-echo MeetingScribe Docker Deployment Tool
+echo 政府智慧會議紀錄生成系統 Docker Deployment Tool
 echo.
 echo Usage: deploy.bat [command]
 echo.

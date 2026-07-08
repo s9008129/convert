@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# MeetingScribe - macOS 原生服務重啟腳本
+# 政府智慧會議紀錄生成系統 - macOS 原生服務重啟腳本
 # v3.5.0 - 原生模式安全重啟
 # ============================================================
 # 使用者導覽（給非技術同仁）：
@@ -28,7 +28,7 @@ cd "$PROJECT_ROOT"
 echo ""
 echo -e "${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                                                               ║${NC}"
-echo -e "${CYAN}║         🔄 MeetingScribe - 原生服務重啟工具                    ║${NC}"
+echo -e "${CYAN}║         🔄 政府智慧會議紀錄生成系統 - 原生服務重啟工具                    ║${NC}"
 echo -e "${CYAN}║                                                               ║${NC}"
 echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -52,7 +52,7 @@ error() {
 
 # 步驟 1：先停止舊服務，避免新舊程序同時佔用資源
 stop_service() {
-    info "正在停止 MeetingScribe 服務..."
+    info "正在停止 政府智慧會議紀錄生成系統 服務..."
     
     if [ -f ".server.pid" ]; then
         PID=$(cat .server.pid)
@@ -84,7 +84,7 @@ stop_service() {
 
 # 步驟 2：再啟動新服務，套用目前設定
 start_service() {
-    info "正在啟動 MeetingScribe 服務..."
+    info "正在啟動 政府智慧會議紀錄生成系統 服務..."
     
     CONDA_ENV_PATH="/opt/anaconda3/envs/meetingscribe"
     
@@ -132,7 +132,7 @@ show_success() {
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║                                                               ║${NC}"
-    echo -e "${GREEN}║         🎉 MeetingScribe 重啟完成！                           ║${NC}"
+    echo -e "${GREEN}║         🎉 政府智慧會議紀錄生成系統 重啟完成！                           ║${NC}"
     echo -e "${GREEN}║                                                               ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""

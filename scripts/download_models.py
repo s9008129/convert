@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MeetingScribe 模型預載腳本。
+政府智慧會議紀錄生成系統 模型預載腳本。
 """
 
 import os
@@ -22,7 +22,7 @@ def download_breeze_asr() -> bool:
     from backend.core.config import settings
 
     print("=" * 60)
-    print("MeetingScribe - 模型預載工具")
+    print("政府智慧會議紀錄生成系統 - 模型預載工具")
     print("=" * 60)
     print()
 

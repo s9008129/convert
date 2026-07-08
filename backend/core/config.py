@@ -1,5 +1,5 @@
 """
-MeetingScribe 系統配置（版本以根目錄 VERSION 檔為唯一來源）
+系統配置（版本以根目錄 VERSION 檔為唯一來源）
 
 注意：後端僅讀取「環境變數 / .env」；config.yaml 只供舊版 CLI 使用，
 修改 config.yaml 對後端服務無效（詳見系統改善及優化計畫 P0-3）。
@@ -78,6 +78,14 @@ class Settings(BaseSettings):
         description="Gemini API 端點"
     )
     GEMINI_MODEL: str = Field(default="gemini-3.1-flash-lite", description="Gemini 模型名稱")
+    CLOUD_LLM_CHUNK_TOKENS: int = Field(
+        default=3200,
+        description="雲端萃取分塊大小（tokens）；沿用地端實證的分塊密度——分段萃取是筆記豐富度的結構保證（v4.3.3）"
+    )
+    CLOUD_LLM_MAX_CONCURRENT_REQUESTS: int = Field(
+        default=3,
+        description="雲端分段萃取的併發請求數上限（避免觸發 API rate limit）"
+    )
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
     LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: int = Field(
         default=8192,

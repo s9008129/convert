@@ -1,5 +1,5 @@
 # ============================================
-# MeetingScribe — uv 專案定義
+# 政府智慧會議紀錄生成系統 — uv 專案定義
 #
 # 環境管理一律建議使用 uv（不再手動維護 venv）：
 #   安裝 uv：winget install astral-sh.uv  （或 curl -LsSf https://astral.sh/uv/install.sh | sh）

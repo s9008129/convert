@@ -1,7 +1,7 @@
-# MeetingScribe - 會議轉錄系統
+# 政府智慧會議紀錄生成系統
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.1-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.3.3-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/guides/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 
@@ -453,6 +453,6 @@ cat data/logs/app.log
 
 ---
 
-**Made with ❤️ by the MeetingScribe Team**
+**Made with ❤️ by the 政府智慧會議紀錄生成系統 Team**
 
 Last updated: 2026-06-05

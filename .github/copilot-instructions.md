@@ -1,4 +1,4 @@
-# MeetingScribe Copilot 最高準則
+# 政府智慧會議紀錄生成系統 Copilot 最高準則
 
 > 適用範圍：本專案所有 AI 輔助開發與維護工作  
 > 文件版本：v4.0  

@@ -1,5 +1,5 @@
 """
-MeetingScribe LLM 摘要服務
+LLM 摘要服務
 支援本地模式（Ollama/LM Studio）和雲端模式（Gemini API）
 
 v3.5.0 改進：
@@ -77,6 +77,17 @@ class SummarizationService:
 - 專有名詞、產品名、英文縮寫若影響準確性可保留。
 - 不要加入逐字稿未提及的內容，不要輸出前言。
 - 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
+
+    # v4.3.3：雲端萃取在本地規則之上追加「豐富度」規則。
+    # 根因：雲端模型對長輸入有強烈壓縮傾向，單句帶過實質討論；
+    # 本地提示詞聚焦待辦完整性即可（豐富度由分塊結構保證），
+    # 雲端則必須明文要求保留立場、理由、數據與案例。
+    CLOUD_EXTRACTION_PROMPT = LOCAL_EXTRACTION_PROMPT + """
+
+雲端豐富度補充規則（同樣具強制力）：
+- 「議題與決議」每一議題除決議外，必須記錄：各發言者／單位的立場與理由、提出的數據、舉的實例、爭點、以及最後如何收斂。
+- 發言中出現的統一口徑、應對策略、疑慮與反對意見都是重要事實，必須完整保留，不同立場並列記錄。
+- 筆記長度沒有上限：寧可過度詳細，嚴禁把多句實質討論壓縮成一句籠統敘述。"""
 
     LOCAL_NOTES_MERGE_PROMPT = """你要合併多份「萃取筆記」，產出一份資訊最完整、去除重複的整合版筆記。
 
@@ -379,8 +390,17 @@ class SummarizationService:
         ("三、主席裁示事項", re.compile(r"三、\s*主席裁示事項")),
     ]
 
-    def _validate_summary_quality(self, summary: str, extracted_notes: str) -> list[str]:
-        """針對最終摘要做結構與召回檢查。"""
+    def _validate_summary_quality(
+        self,
+        summary: str,
+        extracted_notes: str,
+        min_chars: int = 250,
+    ) -> list[str]:
+        """針對最終摘要做結構與召回檢查。
+
+        min_chars 預設 250（防空輸出的底線）；雲端流程會依逐字稿規模
+        傳入動態下限（v4.3.3 豐富度閘門），過薄的紀錄才會觸發補強輪。
+        """
         issues: list[str] = []
         cleaned = self._clean_ollama_output(summary)
 
@@ -394,8 +414,11 @@ class SummarizationService:
         if not re.search(r"辦理期程\s*[:：]", cleaned):
             issues.append("缺少辦理期程資訊")
 
-        if len(cleaned) < 250:
-            issues.append("摘要內容過短")
+        if len(cleaned) < min_chars:
+            issues.append(
+                f"摘要內容過短（{len(cleaned)} 字，最低要求 {min_chars} 字）："
+                "請補充各單位意見的理由與數據、決議與裁示的具體細節，不得以單句帶過"
+            )
 
         if self._contains_simplified_chinese(cleaned):
             issues.append("出現簡體中文漂移")
@@ -567,9 +590,45 @@ class SummarizationService:
 - 只能輸出最終 Markdown
 - 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence"""
 
-    # v4.3.2：雲端已改用與本地相同的「萃取→生成→補強」訊息模板，
-    # 舊的單發直出訊息建構器（_build_direct_summary_message /
-    # _build_cloud_refinement_message）已移除。
+    def _build_cloud_summary_message(self, extracted_notes: str, transcript: str) -> str:
+        """雲端最終生成訊息（v4.3.3）：筆記當涵蓋檢查表、逐字稿當細節來源。
+
+        本地因 context 有限只能餵筆記；雲端長上下文沒有這個限制——
+        逐字稿一併附上，生成時才有細節可以引用，而不是被迫轉寫筆記骨架。
+        """
+        return f"""請根據以下「萃取筆記」與「原始逐字稿」，輸出最終版本的會議記錄。
+
+要求：
+- 萃取筆記是涵蓋度檢查表：筆記中的每個議題、決議、待辦都必須出現在會議記錄中
+- 原始逐字稿是細節來源：各單位意見、決議與裁示須保留具體理由、數據、案例、統一口徑與執行方式，嚴禁把多句實質討論壓縮成一句籠統敘述
+- 所有明確待辦都必須出現在待辦事項中；不要把多個不同待辦合併成單一籠統項目，可分列追蹤者請拆成多列
+- 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
+- 只輸出最終 Markdown，不要附加說明
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤
+
+萃取筆記：
+{extracted_notes}
+
+原始逐字稿：
+{transcript}"""
+
+    def _build_cloud_refinement_message(
+        self,
+        current_summary: str,
+        extracted_notes: str,
+        issues: list[str],
+        transcript: str,
+    ) -> str:
+        """雲端補強訊息（v4.3.3）：共用補強模板之外附上逐字稿。
+
+        沒有逐字稿的補強只能就筆記改寫措辭；「內容過短」這類豐富度問題
+        必須回到原文找細節才補得回來。
+        """
+        base = self._build_refinement_message(current_summary, extracted_notes, issues)
+        return f"""{base}
+
+原始逐字稿（補充細節時以此為準）：
+{transcript}"""
 
     def _group_texts_by_budget(self, texts: list[str], budget_tokens: int) -> list[list[str]]:
         """將多段文字依 token 預算分組。"""
@@ -1063,6 +1122,71 @@ class SummarizationService:
             log.error(f"LM Studio 摘要生成失敗: {e}")
             raise RuntimeError(f"LM Studio 服務不可用: {e}")
 
+    def _estimate_cloud_min_summary_chars(self, transcript: str) -> int:
+        """依逐字稿規模估算雲端紀錄的動態長度下限（v4.3.3 豐富度閘門）。
+
+        校準依據（0708 實測）：103 分鐘會議逐字稿約 1.8 萬 tokens，
+        雲端曾產出僅 8 百餘字、遺漏大量實質討論的過薄紀錄。
+        係數 1/15 使該規模的下限落在約 1,200 字，恰可攔截過薄輸出；
+        上限 2000 避免對模型提出不合理的灌水要求，下限 250 維持原防空底線。
+        """
+        transcript_tokens = self._estimate_tokens(transcript)
+        return max(250, min(2000, transcript_tokens // 15))
+
+    async def _extract_notes_with_gemini(
+        self,
+        transcript: str,
+        progress_callback: Optional[callable] = None,
+    ) -> str:
+        """雲端分段併發萃取（v4.3.3）。
+
+        分塊密度沿用地端實證值（settings.CLOUD_LLM_CHUNK_TOKENS）：
+        LLM 輸出長度不會隨輸入等比放大，唯有把逐字稿切小段、逼模型
+        對每一段都做完整萃取，筆記的資訊密度才有結構性保證。
+        雲端上下文充足，分段筆記直接零損串接，不需要地端的有損整併。
+        """
+        chunks = self._split_transcript_into_chunks(
+            transcript, settings.CLOUD_LLM_CHUNK_TOKENS
+        ) or [transcript]
+        total_chunks = len(chunks)
+        self._emit_progress(
+            progress_callback, 68.0, f"萃取逐字稿重點（雲端，共 {total_chunks} 段）..."
+        )
+
+        semaphore = asyncio.Semaphore(max(1, settings.CLOUD_LLM_MAX_CONCURRENT_REQUESTS))
+        completed_count = 0
+
+        async def extract_chunk(chunk_index: int, chunk: str) -> str:
+            nonlocal completed_count
+            async with semaphore:
+                message = self._build_chunk_extraction_message(chunk, chunk_index, total_chunks)
+                try:
+                    notes = await self._gemini_chat(self.CLOUD_EXTRACTION_PROMPT, message, 0.1)
+                except Exception as exc:  # noqa: BLE001 — 單次重試後仍失敗則向外拋出
+                    log.warning(
+                        "雲端萃取第 {}/{} 段失敗（{}），重試一次", chunk_index, total_chunks, exc
+                    )
+                    notes = await self._gemini_chat(self.CLOUD_EXTRACTION_PROMPT, message, 0.1)
+                completed_count += 1
+                self._emit_progress(
+                    progress_callback,
+                    68.0 + (completed_count / total_chunks) * 14.0,
+                    f"萃取逐字稿重點（雲端）{completed_count}/{total_chunks}...",
+                )
+                return self._clean_ollama_output(notes)
+
+        # return_exceptions=True：任一段失敗時等其餘段收尾再拋出首個例外，
+        # 避免手足協程被遺留在背景（unretrieved exception 警告＋浪費 API 配額）
+        results = await asyncio.gather(
+            *(extract_chunk(index, chunk) for index, chunk in enumerate(chunks, start=1)),
+            return_exceptions=True,
+        )
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise failures[0]
+        merged = "\n\n---\n\n".join(note for note in results if note.strip())
+        return merged if merged.strip() else self._empty_extraction_notes()
+
     async def _summarize_with_gemini(
         self,
         system_prompt: str,
@@ -1070,48 +1194,43 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
     ) -> str:
-        """使用 Gemini API 雲端模式生成摘要（v4.3.2 改為與本地相同的兩段式管線）。
+        """使用 Gemini API 雲端模式生成摘要（v4.3.3 分段萃取＋雙輸入生成）。
 
-        歷史根因：雲端原為「單發直出」——沒有萃取階段、驗證時筆記傳空字串，
-        召回/涵蓋度檢查全部停用，導致 103 分鐘會議只產出 855 字且裁示事項
-        大量遺漏（實測輸給地端 gemma4）。改法：
-        1. 第一段：整份逐字稿一次結構化萃取（Gemini 長上下文無需分塊）
-        2. 第二段：依萃取筆記生成正式紀錄（與本地共用同一組訊息模板）
-        3. 驗證與補強「帶著筆記」進行——涵蓋度檢查真正生效
+        歷史根因（v4.3.2 實測仍輸給地端）：整份逐字稿「單發萃取」會被
+        模型壓成一頁筆記——輸出長度不隨輸入等比放大；第二段生成又只看
+        筆記，第一段丟失的立場、理由、數據與案例永遠救不回來。
+        地端品質勝出正是因為 context 限制迫使分塊萃取，每段筆記密度
+        有結構保證。v4.3.3 根治：
+        1. 萃取比照地端分塊密度，分段併發呼叫（_extract_notes_with_gemini）
+        2. 生成與補強同時餵「筆記（涵蓋檢查表）＋原始逐字稿（細節來源）」
+        3. 驗證新增依逐字稿規模的動態長度下限——過薄輸出觸發補強而非靜默通過
         """
-        # 第一段：結構化萃取（涵蓋度的關鍵——先把事實逼出來）
-        self._emit_progress(progress_callback, 70.0, "萃取逐字稿重點（雲端）...")
-        notes = self._clean_ollama_output(
-            await self._gemini_chat(
-                self.LOCAL_EXTRACTION_PROMPT,
-                self._build_chunk_extraction_message(transcript, 1, 1),
-                0.1,
-                progress_callback,
-            )
-        )
-        if not notes.strip():
-            notes = self._empty_extraction_notes()
+        # 第一段：分段結構化萃取（豐富度的結構保證）
+        notes = await self._extract_notes_with_gemini(transcript, progress_callback)
 
-        # 第二段：依筆記生成正式紀錄（與本地最終生成共用訊息模板）
-        self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
+        # 第二段：筆記＋逐字稿雙輸入生成正式紀錄
+        self._emit_progress(progress_callback, 84.0, "整理最終會議記錄...")
         summary = self._finalize_record_text(
             self._clean_ollama_output(
                 await self._gemini_chat(
                     system_prompt,
-                    self._build_summary_from_notes_message(notes),
+                    self._build_cloud_summary_message(notes, transcript),
                     temperature,
                     progress_callback,
                 )
             )
         )
 
-        issues = self._validate_summary_quality(summary, notes)
+        min_chars = self._estimate_cloud_min_summary_chars(transcript)
+        issues = self._validate_summary_quality(summary, notes, min_chars=min_chars)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
+            # 進度固定 94%（生成串流已推進至 94），補強輪不再回傳串流進度，
+            # 避免進度條在補強期間倒退（審查建議）
             self._emit_progress(
                 progress_callback,
-                min(94.0, 90.0 + attempts),
+                94.0,
                 f"補強雲端摘要品質（第 {attempts} 輪）...",
             )
             log.info(f"Gemini 摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
@@ -1119,13 +1238,12 @@ class SummarizationService:
                 self._clean_ollama_output(
                     await self._gemini_chat(
                         system_prompt,
-                        self._build_refinement_message(summary, notes, issues),
+                        self._build_cloud_refinement_message(summary, notes, issues, transcript),
                         0.15,
-                        progress_callback,
                     )
                 )
             )
-            issues = self._validate_summary_quality(summary, notes)
+            issues = self._validate_summary_quality(summary, notes, min_chars=min_chars)
 
         if issues:
             log.warning(f"Gemini 摘要仍有待補強問題: {'; '.join(issues)}")
@@ -1164,8 +1282,10 @@ class SummarizationService:
                         chunk_count += 1
 
                         # 定期更新進度（每 5 個 chunk 更新一次；訊息一律中文）
+                        # v4.3.3：區間改為 86-94%——萃取階段（68-84%）已有自己的
+                        # 進度回報，串流進度從 65% 起算會讓進度條倒退
                         if progress_callback and chunk_count % 5 == 0:
-                            progress = 65.0 + min((chunk_count / 10) * 10, 30)  # 65-95%
+                            progress = 86.0 + min(chunk_count / 10, 8.0)
                             progress_callback(progress, "雲端回應接收中...")
 
             summary = "".join(summary_parts)

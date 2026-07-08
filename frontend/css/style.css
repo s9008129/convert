@@ -1,5 +1,5 @@
 /* ============================================================
-   MeetingScribe 前端樣式 v4.3.0
+   政府智慧會議紀錄生成系統 前端樣式 v4.3.0
    依《前端網頁設計改版.md》提案全面改版（已批准）：
    - USWDS 政府藍 × Apple HIG 排版 × 無障礙 AA
    - 16:9 寬螢幕優先（1920×1080 為主要目標）
@@ -67,13 +67,10 @@ svg { flex-shrink: 0; }
 
 /* ---- 頁首 ---- */
 .header { text-align: center; padding: 32px 0 8px; }
-.brand {
-    font-size: 0.8125rem; font-weight: 500;
-    letter-spacing: .08em; text-transform: uppercase;
-    color: var(--text-secondary); margin-bottom: 2px;
-}
 .title { font-size: 2rem; font-weight: 700; }
-.subtitle { font-size: 1rem; color: var(--text-secondary); margin-top: 4px; }
+/* v4.3.3：品牌小字（.brand）移除；副標精簡為「AI轉錄・智慧生成」後
+   等比例放大（1rem → 1.25rem），加少量字距讓短標語維持視覺平衡 */
+.subtitle { font-size: 1.25rem; letter-spacing: .04em; color: var(--text-secondary); margin-top: 4px; }
 
 /* ---- 常駐三步驟流程列（li 的 data-state 由 app.js 切換） ---- */
 .wizard {

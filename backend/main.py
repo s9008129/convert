@@ -1,5 +1,5 @@
 """
-MeetingScribe 後端主程式。
+後端主程式。
 
 負責啟動 API 服務、背景任務處理器與檔案清理排程，並在關閉時做完整收尾。
 （版本號以根目錄 VERSION 檔為唯一來源，見 backend/core/version.py）
@@ -24,7 +24,7 @@ from backend.services import task_processor, device_detector, file_manager
 async def lifespan(app: FastAPI):
     """管理服務啟動與關閉流程，確保背景任務與清理器都能正常啟停。"""
     log.info("=" * 50)
-    log.info(f"🚀 MeetingScribe v{__version__} 啟動中...")
+    log.info(f"🚀 政府智慧會議紀錄生成系統 v{__version__} 啟動中...")
     log.info("=" * 50)
     
     # 初始化裝置偵測
@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
 
 # 建立 FastAPI 應用
 app = FastAPI(
-    title="MeetingScribe",
+    title="政府智慧會議紀錄生成系統",
     description="會議轉錄工具 - 將會議錄音轉換為結構化會議記錄",
     version=__version__,
     lifespan=lifespan

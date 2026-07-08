@@ -1,6 +1,6 @@
 #!/bin/bash
-# MeetingScribe Docker 容器清理腳本
-# 安全地移除 Docker 中的 MeetingScribe 容器，避免與 Native 服務衝突
+# 政府智慧會議紀錄生成系統 Docker 容器清理腳本
+# 安全地移除 Docker 中的 政府智慧會議紀錄生成系統 容器，避免與 Native 服務衝突
 # 此腳本僅移除 macOS 版本的 Docker 容器，不影響 Windows 版本
 # 使用者導覽（給非技術同仁）：
 # - 環境檢查：先確認是 macOS，且 Docker 服務可正常回應。
@@ -11,7 +11,7 @@
 set -e
 
 echo "=========================================="
-echo "🧹 MeetingScribe Docker 容器清理"
+echo "🧹 政府智慧會議紀錄生成系統 Docker 容器清理"
 echo "=========================================="
 echo ""
 
@@ -28,12 +28,12 @@ if ! docker info &>/dev/null; then
     exit 0
 fi
 
-# 步驟 3：搜尋與 MeetingScribe 相關的容器
-echo "🔍 搜尋 MeetingScribe Docker 容器..."
+# 步驟 3：搜尋與 政府智慧會議紀錄生成系統 相關的容器
+echo "🔍 搜尋 政府智慧會議紀錄生成系統 Docker 容器..."
 CONTAINERS=$(docker ps -a --filter "name=meetingscribe" --format "{{.ID}} {{.Names}} {{.Status}}" 2>/dev/null || echo "")
 
 if [ -z "$CONTAINERS" ]; then
-    echo "✅ 未發現 MeetingScribe Docker 容器"
+    echo "✅ 未發現 政府智慧會議紀錄生成系統 Docker 容器"
     exit 0
 fi
 
@@ -53,7 +53,7 @@ done
 # 步驟 5（可選）：詢問是否連映像檔一起清理
 echo ""
 # 安全提醒：映像檔刪除後需重新下載，預設 N 可避免誤操作。
-read -p "是否同時移除 MeetingScribe Docker 映像檔？(y/N): " -n 1 -r
+read -p "是否同時移除 政府智慧會議紀錄生成系統 Docker 映像檔？(y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "🗑️  移除 Docker 映像檔..."

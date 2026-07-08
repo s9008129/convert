@@ -1,5 +1,5 @@
 """
-MeetingScribe ASR 轉錄服務
+ASR 轉錄服務
 
 - 支援官方 Transformers Whisper 模型（Breeze-ASR-26）
 - 保留 faster-whisper / CTranslate2 回滾路徑

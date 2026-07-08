@@ -1,4 +1,4 @@
-# MeetingScribe 實施計畫與任務清單
+# 政府智慧會議紀錄生成系統 實施計畫與任務清單
 
 > **版本**：v2.0（審查後修訂版）  
 > **建立日期**：2025-12-18  
@@ -177,7 +177,7 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload &
 ```python
 #!/usr/bin/env python3
 """
-MeetingScribe 環境驗證腳本 v1.0
+政府智慧會議紀錄生成系統 環境驗證腳本 v1.0
 在服務啟動前執行，確保所有依賴可用
 """
 
@@ -199,7 +199,7 @@ def print_header():
     print(f"""
 {Colors.BLUE}╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║         🔍 MeetingScribe 環境驗證工具 v1.0                   ║
+║         🔍 政府智慧會議紀錄生成系統 環境驗證工具 v1.0                   ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝{Colors.RESET}
 """)
@@ -409,7 +409,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # 啟動服務
-echo "🚀 啟動 MeetingScribe 服務..."
+echo "🚀 啟動 政府智慧會議紀錄生成系統 服務..."
 /opt/anaconda3/envs/meetingscribe/bin/python -m uvicorn backend.main:app \
   --host 0.0.0.0 \
   --port 9527 \
@@ -438,7 +438,7 @@ echo "🚀 啟動 MeetingScribe 服務..."
 **完整程式碼**：
 ```python
 """
-MeetingScribe 結構化日誌系統 v2.0
+政府智慧會議紀錄生成系統 結構化日誌系統 v2.0
 
 特性：
 - 控制台彩色輸出（開發模式）
@@ -555,7 +555,7 @@ log = setup_logger()
 ```python
 #!/usr/bin/env python3
 """
-MeetingScribe 完整管線測試 v1.0
+政府智慧會議紀錄生成系統 完整管線測試 v1.0
 測試從上傳到結果生成的完整流程
 """
 
@@ -694,7 +694,7 @@ def test_log_files(result: TestResult):
 def run_all_tests():
     """執行所有測試"""
     print("=" * 60)
-    print("🧪 MeetingScribe 完整管線測試")
+    print("🧪 政府智慧會議紀錄生成系統 完整管線測試")
     print("=" * 60)
     print()
     

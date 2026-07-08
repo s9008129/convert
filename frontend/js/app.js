@@ -1,5 +1,5 @@
 /**
- * MeetingScribe 前端應用程式
+ * 政府智慧會議紀錄生成系統 前端應用程式
  * v4.3.1 - 介面改版（政府藍設計系統、三步驟流程列、動態模型資訊顯示）
  *
  * 介面流程（給非技術同仁）：
@@ -148,7 +148,7 @@ async function checkHealth() {
         
         // 更新頁尾版本號（唯一來源：後端 VERSION 檔，避免前端寫死過期版本）
         if (elements.footerVersion && data.version) {
-            elements.footerVersion.textContent = `MeetingScribe v${data.version}`;
+            elements.footerVersion.textContent = `v${data.version}`;
         }
 
         // 更新系統狀態

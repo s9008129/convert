@@ -356,3 +356,100 @@ async def test_local_pipeline_chunks_merges_and_refines(monkeypatch):
     assert "三、 主席裁示事項（後續管考與追蹤）：" in summary
     assert generator.await_count == 5
     assert "問題清單" in generator.await_args_list[-1].args[2]
+
+
+# ---------------------------------------------------------------------------
+# v4.3.3 雲端管線：分段萃取＋雙輸入生成＋動態豐富度閘門
+# ---------------------------------------------------------------------------
+
+
+def test_validate_summary_quality_dynamic_min_chars():
+    service = SummarizationService()
+
+    # 預設下限 250：完整摘要應通過
+    assert service._validate_summary_quality(_complete_summary(), _notes_with_two_actions()) == []
+
+    # 動態下限拉高後，同一份摘要應被標記為過短
+    issues = service._validate_summary_quality(
+        _complete_summary(), _notes_with_two_actions(), min_chars=5000
+    )
+    assert any("摘要內容過短" in issue for issue in issues)
+
+
+def test_estimate_cloud_min_summary_chars_scales_with_transcript():
+    service = SummarizationService()
+
+    # 短逐字稿維持防空底線 250
+    assert service._estimate_cloud_min_summary_chars("測試逐字稿") == 250
+
+    # 103 分鐘量級（約 1.8 萬 tokens）下限應落在可攔截 8 百字過薄輸出的區間
+    medium = "字" * 18000
+    assert 1000 <= service._estimate_cloud_min_summary_chars(medium) <= 1300
+
+    # 超長逐字稿封頂 2000，避免不合理的灌水要求
+    assert service._estimate_cloud_min_summary_chars("字" * 60000) == 2000
+
+
+@pytest.mark.asyncio
+async def test_cloud_pipeline_chunked_extraction_and_transcript_in_generation(monkeypatch):
+    """雲端第一段須分段萃取；第二段生成須同時看到筆記與原始逐字稿。"""
+    service = SummarizationService()
+    transcript = "主席：討論專案里程碑。科長：建議維持月底上線。"
+
+    chunk_notes_1 = _notes_with_two_actions()
+    chunk_notes_2 = _notes_with_two_actions()
+    responses = iter([chunk_notes_1, chunk_notes_2, _complete_summary()])
+
+    monkeypatch.setattr(
+        service, "_split_transcript_into_chunks", Mock(return_value=["chunk-1", "chunk-2"])
+    )
+    # 讓分段依序處理，side_effect 順序才可預期
+    monkeypatch.setattr(settings, "CLOUD_LLM_MAX_CONCURRENT_REQUESTS", 1)
+    gemini = AsyncMock(side_effect=lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(service, "_gemini_chat", gemini)
+
+    summary = await service._summarize_with_gemini(settings.DEFAULT_SYSTEM_PROMPT, transcript)
+
+    assert summary.startswith("會議名稱：")
+    assert gemini.await_count == 3
+
+    # 萃取階段：每段各一次呼叫，且使用雲端豐富度提示詞
+    extraction_prompts = [call.args[0] for call in gemini.await_args_list[:2]]
+    assert all("豐富度" in prompt for prompt in extraction_prompts)
+
+    # 生成階段：筆記＋逐字稿雙輸入
+    generation_message = gemini.await_args_list[-1].args[1]
+    assert "萃取筆記：" in generation_message
+    assert "原始逐字稿：" in generation_message
+    assert transcript in generation_message
+
+
+@pytest.mark.asyncio
+async def test_cloud_pipeline_refines_when_summary_below_dynamic_floor(monkeypatch):
+    """長會議的過薄輸出必須觸發補強輪，且補強訊息附上原始逐字稿。"""
+    service = SummarizationService()
+    # 約 2 萬 tokens 的長逐字稿 → 動態下限約 1,360 字（20400 // 15，未達 2000 上限）
+    transcript = "與會人員針對訪談流程、效益口徑與展示方式進行詳細討論。" * 800
+
+    thin_summary = _complete_summary()  # 結構完整但僅約 7 百字 → 低於動態下限
+    rich_summary = _complete_summary().replace(
+        "說明：",
+        "說明：\n" + ("本案歷次會議已就訪談流程、效益口徑與展示方式充分交換意見。\n" * 60),
+    )
+
+    responses = iter([_notes_with_two_actions(), thin_summary, rich_summary])
+
+    monkeypatch.setattr(
+        service, "_split_transcript_into_chunks", Mock(return_value=["single-chunk"])
+    )
+    gemini = AsyncMock(side_effect=lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(service, "_gemini_chat", gemini)
+
+    summary = await service._summarize_with_gemini(settings.DEFAULT_SYSTEM_PROMPT, transcript)
+
+    assert gemini.await_count == 3
+    refinement_message = gemini.await_args_list[-1].args[1]
+    assert "問題清單" in refinement_message
+    assert "摘要內容過短" in refinement_message
+    assert "原始逐字稿（補充細節時以此為準）" in refinement_message
+    assert len(summary) > len(thin_summary)

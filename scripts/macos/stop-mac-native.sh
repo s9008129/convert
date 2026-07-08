@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# MeetingScribe - macOS 原生服務停止腳本
+# 政府智慧會議紀錄生成系統 - macOS 原生服務停止腳本
 # v3.5.0 - 原生模式
 # ============================================================
 # 使用者導覽（給非技術同仁）：
@@ -24,7 +24,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 echo ""
-echo -e "${BLUE}[INFO]${NC} 正在停止 MeetingScribe 服務..."
+echo -e "${BLUE}[INFO]${NC} 正在停止 政府智慧會議紀錄生成系統 服務..."
 
 # 步驟 1：優先依 PID 檔案停止正確的服務程序
 if [ -f ".server.pid" ]; then

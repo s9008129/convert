@@ -1,10 +1,10 @@
 # ============================================
-# MeetingScribe - 服務重啟工具
+# 政府智慧會議紀錄生成系統 - 服務重啟工具
 # 專為非技術人員設計，安全、不影響其他服務
 # ============================================
 
 # 設定視窗標題
-$Host.UI.RawUI.WindowTitle = "MeetingScribe 服務重啟工具"
+$Host.UI.RawUI.WindowTitle = "政府智慧會議紀錄生成系統 服務重啟工具"
 
 # 取得腳本所在目錄
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -15,9 +15,9 @@ Clear-Host
 Write-Host ""
 Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║                                                               ║" -ForegroundColor Cyan
-Write-Host "║         🔄 MeetingScribe 服務重啟工具                         ║" -ForegroundColor Cyan
+Write-Host "║         🔄 政府智慧會議紀錄生成系統 服務重啟工具                         ║" -ForegroundColor Cyan
 Write-Host "║                                                               ║" -ForegroundColor Cyan
-Write-Host "║    此工具將安全地重啟 MeetingScribe 服務                      ║" -ForegroundColor Cyan
+Write-Host "║    此工具將安全地重啟 政府智慧會議紀錄生成系統 服務                      ║" -ForegroundColor Cyan
 Write-Host "║    不會影響 Docker 中的其他服務                               ║" -ForegroundColor Cyan
 Write-Host "║                                                               ║" -ForegroundColor Cyan
 Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
@@ -27,7 +27,7 @@ Write-Host ""
 Set-Location (Join-Path $ProjectRoot "docker")
 
 # 確認重啟
-Write-Host "您即將重啟 MeetingScribe 服務" -ForegroundColor Yellow
+Write-Host "您即將重啟 政府智慧會議紀錄生成系統 服務" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "⚠️  注意事項：" -ForegroundColor Yellow
 Write-Host "   • 正在處理中的任務會被中斷" -ForegroundColor Gray
@@ -52,7 +52,7 @@ try {
     
     if ($containerExists) {
         # 停止 meetingscribe-app
-        Write-Host "   📦 停止 MeetingScribe 服務..." -ForegroundColor Gray
+        Write-Host "   📦 停止 政府智慧會議紀錄生成系統 服務..." -ForegroundColor Gray
         docker stop meetingscribe-app 2>$null | Out-Null
         
         # 移除容器（保留映像和資料）

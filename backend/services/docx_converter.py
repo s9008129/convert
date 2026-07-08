@@ -2,7 +2,7 @@
 DOCX 轉換服務。
 
 將會議記錄 Markdown 轉換為格式化的 Word (.docx) 文件。
-針對 MeetingScribe 會議紀錄的固定結構進行最佳化解析。
+針對會議紀錄的固定結構進行最佳化解析。
 
 支援元素：H1/H2 標題、項目符號（一/二級）、粗體、表格（含框線）、
 引用區塊、水平分隔線、HTML details/summary 標籤。
@@ -45,7 +45,7 @@ RECORD_LABEL_PATTERN = re.compile(
 
 class MarkdownToDocxConverter:
     """
-    將 MeetingScribe 會議記錄 Markdown 轉換為 Word (.docx) 文件。
+    將會議紀錄 Markdown 轉換為 Word (.docx) 文件。
 
     設計原則：
     - 針對已知的會議紀錄 Markdown 結構進行解析（非通用轉換器）

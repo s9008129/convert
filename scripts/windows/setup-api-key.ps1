@@ -1,10 +1,10 @@
 # ============================================
-# MeetingScribe - Gemini API Key 設定工具
+# 政府智慧會議紀錄生成系統 - Gemini API Key 設定工具
 # 專為非技術人員設計，友善易用
 # ============================================
 
 # 設定視窗標題
-$Host.UI.RawUI.WindowTitle = "MeetingScribe API Key 設定工具"
+$Host.UI.RawUI.WindowTitle = "政府智慧會議紀錄生成系統 API Key 設定工具"
 
 # 取得腳本所在目錄
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -15,7 +15,7 @@ Clear-Host
 Write-Host ""
 Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
 Write-Host "║                                                               ║" -ForegroundColor Cyan
-Write-Host "║         🔐 MeetingScribe API Key 設定工具                     ║" -ForegroundColor Cyan
+Write-Host "║         🔐 政府智慧會議紀錄生成系統 API Key 設定工具                     ║" -ForegroundColor Cyan
 Write-Host "║                                                               ║" -ForegroundColor Cyan
 Write-Host "║    此工具將協助您設定 Gemini API Key                          ║" -ForegroundColor Cyan
 Write-Host "║    設定後即可使用「雲端模式」產生高品質的會議摘要             ║" -ForegroundColor Cyan

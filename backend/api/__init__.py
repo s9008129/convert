@@ -1,5 +1,5 @@
 """
-MeetingScribe API 入口。
+API 入口。
 
 集中匯出 HTTP 路由與 WebSocket 端點，讓主程式可以一次載入對外服務。
 

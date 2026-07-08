@@ -1,6 +1,6 @@
 # ============================================================
 # docker-compose.override.yml
-# MeetingScribe 零重建開發配置
+# 政府智慧會議紀錄生成系統 零重建開發配置
 # ============================================================
 # 
 # 🎯 目的：
@@ -60,12 +60,12 @@ services:
     # ========================================
     user: root
     entrypoint: >
-      sh -c 'echo "[INIT] MeetingScribe 開發環境初始化";
+      sh -c 'echo "[INIT] 政府智慧會議紀錄生成系統 開發環境初始化";
       if [ -f /app/requirements.txt ]; then
         echo "[INIT] 檢測依賴變更...";
         pip install --no-cache-dir -q -r /app/requirements.txt || echo "[INIT] ⚠️  依賴同步失敗，使用現有環境繼續啟動";
       fi;
-      echo "[INIT] 啟動 MeetingScribe...";
+      echo "[INIT] 啟動 政府智慧會議紀錄生成系統...";
       exec su appuser -s /bin/sh -c "python -m uvicorn backend.main:app --host 0.0.0.0 --port 9527 --reload"'
     
     # ========================================
