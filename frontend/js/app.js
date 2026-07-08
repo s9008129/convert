@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v3.5.0 - 支援 macOS 原生模式和 MPS 偵測
+ * v4.3.0 - 介面改版（政府藍設計系統、三步驟流程列、排隊/進度合併卡）
  *
  * 介面流程（給非技術同仁）：
  * 1) 載入頁面時先檢查系統可用性（API /api/config、/api/health）
@@ -32,10 +32,14 @@ const elements = {
     modeCloud: document.getElementById('modeCloud'),
     cloudWarning: document.getElementById('cloudWarning'),
     
-    // 上傳
+    // 上傳（v4.3.0：setupSection 為「模式＋上傳」整區，任務開始後一併隱藏）
+    setupSection: document.getElementById('setupSection'),
     uploadArea: document.getElementById('uploadArea'),
     fileInput: document.getElementById('fileInput'),
     maxFileSize: document.getElementById('maxFileSize'),
+
+    // 處理卡（排隊＋進度合併的外層卡片，v4.3.0）
+    processCard: document.getElementById('processCard'),
     
     // 排隊
     queueSection: document.getElementById('queueSection'),
@@ -176,10 +180,10 @@ async function checkHealth() {
             const localAvailable = data.ollama_available || data.lmstudio_available;
             if (localAvailable) {
                 elements.localModelInfo.textContent = '使用：本地 LLM（已就緒）';
-                elements.localModelInfo.style.color = '#34C759';
+                elements.localModelInfo.style.color = '#216E1F';
             } else {
                 elements.localModelInfo.textContent = '使用：本地 LLM（未偵測）';
-                elements.localModelInfo.style.color = '#FF9500';
+                elements.localModelInfo.style.color = '#936F38';
             }
         }
         
@@ -187,10 +191,10 @@ async function checkHealth() {
         if (elements.cloudModelInfo) {
             if (data.gemini_available) {
                 elements.cloudModelInfo.textContent = '使用：Gemini API（已就緒）';
-                elements.cloudModelInfo.style.color = '#34C759';
+                elements.cloudModelInfo.style.color = '#216E1F';
             } else {
                 elements.cloudModelInfo.textContent = '使用：Gemini API（連線失敗）';
-                elements.cloudModelInfo.style.color = '#FF3B30';
+                elements.cloudModelInfo.style.color = '#B50909';
             }
         }
         
@@ -219,6 +223,14 @@ async function checkHealth() {
             elements.systemStatus.textContent = '無法連接';
         }
     }
+}
+
+// v4.3.0：頂部三步驟流程列（1=設定與上傳 2=處理中 3=完成下載）
+function setWizardStage(stage) {
+    document.querySelectorAll('#wizard > li').forEach((li, i) => {
+        const n = i + 1;
+        li.dataset.state = n < stage ? 'done' : (n === stage ? 'active' : '');
+    });
 }
 
 // 上傳檔案：送出使用者選擇的音訊/影片，並建立任務開始追蹤進度
@@ -327,13 +339,16 @@ function showError(message) {
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
     }
+    if (elements.processCard) {
+        elements.processCard.style.display = 'none';
+    }
     if (elements.resultSection) {
         elements.resultSection.style.display = 'none';
     }
-    
-    // 隱藏上傳區域
-    if (elements.uploadArea && elements.uploadArea.parentElement) {
-        elements.uploadArea.parentElement.style.display = 'none';
+
+    // 隱藏「模式＋上傳」整區，只留錯誤卡
+    if (elements.setupSection) {
+        elements.setupSection.style.display = 'none';
     }
 }
 
@@ -498,6 +513,10 @@ function connectWebSocket(taskId) {
 // 更新排隊顯示狀態（讓使用者知道自己目前在隊列中的位置）
 // 將畫面切換為「排隊模式」，並呈現目前位置與總排隊數
 function updateQueueDisplay(position, total, statusMessage) {
+    if (elements.processCard) {
+        elements.processCard.style.display = 'block';
+    }
+    setWizardStage(2);
     if (elements.queueSection) {
         elements.queueSection.style.display = 'block';
     }
@@ -544,7 +563,14 @@ function handleProgressUpdate(message) {
         elements.progressText.textContent = message.message || '處理中...';
     }
     
-    // 顯示進度區塊
+    // 顯示進度區塊（合併卡 + 內層進度）
+    if (elements.processCard) {
+        elements.processCard.style.display = 'block';
+    }
+    if (elements.setupSection) {
+        elements.setupSection.style.display = 'none';
+    }
+    setWizardStage(2);
     if (elements.progressSection) {
         elements.progressSection.style.display = 'block';
     }
@@ -578,6 +604,7 @@ function handleProgressUpdate(message) {
     
     // 任務完成：顯示結果區塊（可複製/下載）
     if (message.status === 'completed') {
+        setWizardStage(3);
         showResult(message);
     }
     
@@ -589,10 +616,10 @@ function handleProgressUpdate(message) {
 
 // 首次上傳成功時先顯示排隊資訊，後續由 WebSocket 持續更新
 function showQueueStatus(result) {
-    if (elements.uploadArea && elements.uploadArea.parentElement) {
-        elements.uploadArea.parentElement.style.display = 'none';
+    if (elements.setupSection) {
+        elements.setupSection.style.display = 'none';
     }
-    
+
     const minutes = Math.ceil((result.estimated_wait_seconds || 0) / 60);
     updateQueueDisplay(result.queue_position, null, `預計等待: ${minutes} 分鐘`);
 }
@@ -611,6 +638,9 @@ async function showResult(message) {
     }
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
+    }
+    if (elements.processCard) {
+        elements.processCard.style.display = 'none';
     }
 
     setDownloadButtonsEnabled(Boolean(state.taskId));
@@ -631,14 +661,18 @@ function resetUI() {
     }
     
     // 重置所有區塊（回到一開始可再次上傳的畫面）
-    if (elements.uploadArea && elements.uploadArea.parentElement) {
-        elements.uploadArea.parentElement.style.display = 'block';
+    if (elements.setupSection) {
+        elements.setupSection.style.display = '';  // 清空 inline 值，恢復 CSS grid 排版
     }
+    setWizardStage(1);
     if (elements.queueSection) {
         elements.queueSection.style.display = 'none';
     }
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
+    }
+    if (elements.processCard) {
+        elements.processCard.style.display = 'none';
     }
     if (elements.resultSection) {
         elements.resultSection.style.display = 'none';
@@ -680,25 +714,44 @@ function resetUI() {
 // ===== 事件處理：滑鼠點擊、拖拉上傳、按鈕操作 =====
 // 將使用者操作（點擊/拖放/按鈕）轉成對應流程函式
 function setupEventListeners() {
-    // 模式選擇
+    // 模式選擇（滑鼠＋鍵盤 Enter/Space，無障礙全鍵盤可操作）
     if (elements.modeLocal) {
         elements.modeLocal.addEventListener('click', () => selectMode('local'));
-    }
-    if (elements.modeCloud) {
-        elements.modeCloud.addEventListener('click', () => {
-            if (!elements.modeCloud.classList.contains('disabled')) {
-                selectMode('cloud');
+        elements.modeLocal.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                selectMode('local');
             }
         });
     }
-    
-    // 上傳區域
+    if (elements.modeCloud) {
+        const selectCloud = () => {
+            if (!elements.modeCloud.classList.contains('disabled')) {
+                selectMode('cloud');
+            }
+        };
+        elements.modeCloud.addEventListener('click', selectCloud);
+        elements.modeCloud.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                selectCloud();
+            }
+        });
+    }
+
+    // 上傳區域（滑鼠拖放＋點擊＋鍵盤 Enter/Space）
     if (elements.uploadArea) {
         elements.uploadArea.addEventListener('dragover', handleDragOver);
         elements.uploadArea.addEventListener('dragleave', handleDragLeave);
         elements.uploadArea.addEventListener('drop', handleDrop);
         elements.uploadArea.addEventListener('click', () => {
             elements.fileInput.click();
+        });
+        elements.uploadArea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                elements.fileInput.click();
+            }
         });
     }
     
@@ -730,21 +783,23 @@ function setupEventListeners() {
 function selectMode(mode) {
     state.currentMode = mode;
     
-    // 更新 UI
+    // 更新 UI（selected class＋aria-checked 同步，供鍵盤與報讀器使用）
     if (elements.modeLocal) {
         elements.modeLocal.classList.toggle('selected', mode === 'local');
+        elements.modeLocal.setAttribute('aria-checked', String(mode === 'local'));
     }
     if (elements.modeCloud) {
         elements.modeCloud.classList.toggle('selected', mode === 'cloud');
+        elements.modeCloud.setAttribute('aria-checked', String(mode === 'cloud'));
     }
-    
+
     // 更新頁尾說明：讓使用者隨時確認目前資料處理路徑
     if (elements.footerMode) {
         if (mode === 'local') {
-            elements.footerMode.textContent = '🔒 本地模式：完全離線，資料不外傳';
+            elements.footerMode.textContent = '本地模式：完全離線，資料不外傳';
             elements.footerMode.className = 'footer-mode local';
         } else {
-            elements.footerMode.textContent = '☁️ 雲端模式：使用 Gemini API';
+            elements.footerMode.textContent = '雲端模式：使用 Gemini API';
             elements.footerMode.className = 'footer-mode cloud';
         }
     }

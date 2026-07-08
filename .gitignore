@@ -134,3 +134,4 @@ output/
 
 # 本機封存區（大檔/舊日誌/截圖，不入版控）
 archive/
+.playwright-mcp/

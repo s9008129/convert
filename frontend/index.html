@@ -4,18 +4,44 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.2.3">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.3.0">
 </head>
 <body>
-    <!-- 主畫面容器：所有流程區塊都在這裡，由 JS 依任務狀態切換顯示/隱藏 -->
+    <!-- v4.3.0 依《前端網頁設計改版》提案全面改版（已批准）。
+         注意：所有 id 與 app.js 綁定，改動前先確認 js/app.js。 -->
     <div class="container">
+
         <!-- 標題區 -->
         <header class="header">
             <h1 class="title">MeetingScribe</h1>
-            <p class="subtitle">將會議錄音轉換為結構化會議記錄</p>
+            <p class="subtitle">將會議錄音轉換為結構化會議紀錄</p>
         </header>
 
-        <!-- 系統狀態列：顯示健康檢查結果、GPU 可用性與目前排隊量 -->
+        <!-- 常駐三步驟流程列：讓使用者隨時知道流程全貌（狀態由 app.js 切換） -->
+        <ol class="wizard" id="wizard" aria-label="處理流程">
+            <li data-state="active">
+                <div class="w-step">
+                    <span class="w-dot" data-n="1"></span>
+                    <span class="w-label">設定與上傳</span>
+                </div>
+                <span class="w-line" aria-hidden="true"></span>
+            </li>
+            <li data-state="">
+                <div class="w-step">
+                    <span class="w-dot" data-n="2"></span>
+                    <span class="w-label">處理中</span>
+                </div>
+                <span class="w-line" aria-hidden="true"></span>
+            </li>
+            <li data-state="">
+                <div class="w-step">
+                    <span class="w-dot" data-n="3"></span>
+                    <span class="w-label">完成下載</span>
+                </div>
+            </li>
+        </ol>
+
+        <!-- 系統狀態列：健康檢查結果、GPU 可用性與目前排隊量 -->
         <div class="status-bar" id="statusBar">
             <div class="status-item">
                 <span class="status-label">系統狀態</span>
@@ -26,135 +52,191 @@
                 <span class="status-value" id="gpuStatus">--</span>
             </div>
             <div class="status-item">
-                <span class="status-label">排隊人數</span>
+                <span class="status-label">排隊</span>
                 <span class="status-value" id="queueCount">--</span>
             </div>
         </div>
 
-        <!-- 模式選擇區：決定資料走本地或雲端流程；開始處理後會鎖定避免中途切換 -->
-        <section class="section mode-section">
-            <h2 class="section-title">選擇處理模式</h2>
-            <div class="mode-selector">
-                <div class="mode-card selected" data-mode="local" id="modeLocal">
-                    <div class="mode-icon">🔒</div>
-                    <div class="mode-name">方案 A：本地模式</div>
-                    <ul class="mode-features">
-                        <li>✓ 完全離線處理</li>
-                        <li>✓ 資料不外傳</li>
-                        <li>✓ 適合機敏資料</li>
-                    </ul>
-                    <div class="mode-model" id="localModelInfo">使用：本地 LLM</div>
+        <!-- 步驟 1：設定與上傳（16:9 寬螢幕左右並排；任務開始後整區隱藏） -->
+        <section class="setup-grid" id="setupSection">
+
+            <!-- 左：模式選擇（單選卡） -->
+            <div class="card">
+                <h2>選擇處理模式</h2>
+                <div class="mode-selector" role="radiogroup" aria-label="處理模式">
+                    <div class="mode-card selected" data-mode="local" id="modeLocal" role="radio" aria-checked="true" tabindex="0">
+                        <span class="m-check" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        </span>
+                        <div class="m-head">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/></svg>
+                            <span class="mode-name">方案 A：本地模式</span>
+                        </div>
+                        <ul class="mode-features">
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>完全離線處理</li>
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>資料不外傳</li>
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>適合機敏資料</li>
+                        </ul>
+                        <div class="mode-model" id="localModelInfo">使用：本地 LLM</div>
+                    </div>
+                    <div class="mode-card" data-mode="cloud" id="modeCloud" role="radio" aria-checked="false" tabindex="0">
+                        <span class="m-check" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        </span>
+                        <div class="m-head">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.4 1.6A4 4 0 0 0 6.5 19h11z"/></svg>
+                            <span class="mode-name">方案 B：雲端模式</span>
+                        </div>
+                        <ul class="mode-features">
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>高品質摘要</li>
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>處理速度較快</li>
+                            <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>適合非機敏資料</li>
+                        </ul>
+                        <div class="mode-model" id="cloudModelInfo">使用：Gemini API</div>
+                    </div>
                 </div>
-                <div class="mode-card" data-mode="cloud" id="modeCloud">
-                    <div class="mode-icon">☁️</div>
-                    <div class="mode-name">方案 B：雲端模式</div>
-                    <ul class="mode-features">
-                        <li>✓ 高品質摘要</li>
-                        <li>✓ 處理速度較快</li>
-                        <li>✓ 適合非機敏資料</li>
-                    </ul>
-                    <div class="mode-model" id="cloudModelInfo">使用：Gemini API</div>
+                <!-- 雲端不可用警告（由 app.js 依 /api/config 顯示） -->
+                <div class="cloud-warning" id="cloudWarning" style="display: none;">
+                    雲端模式目前無法使用（未設定 API Key）
+                </div>
+                <!-- 模式鎖定提示（任務送出後顯示） -->
+                <div id="modeLockHint" style="display: none;">
+                    <span class="mode-lock-hint">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                        處理中，模式已鎖定
+                    </span>
                 </div>
             </div>
-            <!-- 模式鎖定提示：任務送出後顯示，提醒目前模式不可再改 -->
-            <div class="mode-lock-hint" id="modeLockHint" style="display: none;">
-                🔒 處理中，模式已鎖定
+
+            <!-- 右：檔案上傳（支援拖放／點擊／鍵盤 Enter） -->
+            <div class="card">
+                <h2>上傳會議錄音</h2>
+                <div class="upload-area" id="uploadArea" tabindex="0" role="button" aria-label="上傳會議錄音，按 Enter 選擇檔案">
+                    <div class="upload-icon">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 5 5m-5-5-5 5"/><path d="M4 20h16"/></svg>
+                    </div>
+                    <div class="upload-text">將會議錄音拖曳到這裡</div>
+                    <div class="upload-text-sub">或點擊選擇檔案</div>
+                    <input type="file" id="fileInput" accept=".mp3,.mp4,.wav,.m4a,.mkv,.webm,.ogg,.flac,.avi,.mov" hidden>
+                    <p class="upload-hint">支援 MP3、MP4、WAV、M4A、MKV 等格式，單檔最大 <span id="maxFileSize">100</span>MB</p>
+                </div>
             </div>
         </section>
 
-        <!-- 檔案上傳區：支援拖放/點擊選檔，前端先驗證大小與格式再呼叫上傳 API -->
-        <section class="section upload-section">
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">📁</div>
-                <div class="upload-text">拖放檔案至此處</div>
-                <div class="upload-text-sub">或點擊選擇檔案</div>
-                <input type="file" id="fileInput" accept=".mp3,.mp4,.wav,.m4a,.mkv,.webm,.ogg,.flac,.avi,.mov" hidden>
-                <p class="upload-hint">支援格式：MP3, MP4, WAV, M4A, MKV... (最大 <span id="maxFileSize">100</span>MB)</p>
+        <!-- 步驟 2：處理中（排隊＋進度合併為一張卡，內層由 app.js 切換） -->
+        <section class="card process-card" id="processCard" style="display: none;">
+            <h2>處理進度</h2>
+
+            <!-- 排隊狀態（任務尚未開始執行時） -->
+            <div id="queueSection" style="display: none;" aria-live="polite">
+                <div class="queue-info">
+                    <div class="queue-item">
+                        <span class="queue-label">目前排隊</span>
+                        <span class="queue-value" id="queueTotal">0</span>
+                        <span class="queue-unit">件</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">您的位置</span>
+                        <span class="queue-value" id="queuePosition">--</span>
+                        <span class="queue-unit">&nbsp;</span>
+                    </div>
+                    <div class="queue-item">
+                        <span class="queue-label">狀態</span>
+                        <span class="queue-value" id="queueStatus" style="font-size: 16px;">等待中</span>
+                        <span class="queue-unit">&nbsp;</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 處理進度（任務開始後） -->
+            <div id="progressSection" style="display: none;">
+                <ol class="progress-stages">
+                    <li class="stage" data-stage="upload">
+                        <span class="stage-dot" data-n="1"></span>
+                        <span class="stage-label">檔案上傳</span>
+                    </li>
+                    <li class="stage" data-stage="transcribe">
+                        <span class="stage-dot" data-n="2"></span>
+                        <span class="stage-label">語音轉錄</span>
+                    </li>
+                    <li class="stage" data-stage="summarize">
+                        <span class="stage-dot" data-n="3"></span>
+                        <span class="stage-label">生成紀錄</span>
+                    </li>
+                    <li class="stage" data-stage="complete">
+                        <span class="stage-dot" data-n="4"></span>
+                        <span class="stage-label">完成</span>
+                    </li>
+                </ol>
+                <div class="progress-bar-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="整體進度">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-info" aria-live="polite">
+                    <span id="progressText">準備中...</span>
+                    <span id="progressPercent">0%</span>
+                </div>
+                <div class="device-info" id="deviceInfo"></div>
             </div>
         </section>
 
-        <!-- 排隊狀態區：任務尚未開始執行時顯示，資料來源為 WebSocket 即時更新 -->
-        <section class="section queue-section" id="queueSection" style="display: none;">
-            <h2 class="section-title">📊 排隊狀態</h2>
-            <div class="queue-info">
-                <div class="queue-item">
-                    <span class="queue-label">目前排隊人數</span>
-                    <span class="queue-value" id="queueTotal">0</span>
-                    <span class="queue-unit">人</span>
+        <!-- 步驟 3：完成下載 -->
+        <section class="card result-card" id="resultSection" style="display: none;">
+            <div class="result-head">
+                <div class="result-icon ok">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                 </div>
-                <div class="queue-item">
-                    <span class="queue-label">您的排隊位置</span>
-                    <span class="queue-value" id="queuePosition">--</span>
+                <h2>處理完成</h2>
+                <p class="result-meta">會議紀錄與逐字稿已就緒，請下載保存</p>
+            </div>
+            <div class="dl-actions">
+                <button class="btn btn-primary" id="downloadDocxBtn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 12 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+                    下載會議紀錄 (Word)
+                </button>
+                <div class="row2">
+                    <button class="btn btn-secondary" id="downloadBtn">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>
+                        下載 Markdown
+                    </button>
+                    <button class="btn btn-secondary" id="downloadTranscriptBtn">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+                        下載逐字稿
+                    </button>
                 </div>
-                <div class="queue-item">
-                    <span class="queue-label">狀態</span>
-                    <span class="queue-value" id="queueStatus">等待中</span>
-                </div>
+                <button class="btn btn-tertiary" id="resetBtn">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                    重新開始
+                </button>
             </div>
         </section>
 
-        <!-- 處理進度區：任務開始後顯示，展示當前階段、百分比與文字狀態 -->
-        <section class="section progress-section" id="progressSection" style="display: none;">
-            <h2 class="section-title">處理進度</h2>
-            <div class="progress-stages">
-                <div class="stage" data-stage="upload">
-                    <div class="stage-dot"></div>
-                    <div class="stage-label">檔案上傳</div>
+        <!-- 錯誤區：以白話文告知原因與下一步 -->
+        <section class="card error-card" id="errorSection" style="display: none;" role="alert">
+            <div class="result-head">
+                <div class="result-icon err">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
                 </div>
-                <div class="stage" data-stage="transcribe">
-                    <div class="stage-dot"></div>
-                    <div class="stage-label">語音轉錄</div>
-                </div>
-                <div class="stage" data-stage="summarize">
-                    <div class="stage-dot"></div>
-                    <div class="stage-label">生成摘要</div>
-                </div>
-                <div class="stage" data-stage="complete">
-                    <div class="stage-dot"></div>
-                    <div class="stage-label">完成</div>
-                </div>
+                <h2 class="error-title">處理失敗</h2>
+                <p class="result-meta">請按「重新開始」再試一次；若持續失敗，請聯絡系統管理員。</p>
             </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar"></div>
-            </div>
-            <div class="progress-info">
-                <span id="progressText">準備中...</span>
-                <span id="progressPercent">0%</span>
-            </div>
-            <div class="device-info" id="deviceInfo"></div>
-        </section>
-
-        <!-- 處理結果區：任務完成後顯示，提供下載與重置流程 -->
-        <section class="section result-section" id="resultSection" style="display: none;">
-            <h2 class="section-title">處理結果</h2>
-            <div class="result-actions">
-                <button class="btn btn-primary" id="downloadBtn">⬇️ 下載 Markdown</button>
-                <button class="btn btn-primary" id="downloadDocxBtn">📄 下載 Word</button>
-                <button class="btn btn-primary" id="downloadTranscriptBtn">📝 下載逐字稿</button>
-                <button class="btn btn-outline" id="resetBtn">🔄 重新開始</button>
+            <div class="error-message" id="errorMessage"></div>
+            <div class="dl-actions">
+                <button class="btn btn-primary" id="resetFromErrorBtn">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                    重新開始
+                </button>
             </div>
         </section>
 
-        <!-- 錯誤區：API 或 WebSocket 發生問題時統一顯示，避免使用者看不到失敗原因 -->
-        <section class="section error-section" id="errorSection" style="display: none;">
-            <div class="error-box">
-                <div class="error-icon">❌</div>
-                <div class="error-title">處理失敗</div>
-                <div class="error-message" id="errorMessage"></div>
-                <button class="btn btn-secondary" id="resetFromErrorBtn">重新開始</button>
-            </div>
-        </section>
-
-        <!-- 頁尾：持續提示目前模式與版本資訊，方便確認執行環境 -->
+        <!-- 頁尾：目前模式與版本（版本由 app.js 從 /api/health 動態帶入） -->
         <footer class="footer">
-            <div class="footer-mode" id="footerMode">
-                🔒 本地模式：完全離線，資料不外傳
+            <div>
+                <span class="footer-mode local" id="footerMode">本地模式：完全離線，資料不外傳</span>
             </div>
-            <!-- 版本號由 app.js 從 /api/health 動態帶入（唯一來源：VERSION 檔），不再寫死 -->
             <div class="footer-version" id="footerVersion">MeetingScribe</div>
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=4.2.3"></script>
+    <script src="/static/js/app.js?v=4.3.0"></script>
 </body>
 </html>
