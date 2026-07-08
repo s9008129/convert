@@ -87,21 +87,37 @@ services:
       - LOCAL_LLM_MODEL=gemma4:31b
       
       # ========================================
-      # Whisper / ASR 設定（官方 Breeze-ASR-26，與 docker-compose.yml 一致）
+      # Whisper / ASR 設定
+      # v4.2.2 暫回 faster-whisper + Breeze-ASR-25，原因（實測）：
+      #   1. 既有映像的 torch 為 CPU 版（Dockerfile 安裝順序 bug，已修，
+      #      需重建才生效）→ transformers 路徑會整段掉到 CPU
+      #   2. ASR-26 模型不在 volume，首用需下載 6.2GB（頻寛紅線）
+      #   3. 研究顯示純國語場景 ASR-25 較強；換 ASR-26 應先過 P1-5 實測
+      # CT2/faster-whisper 自帶 CUDA、模型已在 volume → GPU 可用、零下載
       # ========================================
-      - ASR_BACKEND=transformers
-      - WHISPER_MODEL=MediaTek-Research/Breeze-ASR-26
-      - WHISPER_MODEL_REVISION=949c87bca9dbe90e160cf739460cc765e80805f3
+      - ASR_BACKEND=faster_whisper
+      - WHISPER_MODEL=SoybeanMilk/faster-whisper-Breeze-ASR-25
       - WHISPER_LANGUAGE=auto
       - WHISPER_DEVICE=auto
       - WHISPER_COMPUTE_TYPE=float16
 
       # ========================================
       # 語意校正（v4.2 新增）＋ LLM keep_alive（P0-7）
+      # scope 預設 auto：全文校正在長會議實測 69 分鐘且淨效益趨近 0
       # ========================================
       - ENABLE_TRANSCRIPT_CORRECTION=${ENABLE_TRANSCRIPT_CORRECTION:-true}
-      - CORRECTION_SCOPE=${CORRECTION_SCOPE:-all}
+      - CORRECTION_SCOPE=${CORRECTION_SCOPE:-auto}
       - LOCAL_LLM_KEEP_ALIVE=${LOCAL_LLM_KEEP_ALIVE:-10m}
+
+      # ========================================
+      # 4090 實測校調（v4.2.2）：
+      # - num_ctx 16384：VRAM 實測 23.0/24GB 可承載，合併預算放大 4 倍，
+      #   直接改善長會議紀錄涵蓋度（曾為 965 字過薄的主因之一）
+      # - 思考型模型（gemma4）預設關閉 thinking，防止正文被思考預算吃光
+      # ========================================
+      - LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS=${LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS:-16384}
+      - LOCAL_LLM_RESERVED_OUTPUT_TOKENS=${LOCAL_LLM_RESERVED_OUTPUT_TOKENS:-2048}
+      - LOCAL_LLM_DISABLE_THINKING=${LOCAL_LLM_DISABLE_THINKING:-true}
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）

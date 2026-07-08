@@ -5,7 +5,10 @@
 """
 
 import sys
-import mlx_whisper
+
+import pytest
+
+mlx_whisper = pytest.importorskip("mlx_whisper", reason="mlx_whisper 僅限 Apple Silicon 環境（Windows/Linux 自動跳過）")
 
 print("="*60)
 print("🧪 MLX-Whisper 直接測試")

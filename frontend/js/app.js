@@ -54,6 +54,7 @@ const elements = {
     resultSection: document.getElementById('resultSection'),
     downloadBtn: document.getElementById('downloadBtn'),
     downloadDocxBtn: document.getElementById('downloadDocxBtn'),
+    downloadTranscriptBtn: document.getElementById('downloadTranscriptBtn'),
     resetBtn: document.getElementById('resetBtn'),
     
     // 錯誤
@@ -331,7 +332,7 @@ function showError(message) {
 }
 
 function setDownloadButtonsEnabled(enabled) {
-    [elements.downloadBtn, elements.downloadDocxBtn].forEach(button => {
+    [elements.downloadBtn, elements.downloadDocxBtn, elements.downloadTranscriptBtn].forEach(button => {
         if (button) {
             button.disabled = !enabled;
         }
@@ -385,6 +386,32 @@ async function downloadDocxResult() {
     } catch (error) {
         console.error('DOCX 下載失敗:', error);
         alert('Word 文件下載失敗，請重試');
+    }
+}
+
+async function downloadTranscript() {
+    if (!state.taskId) return;
+
+    try {
+        const response = await fetch(`/api/tasks/${state.taskId}/transcript`);
+        if (!response.ok) {
+            const err = await response.json().catch(() => null);
+            throw new Error(err?.detail || '逐字稿下載失敗');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `逐字稿_${state.taskId}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('逐字稿下載失敗:', error);
+        alert(error.message || '逐字稿下載失敗，請重試');
     }
 }
 
@@ -653,6 +680,9 @@ function setupEventListeners() {
     }
     if (elements.downloadDocxBtn) {
         elements.downloadDocxBtn.addEventListener('click', downloadDocxResult);
+    }
+    if (elements.downloadTranscriptBtn) {
+        elements.downloadTranscriptBtn.addEventListener('click', downloadTranscript);
     }
     if (elements.resetBtn) {
         elements.resetBtn.addEventListener('click', resetUI);

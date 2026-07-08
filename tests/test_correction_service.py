@@ -193,3 +193,14 @@ async def test_split_segments_hard_splits_no_whitespace(monkeypatch):
 
     assert all(len(seg) <= 50 for seg in segments)
     assert "".join(segments) == transcript
+
+
+def test_to_taiwan_traditional_does_not_corrupt_traditional_text():
+    """v4.2.2：對已是正體的文字不做轉換，避免簡繁共用字誤傷（實測案例：干預→幹預）。"""
+    text = "將人工干預定義為品質控管。"
+    assert to_taiwan_traditional(text) == text  # 無簡體字 → 一字不動
+
+    mixed = "第一行是简体内容。\n將人工干預定義為品質控管。"
+    converted = to_taiwan_traditional(mixed)
+    assert "簡體內容" in converted          # 含簡體的行被轉換
+    assert "人工干預" in converted          # 正體行原樣保留，干預未被誤轉

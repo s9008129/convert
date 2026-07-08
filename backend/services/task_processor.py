@@ -106,6 +106,10 @@ class TaskProcessor:
             await self._update_progress(task.task_id, 60.0, "使用快取逐字稿", TaskStatus.TRANSCRIBING)
             return cached_transcript
 
+        # 單卡 VRAM 競爭：ASR 開跑前主動請 Ollama 釋放常駐模型，
+        # 避免 keep_alive（P0-7）讓 ASR 因 VRAM 不足降級 CPU
+        await summarization_service.release_local_model()
+
         await self._update_progress(task.task_id, 10.0, "載入 Whisper 模型...", TaskStatus.TRANSCRIBING)
 
         loop = asyncio.get_event_loop()
@@ -184,6 +188,12 @@ class TaskProcessor:
 
             # 步驟 2：語意校正（確定性清理 ＋ LLM 校正）
             transcript, correction_report = await self._apply_semantic_correction(task, transcript)
+
+            # 步驟 2.5：逐字稿另存為獨立檔案（v4.2.2 前端可單獨下載）
+            try:
+                await file_manager.save_transcript_result(task.task_id, task.original_filename, transcript)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(f"逐字稿獨立檔儲存失敗（不影響主流程）: {exc}")
 
             # 步驟 3：生成會議紀錄
             await self._update_progress(task.task_id, 65.0, "生成摘要", TaskStatus.SUMMARIZING)

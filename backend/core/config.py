@@ -103,6 +103,10 @@ class Settings(BaseSettings):
         default=3,
         description="萃取筆記整併的最大輪數；超過或縮減停滯即停止整併改用硬截斷，防止無窮迴圈"
     )
+    LOCAL_LLM_DISABLE_THINKING: bool = Field(
+        default=True,
+        description="關閉思考型模型（如 gemma4）的 thinking 輸出；否則 num_predict 預算會被思考耗盡導致正文極短或為空（E2E 實測根因）"
+    )
 
     # ========================================
     # 逐字稿語意校正（P1-2 ~ P1-4 語意校正機制）
@@ -112,8 +116,8 @@ class Settings(BaseSettings):
         description="是否啟用逐字稿 LLM 語意校正（同音錯字/專有名詞修正，含同音驗證閘門）"
     )
     CORRECTION_SCOPE: str = Field(
-        default="all",
-        description="校正範圍：all=全部段落（閘門把關）、auto=僅詞彙表模糊命中段落、off=停用"
+        default="auto",
+        description="校正範圍：auto=僅詞彙表模糊命中段落（實測建議值）、all=全部段落（長會議耗時極高）、off=停用"
     )
     CORRECTION_MAX_SEGMENT_CHARS: int = Field(
         default=400,

@@ -1,5 +1,43 @@
 # MeetingScribe - 變更紀錄
 
+## [v4.2.2] - 2026-07-07
+
+### 🎯 主題：會議紀錄「內容過薄」根因修復＋逐字稿獨立下載
+
+使用者實測回饋 103 分鐘會議僅產出 965 字紀錄。根因分析與修正詳見
+`doc/計畫與報告/後續優化計畫.md`，本版重點：
+
+### 🐛 根因修復
+
+- **R1 思考型模型吃掉輸出預算（主因）**：gemma4 的 thinking 與正文共用
+  num_predict，導致正文極短甚至為空（先前「偶發空回應」同根因）。所有
+  Ollama 呼叫預設 `think:false`（`LOCAL_LLM_DISABLE_THINKING`，不支援
+  的模型自動相容降級）；實測每次生成提速 25-70%
+- **R2 合併漏斗過窄**：4090 實測 `num_ctx=16384`（VRAM 23.0/24GB、速度
+  不變）寫入 GPU compose 預設，合併筆記預算放大 4 倍
+- **R6 GPU 容器 torch 為 CPU 版**：Dockerfile 安裝順序 bug（先裝 PyPI
+  torch、CUDA 版被 pip 視為已滿足而跳過）→ CUDA torch 改為先裝；
+  重建映像前 compose 暫回 `faster-whisper + Breeze-ASR-25`（CT2 自帶
+  CUDA、模型已在 volume、零下載）
+- **R7 OpenCC 誤傷簡繁共用字**（干預→幹預）：改為「先偵測、僅轉換含
+  簡體字的行」，正體文字一字不動
+- **VRAM 競爭**：ASR 開跑前主動請 Ollama 釋放常駐模型，避免 keep_alive
+  導致 ASR 降級 CPU
+- `CORRECTION_SCOPE` 預設 all→auto（全文校正實測 69 分鐘、淨效益趨近 0）
+
+### ✨ 新增：逐字稿獨立下載
+
+- 逐字稿（經確定性清理＋語意校正）另存獨立 .txt 檔
+- 新 API：`GET /api/tasks/{task_id}/transcript`（紀錄生成失敗仍可下載）
+- 前端新增「📝 下載逐字稿」按鈕（P1-11 部分落地）
+
+### 📄 文件
+
+- 新增 `doc/計畫與報告/後續優化計畫.md`：五大根因分析（附實測證據）＋
+  下一輪優化清單 O-1~O-10（依 BooookScore/CoD/LongWriter 等研究實證排序）
+
+### 🧪 測試：312 passed（新增 OpenCC 共用字保護、逐字稿路徑等）
+
 ## [v4.2.0] - 2026-07-07
 
 ### 🎯 主題：語意校正機制上線＋《系統改善及優化計畫》P0/P1/P2 落地

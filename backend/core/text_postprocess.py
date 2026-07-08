@@ -50,17 +50,28 @@ def _get_s2twp():
 
 
 def to_taiwan_traditional(text: str) -> str:
-    """將文字統一為台灣正體（含台灣用語轉換）。OpenCC 不可用時原樣回傳。"""
+    """將文字統一為台灣正體（含台灣用語轉換）。OpenCC 不可用時原樣回傳。
+
+    只轉換「偵測到簡體字的行」：對已是正體的文字跑 s2twp 會誤傷
+    簡繁共用字（實測案例：干預→幹預），先偵測再轉換可完全避免。
+    """
     if not text:
         return text
     converter = _get_s2twp()
     if converter is None:
         return text
-    try:
-        return converter.convert(text)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("OpenCC 轉換失敗，保留原文: {}", exc)
-        return text
+
+    lines = text.split("\n")
+    converted_lines: list[str] = []
+    for line in lines:
+        if line and contains_simplified_chinese(line):
+            try:
+                converted_lines.append(converter.convert(line))
+                continue
+            except Exception as exc:  # noqa: BLE001
+                log.warning("OpenCC 轉換失敗，保留原文: {}", exc)
+        converted_lines.append(line)
+    return "\n".join(converted_lines)
 
 
 def contains_simplified_chinese(text: str) -> bool:

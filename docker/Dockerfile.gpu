@@ -84,10 +84,13 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 安裝 Python 套件
 # 注意：ctranslate2 需要 CUDA 12 + cuDNN 9
 # 注意：faster-whisper 需要 av==11.*，會自動安裝
+# ⚠️ CUDA torch 必須「先」安裝：requirements.txt 會裝 PyPI 的 CPU torch，
+#    若後裝 CUDA 版 pip 會回報 already satisfied 而跳過（v4.2 實測：容器
+#    torch_cuda_version=null，transformers ASR 全掉 CPU）。先裝 CUDA 版，
+#    requirements 解析時即視為已滿足，不會被覆蓋。
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # 安裝支援 CUDA 12 的 PyTorch
-    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # v4.2 語意校正依賴（獨立小層，~3MB；勿併入上面的大層，會毀掉快取）
 COPY requirements-correction.txt .

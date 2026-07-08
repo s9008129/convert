@@ -883,34 +883,46 @@ class SummarizationService:
             effective_model = self._get_effective_model()
             log.info(f"使用模型: {effective_model}")
 
-            # 空回應偶發（實測 gemma4:31b 偶爾回空 content）→ 自動重試一次
+            # 空回應偶發 → 自動重試一次。
+            # 根因（E2E 實測）：gemma4 為思考型模型，thinking 會吃光 num_predict
+            # 導致正文為空，故預設以 think:false 關閉思考；不支援該參數的模型
+            # 會回 400，此時降級為不帶 think 欄位重送。
             summary = ""
+            send_think_field = settings.LOCAL_LLM_DISABLE_THINKING
             for attempt in range(2):
-                response = await client.post(
-                    "/api/chat",
-                    json={
-                        "model": effective_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_message}
-                        ],
-                        "stream": False,
-                        # P0-7：三階段流程會連續呼叫十數次，keep_alive=0 會導致每階段
-                        # 重載 20GB 模型。改為可設定（預設 10m），流程結束後自然逾時釋放。
-                        "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
-                        "options": {
-                            # 重試時略升溫度以跳出空回應狀態
-                            "temperature": temperature if attempt == 0 else max(temperature, 0.3),
-                            "top_p": 0.95,
-                            "top_k": 64,
-                            "repeat_penalty": 1.08,
-                            "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
-                            "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                            "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
-                        }
-                    },
-                    timeout=600.0
-                )
+                payload = {
+                    "model": effective_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    "stream": False,
+                    # P0-7：三階段流程會連續呼叫十數次，keep_alive=0 會導致每階段
+                    # 重載 20GB 模型。改為可設定（預設 10m），流程結束後自然逾時釋放。
+                    "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
+                    "options": {
+                        # 重試時略升溫度以跳出空回應狀態
+                        "temperature": temperature if attempt == 0 else max(temperature, 0.3),
+                        "top_p": 0.95,
+                        "top_k": 64,
+                        "repeat_penalty": 1.08,
+                        "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+                        "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
+                    }
+                }
+                if send_think_field:
+                    payload["think"] = False
+
+                response = await client.post("/api/chat", json=payload, timeout=600.0)
+                if response.status_code == 400 and send_think_field:
+                    log.info("模型不支援 think 參數，改以相容模式重送")
+                    send_think_field = False
+                    response = await client.post(
+                        "/api/chat",
+                        json={k: v for k, v in payload.items() if k != "think"},
+                        timeout=600.0,
+                    )
                 response.raise_for_status()
 
                 self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
@@ -1444,6 +1456,24 @@ class SummarizationService:
             "ttl_seconds": 86400
         }
         log.info("已重置 Gemini 健康檢查快取")
+
+    async def release_local_model(self) -> None:
+        """立即請 Ollama 卸載本地模型釋放 VRAM。
+
+        單卡（24GB）上 ASR 與 LLM 會競爭 VRAM：keep_alive 讓模型在
+        多階段流程間常駐（P0-7），但下一個任務的 ASR 開跑前應主動釋放，
+        否則 ASR 會因可用 VRAM 不足而降級 CPU。
+        """
+        try:
+            client = await self._get_ollama_client()
+            await client.post(
+                "/api/generate",
+                json={"model": self._get_effective_model(), "keep_alive": 0},
+                timeout=30.0,
+            )
+            log.info("已請求 Ollama 釋放模型 VRAM（供 ASR 使用）")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("釋放 Ollama 模型失敗（不影響流程）: {}", exc)
 
     async def close(self):
         """關閉客戶端連接"""

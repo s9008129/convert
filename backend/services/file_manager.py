@@ -190,6 +190,25 @@ class FileManagerService:
         log.info(f"結果已儲存: {result_filename}")
         return result_path
     
+    @staticmethod
+    def build_safe_base_name(filename: str) -> str:
+        """由原始檔名產生安全的基底檔名（去副檔名、清除路徑遍歷字元，保留中文）。"""
+        base_name = os.path.splitext(os.path.basename(filename))[0]
+        return "".join(c for c in base_name if c.isalnum() or c in ('_', '-', ' ', '.') or '一' <= c <= '鿿')
+
+    def transcript_result_path(self, task_id: str, filename: str) -> str:
+        """逐字稿獨立輸出檔的路徑（v4.2.2：逐字稿可單獨下載，P1-11 部分落地）。"""
+        safe_base_name = self.build_safe_base_name(filename)
+        return os.path.join(settings.outputs_dir, f"{safe_base_name}_{task_id}_逐字稿.txt")
+
+    async def save_transcript_result(self, task_id: str, filename: str, transcript: str) -> str:
+        """將（已清理/校正的）逐字稿另存為獨立檔案，供前端單獨下載。"""
+        transcript_path = self.transcript_result_path(task_id, filename)
+        async with aiofiles.open(transcript_path, 'w', encoding='utf-8') as f:
+            await f.write(transcript)
+        log.info(f"逐字稿已儲存: {os.path.basename(transcript_path)}")
+        return transcript_path
+
     def delete_file(self, file_path: str) -> bool:
         """刪除檔案（安全地限制在允許的目錄內）"""
         try:

@@ -637,3 +637,15 @@ class TestEdgeCasesAndSecurity:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_transcript_result_path_and_safe_name():
+    """v4.2.2 逐字稿獨立下載：檔名安全化與路徑組合。"""
+    from backend.services.file_manager import file_manager
+
+    safe = file_manager.build_safe_base_name("../../週會 錄音.m4a")
+    assert "/" not in safe and ".." not in safe
+    assert "週會 錄音" in safe
+
+    path = file_manager.transcript_result_path("abc12345", "週會錄音.m4a")
+    assert path.endswith("週會錄音_abc12345_逐字稿.txt")

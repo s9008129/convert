@@ -186,6 +186,30 @@ async def get_task(task_id: str):
     return task
 
 
+@router.get("/tasks/{task_id}/transcript")
+async def get_task_transcript(task_id: str):
+    """
+    下載任務的逐字稿（純文字 .txt，v4.2.2 新增）。
+
+    逐字稿在轉錄＋語意校正完成後即產生，會議紀錄生成失敗時仍可下載。
+    """
+    task = task_queue.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"找不到任務: {task_id}")
+
+    transcript_path = file_manager.transcript_result_path(task_id, task.original_filename)
+    if not os.path.exists(transcript_path):
+        if task.status in (TaskStatus.QUEUED, TaskStatus.PENDING, TaskStatus.TRANSCRIBING):
+            raise HTTPException(status_code=400, detail=f"逐字稿尚未產生，目前狀態: {task.status.value}")
+        raise HTTPException(status_code=404, detail="逐字稿檔案不存在")
+
+    return FileResponse(
+        transcript_path,
+        media_type="text/plain",
+        filename=os.path.basename(transcript_path),
+    )
+
+
 @router.get("/tasks/{task_id}/result")
 async def get_task_result(task_id: str, format: str = "md"):
     """
