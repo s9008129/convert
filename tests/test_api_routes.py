@@ -67,6 +67,7 @@ def mock_services():
         mock_summary.check_ollama_health = AsyncMock(return_value=True)
         mock_summary.check_lmstudio_health = AsyncMock(return_value=False)
         mock_summary.check_gemini_available.return_value = False
+        mock_summary.get_effective_local_model.return_value = "gemma4:31b"
         
         # Setup task_queue mock
         mock_queue.get_queue_status.return_value = QueueStatus(
@@ -778,3 +779,18 @@ class TestEdgeCasesAndSecurity:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# =============================================================================
+# Config Endpoint - 模型資訊欄位（v4.3.1 前端模式卡顯示用）
+# =============================================================================
+
+class TestConfigModelInfo:
+    def test_config_exposes_effective_model_names(self, test_client, mock_services):
+        """前端模式卡的模型名稱以 /api/config 為唯一來源，不得在前端寫死。"""
+        response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["local_llm_model"] == "gemma4:31b"
+        assert "cloud_llm_model" in data and data["cloud_llm_model"]

@@ -3,18 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeetingScribe - 會議轉錄工具</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=4.3.0">
+    <title>智慧會議紀錄系統 MeetingScribe</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23005EA2'/%3E%3Cpath d='M7 7h10M7 12h10M7 17h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.3.1">
 </head>
 <body>
     <!-- v4.3.0 依《前端網頁設計改版》提案全面改版（已批准）。
          注意：所有 id 與 app.js 綁定，改動前先確認 js/app.js。 -->
     <div class="container">
 
-        <!-- 標題區 -->
+        <!-- 標題區（v4.3.1：貼近政府機關且帶智慧語意；MeetingScribe 保留為品牌小字） -->
         <header class="header">
-            <h1 class="title">MeetingScribe</h1>
-            <p class="subtitle">將會議錄音轉換為結構化會議紀錄</p>
+            <div class="brand">MeetingScribe</div>
+            <h1 class="title">智慧會議紀錄系統</h1>
+            <p class="subtitle">AI 聽打・智慧彙整，一鍵產出可簽核的正式會議紀錄</p>
         </header>
 
         <!-- 常駐三步驟流程列：讓使用者隨時知道流程全貌（狀態由 app.js 切換） -->
@@ -77,7 +79,7 @@
                             <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>資料不外傳</li>
                             <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>適合機敏資料</li>
                         </ul>
-                        <div class="mode-model" id="localModelInfo">使用：本地 LLM</div>
+                        <div class="mode-model" id="localModelInfo">模型資訊載入中…</div>
                     </div>
                     <div class="mode-card" data-mode="cloud" id="modeCloud" role="radio" aria-checked="false" tabindex="0">
                         <span class="m-check" aria-hidden="true">
@@ -92,7 +94,7 @@
                             <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>處理速度較快</li>
                             <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>適合非機敏資料</li>
                         </ul>
-                        <div class="mode-model" id="cloudModelInfo">使用：Gemini API</div>
+                        <div class="mode-model" id="cloudModelInfo">模型資訊載入中…</div>
                     </div>
                 </div>
                 <!-- 雲端不可用警告（由 app.js 依 /api/config 顯示） -->
@@ -142,7 +144,7 @@
                     </div>
                     <div class="queue-item">
                         <span class="queue-label">狀態</span>
-                        <span class="queue-value" id="queueStatus" style="font-size: 16px;">等待中</span>
+                        <span class="queue-value" id="queueStatus" style="font-size: 1rem;">等待中</span>
                         <span class="queue-unit">&nbsp;</span>
                     </div>
                 </div>
@@ -237,6 +239,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=4.3.0"></script>
+    <script src="/static/js/app.js?v=4.3.1"></script>
 </body>
 </html>

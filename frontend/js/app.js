@@ -1,6 +1,6 @@
 /**
  * MeetingScribe 前端應用程式
- * v4.3.0 - 介面改版（政府藍設計系統、三步驟流程列、排隊/進度合併卡）
+ * v4.3.1 - 介面改版（政府藍設計系統、三步驟流程列、動態模型資訊顯示）
  *
  * 介面流程（給非技術同仁）：
  * 1) 載入頁面時先檢查系統可用性（API /api/config、/api/health）
@@ -15,6 +15,7 @@ const state = {
     taskId: null,
     websocket: null,
     config: null,
+    health: null,            // 最近一次健康檢查結果（供模型資訊顯示）
     modeLocked: false        // 模式是否已鎖定
 };
 
@@ -108,10 +109,15 @@ async function loadConfig() {
             throw new Error(`配置載入失敗: ${response.status}`);
         }
         state.config = await response.json();
-        
+
         // 更新 UI
         if (elements.maxFileSize) {
             elements.maxFileSize.textContent = state.config.max_file_size_mb;
+        }
+
+        // 模型名稱到手後刷新模式卡顯示（若健康檢查已先完成）
+        if (state.health) {
+            updateModelInfo();
         }
         
         // 檢查雲端模式是否可用
@@ -175,28 +181,9 @@ async function checkHealth() {
             elements.queueCount.textContent = `排隊: ${data.queue_status.total_queued}`;
         }
         
-        // 更新本地模式資訊（自動偵測 Ollama 或 LM Studio）
-        if (elements.localModelInfo) {
-            const localAvailable = data.ollama_available || data.lmstudio_available;
-            if (localAvailable) {
-                elements.localModelInfo.textContent = '使用：本地 LLM（已就緒）';
-                elements.localModelInfo.style.color = '#216E1F';
-            } else {
-                elements.localModelInfo.textContent = '使用：本地 LLM（未偵測）';
-                elements.localModelInfo.style.color = '#936F38';
-            }
-        }
-        
-        // 更新雲端模式資訊（檢查 Gemini API 可用性）
-        if (elements.cloudModelInfo) {
-            if (data.gemini_available) {
-                elements.cloudModelInfo.textContent = '使用：Gemini API（已就緒）';
-                elements.cloudModelInfo.style.color = '#216E1F';
-            } else {
-                elements.cloudModelInfo.textContent = '使用：Gemini API（連線失敗）';
-                elements.cloudModelInfo.style.color = '#B50909';
-            }
-        }
+        // 更新模式卡的模型資訊（名稱來自 /api/config，可用性來自本次健康檢查）
+        state.health = data;
+        updateModelInfo();
         
         // 更新本地模式可用性
         if (elements.modeLocal) {
@@ -222,6 +209,27 @@ async function checkHealth() {
             elements.systemStatus.className = 'status-error';
             elements.systemStatus.textContent = '無法連接';
         }
+    }
+}
+
+// 模式卡的模型資訊（v4.3.1）：模型名稱以後端 /api/config 為唯一來源，
+// 換模型（環境變數／自動解析）後前端自動同步，不得在此寫死
+function updateModelInfo() {
+    const health = state.health || {};
+
+    if (elements.localModelInfo) {
+        const name = state.config?.local_llm_model || '本地 LLM';
+        const localAvailable = health.ollama_available || health.lmstudio_available;
+        elements.localModelInfo.textContent =
+            `使用模型：${name}（${localAvailable ? '已就緒' : '未偵測'}）`;
+        elements.localModelInfo.style.color = localAvailable ? '#216E1F' : '#936F38';
+    }
+
+    if (elements.cloudModelInfo) {
+        const name = state.config?.cloud_llm_model || 'Gemini API';
+        elements.cloudModelInfo.textContent =
+            `使用模型：${name}（${health.gemini_available ? '已就緒' : '連線失敗'}）`;
+        elements.cloudModelInfo.style.color = health.gemini_available ? '#216E1F' : '#B50909';
     }
 }
 

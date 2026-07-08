@@ -369,6 +369,10 @@ async def get_config():
         ),
         "gemini_available": summarization_service.check_gemini_available(),
         "lmstudio_model": settings.LMSTUDIO_MODEL,
+        # v4.3.1：前端模式卡顯示實際使用的模型名稱（唯一來源：後端設定/解析結果，
+        # 換模型後前端自動同步，不得在前端寫死）
+        "local_llm_model": summarization_service.get_effective_local_model(),
+        "cloud_llm_model": settings.GEMINI_MODEL,
     }
 
 

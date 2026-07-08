@@ -35,12 +35,16 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* v4.3.1：全站字級等比放大 20%——root 設 120%，所有 font-size 以 rem 定義，
+   之後要再調大小只需改這一行 */
+html { font-size: 120%; }
+
 body {
     font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC",
                  "Microsoft JhengHei", "微軟正黑體", "Helvetica Neue", Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
-    font-size: 16px;
+    font-size: 1rem;
     line-height: 1.7;   /* 中文筆畫密，行高需比英文網站大 */
     min-height: 100vh;
 }
@@ -63,8 +67,13 @@ svg { flex-shrink: 0; }
 
 /* ---- 頁首 ---- */
 .header { text-align: center; padding: 32px 0 8px; }
-.title { font-size: 32px; font-weight: 700; }
-.subtitle { font-size: 16px; color: var(--text-secondary); margin-top: 4px; }
+.brand {
+    font-size: 0.8125rem; font-weight: 500;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-secondary); margin-bottom: 2px;
+}
+.title { font-size: 2rem; font-weight: 700; }
+.subtitle { font-size: 1rem; color: var(--text-secondary); margin-top: 4px; }
 
 /* ---- 常駐三步驟流程列（li 的 data-state 由 app.js 切換） ---- */
 .wizard {
@@ -77,12 +86,12 @@ svg { flex-shrink: 0; }
 .wizard .w-dot {
     width: 32px; height: 32px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 600;
+    font-size: 0.875rem; font-weight: 600;
     background: var(--surface); color: var(--text-secondary);
     border: 2px solid var(--border-input);
 }
 .wizard .w-dot::before { content: attr(data-n); }
-.wizard .w-label { font-size: 14px; color: var(--text-secondary); margin-top: 6px; text-align: center; }
+.wizard .w-label { font-size: 0.875rem; color: var(--text-secondary); margin-top: 6px; text-align: center; }
 .wizard .w-line { height: 2px; width: 56px; background: var(--border); margin-top: 15px; }
 .wizard li[data-state="active"] .w-dot { background: var(--primary); border-color: var(--primary); color: #FFF; }
 .wizard li[data-state="active"] .w-label { color: var(--primary-dark); font-weight: 600; }
@@ -98,10 +107,10 @@ svg { flex-shrink: 0; }
     gap: 12px; flex-wrap: wrap; padding: 8px 0 24px;
 }
 .status-item { display: inline-flex; align-items: center; gap: 8px; }
-.status-label { font-size: 13px; color: var(--text-secondary); }
+.status-label { font-size: 0.8125rem; color: var(--text-secondary); }
 .status-value, .status-ok, .status-warning, .status-error {
     display: inline-flex; align-items: center; gap: 6px;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.8125rem; font-weight: 500;
     padding: 4px 12px; border-radius: 999px;
     background: #EEEFF1; color: var(--text-secondary);
 }
@@ -116,7 +125,7 @@ svg { flex-shrink: 0; }
 /* ---- 通用 badge ---- */
 .badge {
     display: inline-flex; align-items: center; gap: 6px;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.8125rem; font-weight: 500;
     padding: 4px 12px; border-radius: 999px;
 }
 .badge-success { background: var(--success-bg); color: var(--success-text); }
@@ -132,7 +141,7 @@ svg { flex-shrink: 0; }
     padding: 28px;
     margin-bottom: 24px;
 }
-.card h2 { font-size: 20px; font-weight: 600; line-height: 1.4; margin-bottom: 16px; }
+.card h2 { font-size: 1.25rem; font-weight: 600; line-height: 1.4; margin-bottom: 16px; }
 
 /* ---- 步驟 1：設定與上傳（寬螢幕左右並排） ---- */
 .setup-grid {
@@ -167,17 +176,17 @@ svg { flex-shrink: 0; }
 }
 .mode-card.selected .m-check { display: flex; }
 .mode-card .m-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: var(--primary-dark); }
-.mode-card .mode-name { font-size: 17px; font-weight: 600; color: var(--text); }
+.mode-card .mode-name { font-size: 1.0625rem; font-weight: 600; color: var(--text); }
 .mode-features { list-style: none; }
-.mode-features li { font-size: 14px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.mode-features li { font-size: 0.875rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .mode-features li svg { color: var(--success-text); }
-.mode-model { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+.mode-model { margin-top: 10px; font-size: 0.8125rem; color: var(--text-secondary); }
 .mode-card.disabled { opacity: .5; cursor: not-allowed; }
 .mode-card.locked { cursor: default; }
 
 .cloud-warning {
     margin-top: 12px;
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: var(--warning-text);
     background: var(--warning-bg);
     border-radius: var(--radius-sm);
@@ -187,7 +196,7 @@ svg { flex-shrink: 0; }
 .mode-lock-hint {
     display: inline-flex; align-items: center; gap: 6px;
     margin-top: 12px;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.8125rem; font-weight: 500;
     color: var(--primary-dark); background: var(--primary-lighter);
     border-radius: 999px; padding: 4px 12px;
 }
@@ -203,18 +212,18 @@ svg { flex-shrink: 0; }
 }
 .upload-area:hover, .upload-area.dragover { border-color: var(--primary); background: var(--primary-lighter); }
 .upload-icon { color: var(--primary); margin-bottom: 12px; }
-.upload-text { font-size: 17px; font-weight: 600; }
-.upload-text-sub { font-size: 14px; color: var(--text-secondary); margin-top: 4px; }
-.upload-hint { font-size: 13px; color: var(--text-secondary); margin-top: 14px; }
+.upload-text { font-size: 1.0625rem; font-weight: 600; }
+.upload-text-sub { font-size: 0.875rem; color: var(--text-secondary); margin-top: 4px; }
+.upload-hint { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 14px; }
 
 /* ---- 處理中卡（排隊＋進度合併為一張卡，閱讀寬度置中） ---- */
 .process-card { max-width: 760px; margin-left: auto; margin-right: auto; }
 
 .queue-info { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; padding: 8px 0; }
 .queue-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.queue-label { font-size: 13px; color: var(--text-secondary); }
-.queue-value { font-size: 24px; font-weight: 600; color: var(--primary-dark); }
-.queue-unit { font-size: 13px; color: var(--text-secondary); }
+.queue-label { font-size: 0.8125rem; color: var(--text-secondary); }
+.queue-value { font-size: 1.5rem; font-weight: 600; color: var(--primary-dark); }
+.queue-unit { font-size: 0.8125rem; color: var(--text-secondary); }
 
 /* 四段小步驟（.stage 的 active/completed 由 app.js 依進度切換） */
 .progress-stages {
@@ -232,14 +241,14 @@ svg { flex-shrink: 0; }
 .stage-dot {
     width: 28px; height: 28px; border-radius: 50%; z-index: 1;
     display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 600;
+    font-size: 0.8125rem; font-weight: 600;
     background: var(--surface); border: 2px solid var(--border-input); color: var(--text-secondary);
 }
 .stage-dot::before { content: attr(data-n); }
 .stage.active .stage-dot { background: var(--primary); border-color: var(--primary); color: #FFF; }
 .stage.completed .stage-dot { background: var(--success-bg); border-color: var(--success-text); color: var(--success-text); }
 .stage.completed .stage-dot::before { content: "✓"; }
-.stage-label { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
+.stage-label { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 6px; }
 .stage.active .stage-label { color: var(--primary-dark); font-weight: 600; }
 
 /* 進度條（app.js 直接設定 #progressBar 的 width） */
@@ -253,16 +262,16 @@ svg { flex-shrink: 0; }
 }
 .progress-info {
     display: flex; justify-content: space-between; align-items: baseline;
-    margin-top: 10px; font-size: 15px;
+    margin-top: 10px; font-size: 0.9375rem;
 }
 #progressPercent { font-weight: 600; color: var(--primary-dark); }
-.device-info { font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+.device-info { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 8px; }
 
 .process-meta {
     display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
     border-top: 1px solid var(--border);
     margin-top: 20px; padding-top: 16px;
-    font-size: 14px; color: var(--text-secondary);
+    font-size: 0.875rem; color: var(--text-secondary);
 }
 
 /* ---- 結果／錯誤（閱讀寬度置中） ---- */
@@ -276,24 +285,24 @@ svg { flex-shrink: 0; }
 .result-icon.ok { background: var(--success-bg); color: var(--success-text); }
 .result-icon.err { background: var(--error-bg); color: var(--error-text); }
 .result-head h2 { margin-bottom: 2px; }
-.result-meta { font-size: 14px; color: var(--text-secondary); }
+.result-meta { font-size: 0.875rem; color: var(--text-secondary); }
 
 .dl-actions { display: flex; flex-direction: column; gap: 12px; max-width: 400px; margin: 0 auto; }
 .dl-actions .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 480px) { .dl-actions .row2 { grid-template-columns: 1fr; } }
 .dl-actions .btn-tertiary { margin: 4px auto 0; }
 
-.error-title { font-size: 20px; font-weight: 600; }
+.error-title { font-size: 1.25rem; font-weight: 600; }
 .error-message {
     background: var(--error-bg); color: var(--error-text);
     border-radius: var(--radius-md); padding: 14px 18px;
-    font-size: 15px; max-width: 480px; margin: 0 auto 20px; text-align: center;
+    font-size: 0.9375rem; max-width: 480px; margin: 0 auto 20px; text-align: center;
 }
 
-/* ---- 按鈕（高度 44px、主次分明、文字不換行） ---- */
+/* ---- 按鈕（高度 48px 配合放大字級、主次分明、文字不換行） ---- */
 .btn {
-    font: inherit; font-size: 16px; font-weight: 600;
-    height: 44px; padding: 0 24px; border-radius: var(--radius-md);
+    font: inherit; font-size: 1rem; font-weight: 600;
+    height: 48px; padding: 0 24px; border-radius: var(--radius-md);
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     white-space: nowrap;
     cursor: pointer;
@@ -307,7 +316,7 @@ svg { flex-shrink: 0; }
 .btn-secondary:hover:not(:disabled) { background: var(--bg); }
 .btn-outline { background: var(--surface); color: var(--text); border: 1px solid var(--border-input); }
 .btn-outline:hover:not(:disabled) { background: var(--bg); }
-.btn-tertiary { background: none; border: none; color: var(--primary); font-weight: 500; height: 44px; padding: 0 12px; }
+.btn-tertiary { background: none; border: none; color: var(--primary); font-weight: 500; height: 48px; padding: 0 12px; }
 .btn-tertiary:hover:not(:disabled) { color: var(--primary-dark); text-decoration: underline; }
 
 /* ---- 頁尾 ---- */
@@ -318,12 +327,12 @@ svg { flex-shrink: 0; }
 }
 .footer-mode {
     display: inline-flex; align-items: center; gap: 6px;
-    font-size: 13px; font-weight: 500;
+    font-size: 0.8125rem; font-weight: 500;
     padding: 4px 12px; border-radius: 999px; margin-bottom: 8px;
 }
 .footer-mode.local { background: var(--primary-lighter); color: var(--primary-dark); }
 .footer-mode.cloud { background: #EEEFF1; color: var(--text-secondary); }
-.footer-version { font-size: 13px; color: var(--text-secondary); }
+.footer-version { font-size: 0.8125rem; color: var(--text-secondary); }
 
 /* ---- 動效尊重系統設定 ---- */
 @media (prefers-reduced-motion: reduce) {

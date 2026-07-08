@@ -1376,6 +1376,10 @@ class SummarizationService:
         """
         return getattr(self, '_resolved_model', None) or settings.LOCAL_LLM_MODEL
 
+    def get_effective_local_model(self) -> str:
+        """公開查詢目前生效的本地模型名稱（供 /api/config 前端顯示，v4.3.1）。"""
+        return self._get_effective_model()
+
     async def check_lmstudio_health(self) -> bool:
         """檢查 LM Studio 服務是否可用"""
         try:
