@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from backend.core.asr_model_resolver import resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
+from backend.core.templates import GENERAL_TEMPLATE_ID, get_template, template_public_info
 from backend.core.version import __version__
 from backend.models.schemas import (
     TaskStatus, ProcessingMode, TaskInfo, QueueStatus,
@@ -93,14 +94,16 @@ async def health_check(quick: bool = False):
 async def upload_file(
     file: UploadFile = File(...),
     processing_mode: str = Form(default="local"),
-    user_prompt: Optional[str] = Form(default=None)
+    user_prompt: Optional[str] = Form(default=None),
+    meeting_template: str = Form(default=GENERAL_TEMPLATE_ID),
 ):
     """
     上傳音訊/視訊檔案
-    
+
     - **file**: 音訊或視訊檔案（大小上限依 MAX_FILE_SIZE_MB 設定，預設 200MB）
     - **processing_mode**: 處理模式 (local/cloud)
     - **user_prompt**: 使用者自訂 prompt（選填）
+    - **meeting_template**: 會議類型模板 id（v4.4.0，預設 general）
     """
     # 驗證批次上傳設定
     if not settings.ENABLE_BATCH_UPLOAD:
@@ -127,24 +130,38 @@ async def upload_file(
         mode = ProcessingMode(processing_mode)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"無效的處理模式: {processing_mode}")
-    
+
+    # 驗證會議模板（v4.4.0）
+    try:
+        template = get_template(meeting_template)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"無效的會議類型: {meeting_template}")
+
+    # 機敏模板強制本地處理（前端已鎖定，此處為第二道防線）
+    if template.local_only and mode == ProcessingMode.CLOUD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"「{template.display_name}」涉及機敏內容，僅限本地模式處理，請改選本地模式。"
+        )
+
     # 如果選擇雲端模式，檢查 API Key
     if mode == ProcessingMode.CLOUD and not summarization_service.check_gemini_available():
         raise HTTPException(
             status_code=400,
             detail="未設定 Gemini API Key，無法使用雲端模式。請執行 setup-api-key.ps1 設定 API Key。"
         )
-    
+
     # 儲存檔案
     file_path, unique_filename, actual_size = await file_manager.save_upload(file, content=file_content)
-    
+
     # 加入排隊
     task = await task_queue.add_task(
         filename=unique_filename,
         original_filename=file.filename,
         file_size=actual_size,
         processing_mode=mode,
-        user_prompt=user_prompt
+        user_prompt=user_prompt,
+        template_id=template.id,
     )
     
     if not task:
@@ -272,7 +289,7 @@ async def get_task_result(task_id: str, format: str = "md"):
             from backend.services.docx_converter import docx_converter
             with open(result_path, 'r', encoding='utf-8') as f:
                 md_content = f.read()
-            docx_converter.convert(md_content, docx_path)
+            docx_converter.convert(md_content, docx_path, template_id=task.template_id)
         except ImportError as e:
             log.error(f"[DOCX] python-docx 未安裝或匯入失敗: {e}")
             raise HTTPException(
@@ -373,6 +390,9 @@ async def get_config():
         # 換模型後前端自動同步，不得在前端寫死）
         "local_llm_model": summarization_service.get_effective_local_model(),
         "cloud_llm_model": settings.GEMINI_MODEL,
+        # v4.4.0：會議類型模板清單（前端「選擇會議類型」選單唯一資料來源）
+        "meeting_templates": template_public_info(),
+        "default_meeting_template": GENERAL_TEMPLATE_ID,
     }
 
 

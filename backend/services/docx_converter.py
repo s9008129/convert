@@ -21,6 +21,7 @@ from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
 from backend.core.logger import log
+from backend.core.templates import get_template
 
 
 # CJK 字型常數
@@ -31,16 +32,13 @@ FONT_BODY_ALT = "SimSun"             # 宋體（備用）
 # 粗體 pattern
 BOLD_PATTERN = re.compile(r'\*\*(.+?)\*\*')
 
-# 公文紀錄結構 pattern（v4.3.2）：
+# 公文紀錄結構 pattern（v4.3.2；v4.4.0 起唯一來源移至會議模板註冊表）：
 # 紀錄本文是純文字（非 markdown 標題），若不辨識結構，Word 會是一片
-# 同大小的字牆。以下兩個 pattern 讓「一、報告事項」等章節與
+# 同大小的字牆。章節與欄位標籤 pattern 讓「一、報告事項」等章節與
 # 「案由：/決議：」等欄位標籤在 Word 中呈現公文應有的層次。
-RECORD_SECTION_PATTERN = re.compile(r'^[一二三四五六七八九十]+、')
-RECORD_LABEL_PATTERN = re.compile(
-    r'^(會議名稱|會議時間|會議地點|主\s*席|出席人員|列席人員|記\s*錄|'
-    r'案由|說明|決議|各單位意見（多方立場）|各單位意見|'
-    r'主辦單位|協辦單位|辦理期程)\s*([：:])\s*(.*)$'
-)
+# 模組級常數保留為 general 模板別名（向下相容既有匯入與測試）。
+RECORD_SECTION_PATTERN = get_template("general").docx_section_pattern
+RECORD_LABEL_PATTERN = get_template("general").docx_label_pattern
 
 
 class MarkdownToDocxConverter:
@@ -53,13 +51,14 @@ class MarkdownToDocxConverter:
     - 無狀態：每次 convert() 呼叫獨立
     """
 
-    def convert(self, md_content: str, output_path: str) -> str:
+    def convert(self, md_content: str, output_path: str, template_id: str = "general") -> str:
         """
         將 Markdown 內容轉換為 DOCX 檔案。
 
         Args:
             md_content: Markdown 原始內容
             output_path: 輸出 .docx 檔案路徑
+            template_id: 會議模板 id（v4.4.0；決定公文章節／欄位標籤辨識樣式）
 
         Returns:
             輸出檔案的絕對路徑
@@ -71,9 +70,10 @@ class MarkdownToDocxConverter:
         if not md_content or not md_content.strip():
             raise ValueError("Markdown 內容不可為空")
 
+        template = get_template(template_id)
         doc = Document()
         self._setup_document_styles(doc)
-        self._parse_and_build(doc, md_content)
+        self._parse_and_build(doc, md_content, template)
         doc.save(output_path)
 
         log.info(f"[DOCX] 轉換完成: {output_path}")
@@ -103,8 +103,12 @@ class MarkdownToDocxConverter:
         paragraph_format.line_spacing = 1.5
         paragraph_format.space_after = Pt(6)
 
-    def _parse_and_build(self, doc: Document, md_content: str):
+    def _parse_and_build(self, doc: Document, md_content: str, template=None):
         """逐行解析 Markdown 並建構 DOCX 內容。"""
+        if template is None:
+            template = get_template("general")
+        section_pattern = template.docx_section_pattern
+        label_pattern = template.docx_label_pattern
         lines = md_content.split('\n')
         i = 0
         in_details = False
@@ -197,14 +201,14 @@ class MarkdownToDocxConverter:
                 i += 1
                 continue
 
-            # 公文紀錄章節（一、報告事項 / 二、討論事項 / 三、主席裁示事項…）
-            if RECORD_SECTION_PATTERN.match(stripped):
+            # 公文紀錄章節（general：一、報告事項…／採購評選：壹、會議時間…）
+            if section_pattern.match(stripped):
                 self._add_record_section(doc, stripped)
                 i += 1
                 continue
 
-            # 公文欄位標籤（會議名稱：/案由：/決議：…）→ 標籤加粗
-            if self._try_add_labeled_paragraph(doc, stripped):
+            # 公文欄位標籤（會議名稱：/案由：/委員提問：…）→ 標籤加粗
+            if self._try_add_labeled_paragraph(doc, stripped, label_pattern):
                 i += 1
                 continue
 
@@ -250,13 +254,15 @@ class MarkdownToDocxConverter:
         if rPr is not None:
             rPr.rFonts.set(qn('w:eastAsia'), FONT_HEADING)
 
-    def _try_add_labeled_paragraph(self, doc: Document, text: str) -> bool:
+    def _try_add_labeled_paragraph(self, doc: Document, text: str, label_pattern=None) -> bool:
         """公文欄位標籤列（會議名稱：/案由：/決議：…）：標籤加粗，內容照常。
 
         Returns:
             True 表示本行已處理；False 表示非欄位標籤列，交回一般段落流程。
         """
-        match = RECORD_LABEL_PATTERN.match(text)
+        if label_pattern is None:
+            label_pattern = RECORD_LABEL_PATTERN
+        match = label_pattern.match(text)
         if not match:
             return False
 

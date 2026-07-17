@@ -292,10 +292,18 @@ def has_excessive_english(text: str) -> bool:
     return False
 
 
-def ensure_record_structure(summary: str) -> str:
-    """確保會議紀錄具有完整的公務欄位結構（容錯比對，缺漏者補「（待確認）」骨架）。"""
-    missing_text = MISSING_TEXT
-    default_fallback_line = f"- {missing_text}（主辦單位：{missing_text}，辦理期程：{missing_text}）"
+def ensure_record_structure(summary: str, template=None) -> str:
+    """確保會議紀錄具有完整欄位結構（容錯比對，缺漏者依模板補骨架）。
+
+    v4.4.0：欄位與章節骨架改由會議模板（MeetingTemplate）驅動；
+    template=None 時使用 general 模板，輸出與 v4.3.3 完全一致。
+    """
+    # 延遲 import 避免循環（templates 不得反向 import 本模組）
+    from backend.core.templates import get_template
+
+    if template is None:
+        template = get_template(None)
+
     cleaned = (summary or "").strip()
 
     cleaned = re.sub(r"^```(?:markdown)?\s*", "", cleaned, flags=re.IGNORECASE)
@@ -304,53 +312,19 @@ def ensure_record_structure(summary: str) -> str:
 
     header_lines: list[str] = []
     section_lines: list[str] = []
+
     # 欄位存在性採容錯 regex（允許空格數量差異與全半形冒號），輸出統一為標準格式
-    required_fields = [
-        ("會議名稱", missing_text, re.compile(r"^會議名稱\s*[:：]", re.MULTILINE)),
-        ("會議時間", missing_text, re.compile(r"^會議時間\s*[:：]", re.MULTILINE)),
-        ("會議地點", missing_text, re.compile(r"^會議地點\s*[:：]", re.MULTILINE)),
-        ("主  席", missing_text, re.compile(r"^主\s*席\s*[:：]", re.MULTILINE)),
-        ("出席人員", missing_text, re.compile(r"^出席人員\s*[:：]", re.MULTILINE)),
-        ("列席人員", "無", re.compile(r"^列席人員\s*[:：]", re.MULTILINE)),
-        ("記  錄", "AI 會議助理", re.compile(r"^記\s*錄\s*[:：]", re.MULTILINE)),
-    ]
-    for field, default, pattern in required_fields:
-        if not pattern.search(cleaned):
-            header_lines.append(f"{field}：{default}")
+    for field_spec in template.record_header_fields:
+        if not field_spec.pattern.search(cleaned):
+            header_lines.append(field_spec.line)
 
-    if not re.search(r"一、\s*報告事項", cleaned):
-        section_lines.extend(["一、 報告事項：", "無"])
-
-    if not re.search(r"二、\s*討論事項", cleaned):
-        section_lines.extend([
-            "二、 討論事項：",
-            f"案由：{missing_text}",
-            f"說明：{missing_text}",
-            "各單位意見（多方立場）：",
-            f"- {missing_text}：{missing_text}",
-            "決議：",
-            f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
-        ])
-    else:
-        if not re.search(r"案由\s*[:：]", cleaned):
-            section_lines.append(f"案由：{missing_text}")
-        if not re.search(r"說明\s*[:：]", cleaned):
-            section_lines.append(f"說明：{missing_text}")
-        if not re.search(r"各單位意見", cleaned):
-            section_lines.extend([
-                "各單位意見（多方立場）：",
-                f"- {missing_text}：{missing_text}",
-            ])
-        if not re.search(r"決議\s*[:：]", cleaned):
-            section_lines.extend([
-                "決議：",
-                f"1. {missing_text}（主辦單位：{missing_text}，協辦單位：{missing_text}）",
-            ])
-
-    if not re.search(r"三、\s*主席裁示事項", cleaned):
-        section_lines.extend(["三、 主席裁示事項（後續管考與追蹤）：", default_fallback_line])
-    elif not re.search(r"辦理期程\s*[:：]", cleaned):
-        section_lines.append(default_fallback_line)
+    for section in template.record_sections:
+        if not section.presence_pattern.search(cleaned):
+            section_lines.extend(section.skeleton_lines)
+            continue
+        for subfield_pattern, subfield_lines in section.subfields:
+            if not subfield_pattern.search(cleaned):
+                section_lines.extend(subfield_lines)
 
     if header_lines:
         prefix = "\n".join(header_lines)
@@ -363,11 +337,11 @@ def ensure_record_structure(summary: str) -> str:
     return cleaned.strip()
 
 
-def finalize_record(summary: str, protected_terms: Optional[set[str]] = None) -> str:
+def finalize_record(summary: str, protected_terms: Optional[set[str]] = None, template=None) -> str:
     """會議紀錄的完整記錄級後處理（驗證前呼叫，此後不得再改寫本文）。"""
     cleaned = remove_english_segments(summary or "", protected_terms=protected_terms)
     cleaned = sanitize_text_language(cleaned)
     cleaned = to_taiwan_traditional(cleaned)
     if has_excessive_english(cleaned):
         log.warning("[品質] 會議紀錄仍含較多英文詞彙，請人工抽查輸出內容")
-    return ensure_record_structure(cleaned)
+    return ensure_record_structure(cleaned, template=template)

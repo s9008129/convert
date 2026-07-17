@@ -43,6 +43,7 @@ class TaskInfo(BaseModel):
     estimated_wait_seconds: Optional[int] = None
     processing_mode: ProcessingMode = ProcessingMode.LOCAL
     user_prompt: Optional[str] = None
+    template_id: str = "general"  # v4.4.0：會議模板（general／procurement_evaluation…）
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

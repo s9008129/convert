@@ -35,7 +35,8 @@ class TaskQueueManager:
         original_filename: str,
         file_size: int,
         processing_mode: ProcessingMode = ProcessingMode.LOCAL,
-        user_prompt: Optional[str] = None
+        user_prompt: Optional[str] = None,
+        template_id: str = "general",
     ) -> Optional[TaskInfo]:
         """
         新增任務到排隊系統。
@@ -67,7 +68,8 @@ class TaskQueueManager:
                 queue_position=queue_position,
                 estimated_wait_seconds=estimated_wait,
                 processing_mode=processing_mode,
-                user_prompt=user_prompt
+                user_prompt=user_prompt,
+                template_id=template_id,
             )
             
             # 加入佇列

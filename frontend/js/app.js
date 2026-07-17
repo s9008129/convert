@@ -12,6 +12,8 @@
 // 全域狀態（集中管理目前模式、任務編號、WebSocket 與鎖定狀態）
 const state = {
     currentMode: 'local',
+    currentTemplate: 'general',   // v4.4.0：目前選擇的會議類型模板
+    templateLocalOnly: false,     // 目前模板是否強制本地（機敏會議）
     taskId: null,
     websocket: null,
     config: null,
@@ -32,6 +34,10 @@ const elements = {
     modeLocal: document.getElementById('modeLocal'),
     modeCloud: document.getElementById('modeCloud'),
     cloudWarning: document.getElementById('cloudWarning'),
+
+    // 會議類型（v4.4.0；卡片由 /api/config 動態渲染）
+    templateSelector: document.getElementById('templateSelector'),
+    templateHint: document.getElementById('templateHint'),
     
     // 上傳（v4.3.0：setupSection 為「模式＋上傳」整區，任務開始後一併隱藏）
     setupSection: document.getElementById('setupSection'),
@@ -119,7 +125,11 @@ async function loadConfig() {
         if (state.health) {
             updateModelInfo();
         }
-        
+
+        // 渲染會議類型選單（v4.4.0；唯一資料來源為後端模板註冊表）
+        renderTemplateOptions(state.config.meeting_templates || []);
+
+
         // 檢查雲端模式是否可用
         if (!state.config.gemini_available) {
             if (elements.cloudWarning) {
@@ -200,9 +210,9 @@ async function checkHealth() {
             }
         }
         
-        // 更新雲端模式可用性
+        // 更新雲端模式可用性（機敏模板選取中時，雲端卡維持鎖定）
         if (elements.modeCloud) {
-            if (!data.gemini_available) {
+            if (!data.gemini_available || state.templateLocalOnly) {
                 elements.modeCloud.classList.add('disabled');
             } else {
                 elements.modeCloud.classList.remove('disabled');
@@ -238,6 +248,113 @@ function updateModelInfo() {
     }
 }
 
+// ===== 會議類型模板（v4.4.0） =====
+// 卡片由 /api/config 的 meeting_templates 動態渲染；
+// 新增會議類型只需在後端 backend/core/templates.py 註冊，前端零改動。
+function renderTemplateOptions(templates) {
+    if (!elements.templateSelector) return;
+
+    const list = (templates && templates.length > 0) ? templates : [{
+        id: 'general', display_name: '一般會議',
+        description: '通用公務會議紀錄', local_only: false, is_default: true
+    }];
+
+    elements.templateSelector.replaceChildren();
+    list.forEach(template => {
+        const card = document.createElement('div');
+        card.className = 'template-option';
+        card.dataset.template = template.id;
+        card.dataset.localOnly = String(Boolean(template.local_only));
+        card.setAttribute('role', 'radio');
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('aria-checked', 'false');
+
+        const name = document.createElement('div');
+        name.className = 't-name';
+        name.textContent = template.display_name;
+        card.appendChild(name);
+
+        if (template.local_only) {
+            const badge = document.createElement('span');
+            badge.className = 't-badge';
+            badge.textContent = '機敏・僅限本地';
+            name.appendChild(badge);
+        }
+
+        const desc = document.createElement('div');
+        desc.className = 't-desc';
+        desc.textContent = template.description || '';
+        card.appendChild(desc);
+
+        const choose = () => {
+            if (!state.modeLocked) selectTemplate(template.id);
+        };
+        card.addEventListener('click', choose);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                choose();
+            }
+        });
+
+        elements.templateSelector.appendChild(card);
+    });
+
+    // 預設選取（後端指定的預設模板，通常為 general）
+    const defaultId = state.config?.default_meeting_template || 'general';
+    selectTemplate(state.currentTemplate || defaultId);
+}
+
+function selectTemplate(templateId) {
+    const cards = elements.templateSelector
+        ? Array.from(elements.templateSelector.querySelectorAll('.template-option'))
+        : [];
+    const target = cards.find(card => card.dataset.template === templateId) || cards[0];
+    if (!target) return;
+
+    state.currentTemplate = target.dataset.template;
+    state.templateLocalOnly = target.dataset.localOnly === 'true';
+
+    cards.forEach(card => {
+        const selected = card === target;
+        card.classList.toggle('selected', selected);
+        card.setAttribute('aria-checked', String(selected));
+    });
+
+    // 機敏模板：強制本地模式並鎖定雲端卡（後端另有第二道防線）
+    if (state.templateLocalOnly) {
+        selectMode('local');
+        if (elements.modeCloud) {
+            elements.modeCloud.classList.add('disabled');
+        }
+        if (elements.templateHint) {
+            elements.templateHint.textContent =
+                '此會議類型涉及機敏內容，僅限本地模式處理（資料不外傳）';
+            elements.templateHint.style.display = 'block';
+        }
+    } else {
+        if (elements.templateHint) {
+            elements.templateHint.style.display = 'none';
+        }
+        // 依系統實際能力恢復雲端卡（沿用 /api/config 與健康檢查判斷）
+        if (elements.modeCloud) {
+            const geminiOk = Boolean(state.config?.gemini_available) &&
+                (!state.health || Boolean(state.health.gemini_available));
+            elements.modeCloud.classList.toggle('disabled', !geminiOk);
+        }
+    }
+}
+
+// 任務送出後鎖定／解鎖會議類型卡（與模式卡一致的鎖定體驗）
+function lockTemplateSelection(locked) {
+    if (!elements.templateSelector) return;
+    elements.templateSelector.querySelectorAll('.template-option').forEach(card => {
+        card.classList.toggle('locked', locked);
+        card.style.pointerEvents = locked ? 'none' : 'auto';
+        card.style.opacity = locked ? '0.6' : '1';
+    });
+}
+
 // v4.3.0：頂部三步驟流程列（1=設定與上傳 2=處理中 3=完成下載）
 function setWizardStage(stage) {
     document.querySelectorAll('#wizard > li').forEach((li, i) => {
@@ -252,6 +369,7 @@ async function uploadFile(file) {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('processing_mode', state.currentMode);
+    formData.append('meeting_template', state.currentTemplate);
     
     try {
         // 隱藏錯誤訊息
@@ -329,6 +447,9 @@ function lockModeSelection(locked) {
         }
     }
     
+    // 會議類型卡與模式卡一併鎖定（v4.4.0）
+    lockTemplateSelection(locked);
+
     // 顯示/隱藏鎖定提示
     if (elements.modeLockHint) {
         elements.modeLockHint.style.display = locked ? 'block' : 'none';
@@ -739,7 +860,8 @@ function setupEventListeners() {
     }
     if (elements.modeCloud) {
         const selectCloud = () => {
-            if (!elements.modeCloud.classList.contains('disabled')) {
+            // 機敏模板強制本地：即使 class 被繞過也不得切雲端（後端另有 400 防線）
+            if (!elements.modeCloud.classList.contains('disabled') && !state.templateLocalOnly) {
                 selectMode('cloud');
             }
         };

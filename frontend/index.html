@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>政府智慧會議紀錄生成系統</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23005EA2'/%3E%3Cpath d='M7 7h10M7 12h10M7 17h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/css/style.css?v=4.3.3">
+    <link rel="stylesheet" href="/static/css/style.css?v=4.4.0">
 </head>
 <body>
     <!-- v4.3.0 依《前端網頁設計改版》提案全面改版（已批准）。
@@ -60,6 +60,16 @@
 
         <!-- 步驟 1：設定與上傳（16:9 寬螢幕左右並排；任務開始後整區隱藏） -->
         <section class="setup-grid" id="setupSection">
+
+            <!-- 上：會議類型選擇（v4.4.0；卡片由 app.js 依 /api/config 動態渲染，
+                 新增會議類型只需在後端 templates.py 註冊，前端零改動） -->
+            <div class="card template-card">
+                <h2>選擇會議類型</h2>
+                <div class="template-selector" id="templateSelector" role="radiogroup" aria-label="會議類型">
+                    <!-- 模板卡由 renderTemplateOptions() 動態產生 -->
+                </div>
+                <div class="template-hint" id="templateHint" style="display: none;"></div>
+            </div>
 
             <!-- 左：模式選擇（單選卡） -->
             <div class="card">
@@ -234,6 +244,6 @@
         </footer>
     </div>
 
-    <script src="/static/js/app.js?v=4.3.3"></script>
+    <script src="/static/js/app.js?v=4.4.0"></script>
 </body>
 </html>

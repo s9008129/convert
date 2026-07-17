@@ -155,11 +155,15 @@ class TaskProcessor:
 
         await self._update_progress(task.task_id, 62.0, "語意校正逐字稿（同音錯字/專有名詞）...")
         try:
+            # v4.4.0：注入會議模板術語表（僅 LLM 校正層，不碰 ASR hotwords／快取）
+            from backend.core.templates import template_glossary_block
+
             corrected, report = await transcript_correction_service.correct_transcript(
                 cleaned,
                 lambda system_prompt, user_message: summarization_service.generate_local(
                     system_prompt, user_message, temperature=0.0
                 ),
+                extra_glossary_block=template_glossary_block(task.template_id),
             )
             return corrected, report
         except Exception as exc:  # noqa: BLE001
@@ -211,7 +215,8 @@ class TaskProcessor:
                     transcript,
                     mode=task.processing_mode,
                     user_prompt=task.user_prompt,
-                    progress_callback=sync_progress_cb
+                    progress_callback=sync_progress_cb,
+                    template_id=task.template_id,
                 )
             except Exception as e:
                 # P0-5：摘要失敗不偽裝成功——保留逐字稿輸出，但以顯著警告標示
@@ -283,6 +288,7 @@ class TaskProcessor:
             f"任務 {task.task_id} 處理資訊: 檔案={task.original_filename}, "
             f"處理時間={task.created_at.strftime('%Y-%m-%d %H:%M:%S')}, "
             f"模式={'本地 (Ollama)' if task.processing_mode == ProcessingMode.LOCAL else '雲端 (Gemini)'}, "
+            f"會議模板={task.template_id}, "
             f"裝置={device_info.get('current_device', 'unknown')}"
         )
         if correction_report and correction_report.accepted_changes:
@@ -291,7 +297,9 @@ class TaskProcessor:
                 f"{correction_report.to_markdown()}"
             )
 
-        title = "# 會議紀錄"
+        from backend.core.templates import get_template
+
+        title = get_template(task.template_id).result_title
         sections: list[str] = []
 
         if summary_failed:

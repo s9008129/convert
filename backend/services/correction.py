@@ -263,19 +263,28 @@ class TranscriptCorrectionService:
                     return True
         return False
 
-    async def correct_transcript(self, transcript: str, generate_fn) -> tuple[str, CorrectionReport]:
+    async def correct_transcript(
+        self,
+        transcript: str,
+        generate_fn,
+        extra_glossary_block: str = "",
+    ) -> tuple[str, CorrectionReport]:
         """對逐字稿執行選擇性校正。
 
         Args:
             transcript: 已經過確定性清理的逐字稿
             generate_fn: async (system_prompt, user_message) -> str 的生成函式
                          （由呼叫端注入，與摘要引擎解耦）
+            extra_glossary_block: 會議模板專屬術語表區塊（v4.4.0；僅注入
+                         LLM 校正層，刻意不進 ASR hotwords 以免污染逐字稿快取）
         """
         report = CorrectionReport()
         if not transcript or not transcript.strip():
             return transcript, report
 
-        glossary_block = glossary_prompt_block()
+        glossary_block = "\n\n".join(
+            block for block in (glossary_prompt_block(), extra_glossary_block) if block
+        )
         segments = self._split_segments(transcript)
         report.segments_total = len(segments)
 

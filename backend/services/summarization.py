@@ -23,6 +23,7 @@ from backend.core.platform_config import (
     get_global_config,
     get_config_value,
 )
+from backend.core.templates import MeetingTemplate, get_template
 from backend.models.schemas import ProcessingMode
 
 
@@ -173,7 +174,8 @@ class SummarizationService:
         transcript: str,
         mode: ProcessingMode = ProcessingMode.LOCAL,
         user_prompt: Optional[str] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        template_id: str = "general",
     ) -> str:
         """
         生成會議摘要
@@ -183,14 +185,10 @@ class SummarizationService:
             mode: 處理模式（local/cloud）
             user_prompt: 已淘汰（保留以相容舊版本，但無作用）
             progress_callback: 進度回調函數
+            template_id: 會議模板 id（v4.4.0；預設 general 與舊行為一致）
 
         Returns:
             會議摘要（Markdown 格式）
-
-        v3.4.1 改進：
-        - 完全移除自訂格式功能
-        - 統一使用系統預設格式
-        - 提升本地模式輸出品質
         """
         transcript = transcript.strip()
         if not transcript:
@@ -198,18 +196,19 @@ class SummarizationService:
 
         self._emit_progress(progress_callback, 65.0, "生成摘要中...")
 
-        # 統一使用系統預設格式（自訂格式功能已移除）
-        system_prompt = settings.DEFAULT_SYSTEM_PROMPT
-        log.info("使用系統預設格式生成會議記錄")
+        # v4.4.0：格式由會議模板驅動（general＝原系統預設格式）
+        template = get_template(template_id)
+        system_prompt = template.resolve_system_prompt()
+        log.info(f"使用會議模板生成會議記錄: {template.id}（{template.display_name}）")
 
         if user_prompt:
             log.info("偵測到 user_prompt；摘要結構仍以系統格式為主，額外偏好將僅隨結果一併保存")
 
         try:
             if mode == ProcessingMode.CLOUD:
-                summary = await self._summarize_with_gemini(system_prompt, transcript, progress_callback)
+                summary = await self._summarize_with_gemini(system_prompt, transcript, progress_callback, template=template)
             else:
-                summary = await self._summarize_with_local_pipeline(transcript, system_prompt, progress_callback)
+                summary = await self._summarize_with_local_pipeline(transcript, system_prompt, progress_callback, template=template)
 
             self._emit_progress(progress_callback, 95.0, "摘要生成完成")
 
@@ -242,18 +241,33 @@ class SummarizationService:
         other_chars = max(len(text) - cjk_chars - latin_chars, 0)
         return max(1, cjk_chars + int(latin_words * 1.2) + other_chars // 4)
 
+    def _local_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
+        """本地萃取提示詞（共用基底＋模板增補；v4.4.0）。"""
+        extra = template.extraction_prompt_extra if template else ""
+        return self.LOCAL_EXTRACTION_PROMPT + extra
+
+    def _cloud_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
+        """雲端萃取提示詞（共用基底＋模板增補；v4.4.0）。"""
+        extra = template.extraction_prompt_extra if template else ""
+        return self.CLOUD_EXTRACTION_PROMPT + extra
+
     def _build_local_context_plan(
         self,
         transcript: str,
-        system_prompt: str
+        system_prompt: str,
+        template: Optional[MeetingTemplate] = None,
     ) -> LocalContextPlan:
-        """根據有效上下文視窗估算是否需要分塊。"""
+        """根據有效上下文視窗估算是否需要分塊。
+
+        P0-6 延伸（v4.4.0）：萃取 prompt 須以「模板增補後」的實際文字估算，
+        否則採購等較長模板會讓輸入超出 num_ctx 被 Ollama 靜默截斷。
+        """
         transcript_tokens = self._estimate_tokens(transcript)
         context_window = settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
         output_budget = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
         extraction_overhead = (
             self._estimate_tokens(system_prompt)
-            + self._estimate_tokens(self.LOCAL_EXTRACTION_PROMPT)
+            + self._estimate_tokens(self._local_extraction_prompt(template))
             + 250
         )
         chunk_input_budget = max(1200, context_window - output_budget - extraction_overhead)
@@ -267,6 +281,7 @@ class SummarizationService:
             self._estimate_tokens(system_prompt)
             + output_budget  # 補強輪會把當前摘要附進輸入，以輸出預算上限估計
             + 400  # 最終生成模板與問題清單
+            + (self._estimate_tokens(template.generation_message_extra) if template else 0)
         )
         notes_merge_budget = max(
             900,
@@ -373,46 +388,40 @@ class SummarizationService:
 
     # P1-8：欄位驗證改為容錯 regex（允許空格數量與全半形冒號差異），
     # 驗證「欄位存在性」而非字面完全一致；欄位標準化交由記錄級後處理。
-    _REQUIRED_SECTION_PATTERNS = [
-        ("會議名稱", re.compile(r"會議名稱\s*[:：]")),
-        ("會議時間", re.compile(r"會議時間\s*[:：]")),
-        ("會議地點", re.compile(r"會議地點\s*[:：]")),
-        ("主席", re.compile(r"主\s*席\s*[:：]")),
-        ("出席人員", re.compile(r"出席人員\s*[:：]")),
-        ("列席人員", re.compile(r"列席人員\s*[:：]")),
-        ("記錄", re.compile(r"記\s*錄\s*[:：]")),
-        ("一、報告事項", re.compile(r"一、\s*報告事項")),
-        ("二、討論事項", re.compile(r"二、\s*討論事項")),
-        ("案由", re.compile(r"案由\s*[:：]")),
-        ("說明", re.compile(r"說明\s*[:：]")),
-        ("各單位意見", re.compile(r"各單位意見")),
-        ("決議", re.compile(r"決議\s*[:：]")),
-        ("三、主席裁示事項", re.compile(r"三、\s*主席裁示事項")),
-    ]
+    # v4.4.0：驗證樣式改由會議模板驅動；本常數保留為 general 模板別名
+    # （測試與舊呼叫端相容）。
+    _REQUIRED_SECTION_PATTERNS = list(get_template("general").required_section_patterns)
 
     def _validate_summary_quality(
         self,
         summary: str,
         extracted_notes: str,
         min_chars: int = 250,
+        template: Optional[MeetingTemplate] = None,
     ) -> list[str]:
-        """針對最終摘要做結構與召回檢查。
+        """針對最終摘要做結構與召回檢查（v4.4.0 起依會議模板驅動）。
 
         min_chars 預設 250（防空輸出的底線）；雲端流程會依逐字稿規模
         傳入動態下限（v4.3.3 豐富度閘門），過薄的紀錄才會觸發補強輪。
         """
+        if template is None:
+            template = get_template(None)
+
         issues: list[str] = []
         cleaned = self._clean_ollama_output(summary)
 
-        for label, pattern in self._REQUIRED_SECTION_PATTERNS:
+        for label, pattern in template.required_section_patterns:
             if not pattern.search(cleaned):
                 issues.append(f"缺少區塊：{label}")
 
-        if not re.search(r"主辦單位\s*[:：]", cleaned):
-            issues.append("缺少主辦單位資訊")
+        for label, pattern in template.extra_field_patterns:
+            if not pattern.search(cleaned):
+                issues.append(f"缺少{label}資訊")
 
-        if not re.search(r"辦理期程\s*[:：]", cleaned):
-            issues.append("缺少辦理期程資訊")
+        # 機敏洩漏檢查（採購評選會等模板）：命中即要求重寫遮蔽
+        for label, pattern in template.forbidden_patterns:
+            if pattern.search(cleaned):
+                issues.append(f"疑似機敏資訊洩漏：{label}")
 
         if len(cleaned) < min_chars:
             issues.append(
@@ -552,7 +561,18 @@ class SummarizationService:
 
 請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。"""
 
-    def _build_summary_from_notes_message(self, extracted_notes: str) -> str:
+    @staticmethod
+    def _template_generation_extra(template: Optional[MeetingTemplate]) -> str:
+        """模板的生成階段增補要求（無模板或無增補時回空字串）。"""
+        if template and template.generation_message_extra:
+            return template.generation_message_extra
+        return ""
+
+    def _build_summary_from_notes_message(
+        self,
+        extracted_notes: str,
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
         """建立最終會議記錄生成訊息。"""
         return f"""請根據以下萃取筆記，輸出最終版本的會議記錄。
 
@@ -561,7 +581,7 @@ class SummarizationService:
 - 不要把多個不同待辦合併成單一籠統項目；可分列追蹤者請拆成多列
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
-- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
 
 萃取筆記：
 {extracted_notes}"""
@@ -570,7 +590,8 @@ class SummarizationService:
         self,
         current_summary: str,
         extracted_notes: str,
-        issues: list[str]
+        issues: list[str],
+        template: Optional[MeetingTemplate] = None,
     ) -> str:
         """建立摘要補強訊息。"""
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
@@ -588,9 +609,14 @@ class SummarizationService:
 額外要求：
 - 全文必須使用繁體中文（台灣用語）
 - 只能輸出最終 Markdown
-- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence"""
+- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence{self._template_generation_extra(template)}"""
 
-    def _build_cloud_summary_message(self, extracted_notes: str, transcript: str) -> str:
+    def _build_cloud_summary_message(
+        self,
+        extracted_notes: str,
+        transcript: str,
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
         """雲端最終生成訊息（v4.3.3）：筆記當涵蓋檢查表、逐字稿當細節來源。
 
         本地因 context 有限只能餵筆記；雲端長上下文沒有這個限制——
@@ -604,7 +630,7 @@ class SummarizationService:
 - 所有明確待辦都必須出現在待辦事項中；不要把多個不同待辦合併成單一籠統項目，可分列追蹤者請拆成多列
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
-- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
 
 萃取筆記：
 {extracted_notes}
@@ -618,13 +644,14 @@ class SummarizationService:
         extracted_notes: str,
         issues: list[str],
         transcript: str,
+        template: Optional[MeetingTemplate] = None,
     ) -> str:
         """雲端補強訊息（v4.3.3）：共用補強模板之外附上逐字稿。
 
         沒有逐字稿的補強只能就筆記改寫措辭；「內容過短」這類豐富度問題
         必須回到原文找細節才補得回來。
         """
-        base = self._build_refinement_message(current_summary, extracted_notes, issues)
+        base = self._build_refinement_message(current_summary, extracted_notes, issues, template=template)
         return f"""{base}
 
 原始逐字稿（補充細節時以此為準）：
@@ -783,11 +810,12 @@ class SummarizationService:
         self,
         transcript: str,
         system_prompt: str,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        template: Optional[MeetingTemplate] = None,
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
         engine = await self._select_local_engine()
-        plan = self._build_local_context_plan(transcript, system_prompt)
+        plan = self._build_local_context_plan(transcript, system_prompt, template=template)
         log.info(
             "本地摘要上下文規劃："
             f"estimated_tokens={plan.estimated_transcript_tokens}, "
@@ -811,7 +839,7 @@ class SummarizationService:
             self._emit_progress(progress_callback, progress, f"萃取逐字稿重點 {chunk_index}/{total_chunks}...")
             notes = await self._generate_with_local_engine(
                 engine,
-                self.LOCAL_EXTRACTION_PROMPT,
+                self._local_extraction_prompt(template),
                 self._build_chunk_extraction_message(chunk, chunk_index, total_chunks),
                 temperature=0.1,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
@@ -829,15 +857,15 @@ class SummarizationService:
         summary = await self._generate_with_local_engine(
             engine,
             system_prompt,
-            self._build_summary_from_notes_message(merged_notes),
+            self._build_summary_from_notes_message(merged_notes, template=template),
             temperature=0.2,
             num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
         )
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
-        summary = self._finalize_record_text(self._clean_ollama_output(summary))
+        summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
 
-        issues = self._validate_summary_quality(summary, merged_notes)
+        issues = self._validate_summary_quality(summary, merged_notes, template=template)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
@@ -845,12 +873,12 @@ class SummarizationService:
             summary = await self._generate_with_local_engine(
                 engine,
                 system_prompt,
-                self._build_refinement_message(summary, merged_notes, issues),
+                self._build_refinement_message(summary, merged_notes, issues, template=template),
                 temperature=0.15,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
             )
-            summary = self._finalize_record_text(self._clean_ollama_output(summary))
-            issues = self._validate_summary_quality(summary, merged_notes)
+            summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
+            issues = self._validate_summary_quality(summary, merged_notes, template=template)
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")
@@ -858,7 +886,7 @@ class SummarizationService:
         return summary
 
     @staticmethod
-    def _finalize_record_text(summary: str) -> str:
+    def _finalize_record_text(summary: str, template: Optional[MeetingTemplate] = None) -> str:
         """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。"""
         from backend.core.glossary import english_protected_terms
         from backend.core.text_postprocess import finalize_record
@@ -867,7 +895,7 @@ class SummarizationService:
             protected = english_protected_terms()
         except Exception:  # noqa: BLE001
             protected = set()
-        return finalize_record(summary, protected_terms=protected)
+        return finalize_record(summary, protected_terms=protected, template=template)
 
 
     async def generate_local(
@@ -1137,6 +1165,7 @@ class SummarizationService:
         self,
         transcript: str,
         progress_callback: Optional[callable] = None,
+        template: Optional[MeetingTemplate] = None,
     ) -> str:
         """雲端分段併發萃取（v4.3.3）。
 
@@ -1156,17 +1185,19 @@ class SummarizationService:
         semaphore = asyncio.Semaphore(max(1, settings.CLOUD_LLM_MAX_CONCURRENT_REQUESTS))
         completed_count = 0
 
+        extraction_prompt = self._cloud_extraction_prompt(template)
+
         async def extract_chunk(chunk_index: int, chunk: str) -> str:
             nonlocal completed_count
             async with semaphore:
                 message = self._build_chunk_extraction_message(chunk, chunk_index, total_chunks)
                 try:
-                    notes = await self._gemini_chat(self.CLOUD_EXTRACTION_PROMPT, message, 0.1)
+                    notes = await self._gemini_chat(extraction_prompt, message, 0.1)
                 except Exception as exc:  # noqa: BLE001 — 單次重試後仍失敗則向外拋出
                     log.warning(
                         "雲端萃取第 {}/{} 段失敗（{}），重試一次", chunk_index, total_chunks, exc
                     )
-                    notes = await self._gemini_chat(self.CLOUD_EXTRACTION_PROMPT, message, 0.1)
+                    notes = await self._gemini_chat(extraction_prompt, message, 0.1)
                 completed_count += 1
                 self._emit_progress(
                     progress_callback,
@@ -1193,6 +1224,7 @@ class SummarizationService:
         transcript: str,
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
+        template: Optional[MeetingTemplate] = None,
     ) -> str:
         """使用 Gemini API 雲端模式生成摘要（v4.3.3 分段萃取＋雙輸入生成）。
 
@@ -1206,7 +1238,7 @@ class SummarizationService:
         3. 驗證新增依逐字稿規模的動態長度下限——過薄輸出觸發補強而非靜默通過
         """
         # 第一段：分段結構化萃取（豐富度的結構保證）
-        notes = await self._extract_notes_with_gemini(transcript, progress_callback)
+        notes = await self._extract_notes_with_gemini(transcript, progress_callback, template=template)
 
         # 第二段：筆記＋逐字稿雙輸入生成正式紀錄
         self._emit_progress(progress_callback, 84.0, "整理最終會議記錄...")
@@ -1214,15 +1246,16 @@ class SummarizationService:
             self._clean_ollama_output(
                 await self._gemini_chat(
                     system_prompt,
-                    self._build_cloud_summary_message(notes, transcript),
+                    self._build_cloud_summary_message(notes, transcript, template=template),
                     temperature,
                     progress_callback,
                 )
-            )
+            ),
+            template=template,
         )
 
         min_chars = self._estimate_cloud_min_summary_chars(transcript)
-        issues = self._validate_summary_quality(summary, notes, min_chars=min_chars)
+        issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
@@ -1238,12 +1271,13 @@ class SummarizationService:
                 self._clean_ollama_output(
                     await self._gemini_chat(
                         system_prompt,
-                        self._build_cloud_refinement_message(summary, notes, issues, transcript),
+                        self._build_cloud_refinement_message(summary, notes, issues, transcript, template=template),
                         0.15,
                     )
-                )
+                ),
+                template=template,
             )
-            issues = self._validate_summary_quality(summary, notes, min_chars=min_chars)
+            issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
 
         if issues:
             log.warning(f"Gemini 摘要仍有待補強問題: {'; '.join(issues)}")

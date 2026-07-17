@@ -270,16 +270,88 @@ class TestUploadEndpoint:
         assert response.status_code == 413
         assert "檔案大小超過限制" in response.json()["detail"]
     
+    def test_upload_local_only_template_rejects_cloud(self, test_client, mock_services):
+        """採購評選會模板（local_only）＋雲端模式 → 400（v4.4.0 機敏防線）。"""
+        mock_services['file_manager'].validate_file.return_value = (True, "")
+        mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024))
+        mock_services['summarization_service'].check_gemini_available.return_value = True
+
+        files = {'file': ('meeting.mp3', b'fake audio', 'audio/mpeg')}
+        data = {'processing_mode': 'cloud', 'meeting_template': 'procurement_evaluation'}
+
+        response = test_client.post("/api/upload", files=files, data=data)
+
+        assert response.status_code == 400
+        assert "僅限本地模式" in response.json()["detail"]
+
+    def test_upload_unknown_template_rejected(self, test_client, mock_services):
+        """未知會議模板 → 400（v4.4.0）。"""
+        mock_services['file_manager'].validate_file.return_value = (True, "")
+        mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024))
+
+        files = {'file': ('meeting.mp3', b'fake audio', 'audio/mpeg')}
+        data = {'processing_mode': 'local', 'meeting_template': 'no_such_template'}
+
+        response = test_client.post("/api/upload", files=files, data=data)
+
+        assert response.status_code == 400
+        assert "無效的會議類型" in response.json()["detail"]
+
+    def test_upload_default_template_is_general(self, test_client, mock_services, sample_task_info):
+        """未帶 meeting_template 時預設 general（向下相容 v4.3.3 行為）。"""
+        mock_services['file_manager'].validate_file.return_value = (True, "")
+        mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024000))
+        mock_services['file_manager'].save_upload = AsyncMock(
+            return_value=("/tmp/test.mp3", "test_abc123.mp3", 1024000)
+        )
+        mock_services['task_queue'].add_task = AsyncMock(return_value=sample_task_info)
+
+        files = {'file': ('test_audio.mp3', b'test audio content', 'audio/mpeg')}
+        response = test_client.post("/api/upload", files=files, data={'processing_mode': 'local'})
+
+        assert response.status_code == 200
+        _, kwargs = mock_services['task_queue'].add_task.call_args
+        assert kwargs["template_id"] == "general"
+
+    def test_upload_procurement_local_mode_accepted(self, test_client, mock_services, sample_task_info):
+        """採購評選會模板＋本地模式 → 正常入列，template_id 正確傳遞。"""
+        mock_services['file_manager'].validate_file.return_value = (True, "")
+        mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024000))
+        mock_services['file_manager'].save_upload = AsyncMock(
+            return_value=("/tmp/test.mp3", "test_abc123.mp3", 1024000)
+        )
+        mock_services['task_queue'].add_task = AsyncMock(return_value=sample_task_info)
+
+        files = {'file': ('meeting.mp3', b'fake audio', 'audio/mpeg')}
+        data = {'processing_mode': 'local', 'meeting_template': 'procurement_evaluation'}
+        response = test_client.post("/api/upload", files=files, data=data)
+
+        assert response.status_code == 200
+        _, kwargs = mock_services['task_queue'].add_task.call_args
+        assert kwargs["template_id"] == "procurement_evaluation"
+
+    def test_config_exposes_meeting_templates(self, test_client, mock_services):
+        """/api/config 下發模板清單（前端選單資料來源，v4.4.0）。"""
+        response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["default_meeting_template"] == "general"
+        ids = [t["id"] for t in payload["meeting_templates"]]
+        assert "general" in ids and "procurement_evaluation" in ids
+        procurement = next(t for t in payload["meeting_templates"] if t["id"] == "procurement_evaluation")
+        assert procurement["local_only"] is True
+
     def test_upload_invalid_processing_mode(self, test_client, mock_services):
         """Test upload with invalid processing mode."""
         mock_services['file_manager'].validate_file.return_value = (True, "")
         mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024))
-        
+
         files = {'file': ('test.mp3', b'test content', 'audio/mpeg')}
         data = {'processing_mode': 'invalid_mode'}
-        
+
         response = test_client.post("/api/upload", files=files, data=data)
-        
+
         assert response.status_code == 400
         assert "無效的處理模式" in response.json()["detail"]
     
@@ -483,7 +555,7 @@ class TestTaskResultEndpoint:
         fake_module = types.ModuleType("backend.services.docx_converter")
         fake_converter = MagicMock()
 
-        def fake_convert(md_content, output_path):
+        def fake_convert(md_content, output_path, template_id="general"):
             assert "# 會議記錄" in md_content
             with open(output_path, 'wb') as f:
                 f.write(b"fake docx")
