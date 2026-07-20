@@ -228,13 +228,18 @@ async def get_task_transcript(task_id: str):
 
 
 @router.get("/tasks/{task_id}/result")
-async def get_task_result(task_id: str, format: str = "md"):
+async def get_task_result(task_id: str, format: str = "md", doc: str = "record"):
     """
     下載任務輸出的會議摘要檔。
 
     支援格式：
     - format=md（預設）：Markdown 格式
     - format=docx：Word 文件格式
+
+    文件種類（v4.5.0）：
+    - doc=record（預設）：會議紀錄本文
+    - doc=attachment：模板附件（如科務會議「列管資料」；僅支援 docx，
+      且該會議類型須定義附件，否則回傳 400）
 
     只有任務已完成才可下載；若尚未完成或檔案不存在，會回傳明確錯誤訊息。
     """
@@ -244,6 +249,18 @@ async def get_task_result(task_id: str, format: str = "md"):
         raise HTTPException(
             status_code=400,
             detail=f"不支援的格式: {format}，僅支援 md 或 docx"
+        )
+
+    doc = doc.lower()
+    if doc not in ("record", "attachment"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支援的文件種類: {doc}，僅支援 record 或 attachment"
+        )
+    if doc == "attachment" and format != "docx":
+        raise HTTPException(
+            status_code=400,
+            detail="附件僅支援 docx 格式"
         )
 
     task = task_queue.get_task(task_id)
@@ -269,6 +286,42 @@ async def get_task_result(task_id: str, format: str = "md"):
     # 下載檔名統一為「YYYYMMDDhhmmss_會議紀錄」（v4.2.3）；
     # 磁碟檔仍以 task_id 命名，保證唯一性與 docx 快取判斷不受影響
     download_stamp = task.created_at.strftime("%Y%m%d%H%M%S")
+
+    # 附件（v4.5.0）：由本文 md 確定性建構附件 md，再轉 docx（沿用 mtime 快取）
+    if doc == "attachment":
+        template = get_template(task.template_id)
+        if template.attachment is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"「{template.display_name}」無列管附件可下載"
+            )
+
+        attachment_docx_path = os.path.join(
+            settings.outputs_dir, f"{safe_base_name}_{task_id}_attachment.docx"
+        )
+        if not os.path.exists(attachment_docx_path) or (
+            os.path.getmtime(attachment_docx_path) < os.path.getmtime(result_path)
+        ):
+            try:
+                from backend.services.docx_converter import docx_converter
+                with open(result_path, 'r', encoding='utf-8') as f:
+                    record_md = f.read()
+                attachment_md = template.attachment.build_markdown(record_md)
+                docx_converter.convert(
+                    attachment_md, attachment_docx_path, template_id=task.template_id
+                )
+            except Exception as e:
+                log.error(f"[DOCX] 附件轉換失敗: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"附件轉換失敗: {str(e)}"
+                )
+
+        return FileResponse(
+            attachment_docx_path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=f"{download_stamp}_{template.attachment.download_name}.docx"
+        )
 
     # Markdown 格式（原始行為）
     if format == "md":

@@ -583,6 +583,108 @@ class TestTaskResultEndpoint:
                 if os.path.exists(path):
                     os.remove(path)
 
+    def test_get_result_invalid_doc_param(self, test_client, mock_services):
+        """doc 參數非法值 → 400（v4.5.0）。"""
+        response = test_client.get("/api/tasks/test1234/result?doc=banana")
+
+        assert response.status_code == 400
+        assert "不支援的文件種類" in response.json()["detail"]
+
+    def test_get_result_attachment_requires_docx(self, test_client, mock_services):
+        """附件僅支援 docx 格式（v4.5.0）。"""
+        response = test_client.get("/api/tasks/test1234/result?format=md&doc=attachment")
+
+        assert response.status_code == 400
+        assert "附件僅支援 docx" in response.json()["detail"]
+
+    def test_get_result_attachment_rejected_for_general(self, test_client, mock_services, sample_task_info):
+        """general 模板無附件定義 → 400（v4.5.0）。"""
+        sample_task_info.status = TaskStatus.COMPLETED
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write("# 會議記錄\n\n測試內容")
+
+        try:
+            response = test_client.get("/api/tasks/test1234/result?format=docx&doc=attachment")
+
+            assert response.status_code == 400
+            assert "無列管附件" in response.json()["detail"]
+        finally:
+            if os.path.exists(result_file):
+                os.remove(result_file)
+
+    def test_get_result_attachment_section_meeting_success(self, test_client, mock_services, sample_task_info):
+        """科務會議附件下載：由本文抽出列管資料再轉 docx（v4.5.0）。"""
+        sample_task_info.status = TaskStatus.COMPLETED
+        sample_task_info.template_id = "section_meeting"
+        mock_services['task_queue'].get_task.return_value = sample_task_info
+
+        from backend.core.config import settings
+        os.makedirs(settings.outputs_dir, exist_ok=True)
+        result_file = os.path.join(settings.outputs_dir, "test_audio_test1234.md")
+        attachment_file = os.path.join(settings.outputs_dir, "test_audio_test1234_attachment.docx")
+
+        record_md = (
+            "嘉義縣財政稅務局電子作業科115年7月份第1次科務會議紀錄\n"
+            "歷次科務會議決議事項繼續列管案件：無\n"
+            "115年7月份第1次科務會議決議事項辦理情形彙整表\n"
+            "決議事項：\n"
+            "| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 實地評核筆電準備，請資管股負責 | 資管股： |  |  |\n"
+            "一、科長轉知局務會議工作報告及相關注意事項：（略）\n"
+            "散會：上午11時58分"
+        )
+        with open(result_file, 'w', encoding='utf-8') as f:
+            f.write(record_md)
+
+        fake_module = types.ModuleType("backend.services.docx_converter")
+        fake_converter = MagicMock()
+
+        def fake_convert(md_content, output_path, template_id="general"):
+            # 傳入的必須是「抽出後的附件 md」而非本文 md
+            assert template_id == "section_meeting"
+            assert "歷次科務會議決議事項繼續列管案件" in md_content
+            assert "| 無 |  |  |  |" in md_content
+            assert "| 實地評核筆電準備，請資管股負責 | 資管股： |  |  |" in md_content
+            assert "一、科長轉知" not in md_content  # 條列內容不得混入附件
+            with open(output_path, 'wb') as f:
+                f.write(b"fake attachment docx")
+            return output_path
+
+        fake_converter.convert.side_effect = fake_convert
+        fake_module.docx_converter = fake_converter
+
+        try:
+            with patch.dict(sys.modules, {"backend.services.docx_converter": fake_module}):
+                response = test_client.get("/api/tasks/test1234/result?format=docx&doc=attachment")
+
+            assert response.status_code == 200
+            from urllib.parse import quote
+            stamp = sample_task_info.created_at.strftime("%Y%m%d%H%M%S")
+            expected = f"attachment; filename*=utf-8''{quote(f'{stamp}_科務會議列管資料.docx')}"
+            assert response.headers["content-disposition"] == expected
+            assert os.path.exists(attachment_file)
+            fake_converter.convert.assert_called_once()
+        finally:
+            for path in (result_file, attachment_file):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_config_exposes_attachment_info(self, test_client, mock_services):
+        """/api/config 模板清單含附件資訊（前端附件按鈕資料來源，v4.5.0）。"""
+        response = test_client.get("/api/config")
+
+        assert response.status_code == 200
+        templates = {t["id"]: t for t in response.json()["meeting_templates"]}
+        assert templates["section_meeting"]["has_attachment"] is True
+        assert templates["section_meeting"]["attachment_label"] == "列管資料"
+        assert templates["general"]["has_attachment"] is False
+
     def test_get_result_docx_conversion_failure(self, test_client, mock_services, sample_task_info):
         """Test DOCX conversion failure is reported as 500."""
         sample_task_info.status = TaskStatus.COMPLETED

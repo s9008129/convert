@@ -14,6 +14,7 @@ const state = {
     currentMode: 'local',
     currentTemplate: 'general',   // v4.4.0：目前選擇的會議類型模板
     templateLocalOnly: false,     // 目前模板是否強制本地（機敏會議）
+    templateInfoById: {},         // v4.5.0：模板公開資訊索引（含附件定義）
     taskId: null,
     websocket: null,
     config: null,
@@ -65,6 +66,8 @@ const elements = {
     resultSection: document.getElementById('resultSection'),
     downloadBtn: document.getElementById('downloadBtn'),
     downloadDocxBtn: document.getElementById('downloadDocxBtn'),
+    downloadAttachmentBtn: document.getElementById('downloadAttachmentBtn'),
+    downloadAttachmentLabel: document.getElementById('downloadAttachmentLabel'),
     downloadTranscriptBtn: document.getElementById('downloadTranscriptBtn'),
     resetBtn: document.getElementById('resetBtn'),
     
@@ -258,6 +261,12 @@ function renderTemplateOptions(templates) {
         id: 'general', display_name: '一般會議',
         description: '通用公務會議紀錄', local_only: false, is_default: true
     }];
+
+    // v4.5.0：建立模板資訊索引（附件按鈕顯示依據）
+    state.templateInfoById = {};
+    list.forEach(template => {
+        state.templateInfoById[template.id] = template;
+    });
 
     elements.templateSelector.replaceChildren();
     list.forEach(template => {
@@ -514,11 +523,53 @@ function timestampForFilename() {
 }
 
 function setDownloadButtonsEnabled(enabled) {
-    [elements.downloadBtn, elements.downloadDocxBtn, elements.downloadTranscriptBtn].forEach(button => {
+    [elements.downloadBtn, elements.downloadDocxBtn,
+     elements.downloadAttachmentBtn, elements.downloadTranscriptBtn].forEach(button => {
         if (button) {
             button.disabled = !enabled;
         }
     });
+}
+
+// v4.5.0：依任務所用模板決定附件按鈕的顯示與文字（如科務會議「列管資料」）
+function updateAttachmentButton(templateId) {
+    if (!elements.downloadAttachmentBtn) return;
+
+    const info = state.templateInfoById[templateId];
+    if (info && info.has_attachment) {
+        if (elements.downloadAttachmentLabel) {
+            elements.downloadAttachmentLabel.textContent =
+                `下載${info.attachment_label || '附件'} (Word)`;
+        }
+        elements.downloadAttachmentBtn.style.display = '';
+    } else {
+        elements.downloadAttachmentBtn.style.display = 'none';
+    }
+}
+
+async function downloadAttachmentResult() {
+    if (!state.taskId) return;
+
+    try {
+        const response = await fetch(`/api/tasks/${state.taskId}/result?format=docx&doc=attachment`);
+        if (!response.ok) {
+            throw new Error('附件下載失敗');
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filenameFromResponse(response, `${timestampForFilename()}_列管資料.docx`);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error('附件下載失敗:', error);
+        alert('列管資料下載失敗，請重試');
+    }
 }
 
 async function downloadResult() {
@@ -777,6 +828,24 @@ async function showResult(message) {
         elements.processCard.style.display = 'none';
     }
 
+    // v4.5.0：附件按鈕依「該任務實際使用的模板」決定，以任務狀態回傳的
+    // template_id 為準（避免上傳後切換選單造成錯配）；查詢失敗時退回目前選取值
+    let templateId = state.currentTemplate;
+    if (state.taskId) {
+        try {
+            const response = await fetch(`/api/tasks/${state.taskId}`);
+            if (response.ok) {
+                const task = await response.json();
+                if (task && task.template_id) {
+                    templateId = task.template_id;
+                }
+            }
+        } catch (error) {
+            console.warn('查詢任務模板失敗，改用目前選取的會議類型:', error);
+        }
+    }
+    updateAttachmentButton(templateId);
+
     setDownloadButtonsEnabled(Boolean(state.taskId));
 }
 
@@ -811,10 +880,13 @@ function resetUI() {
     if (elements.resultSection) {
         elements.resultSection.style.display = 'none';
     }
+    if (elements.downloadAttachmentBtn) {
+        elements.downloadAttachmentBtn.style.display = 'none';
+    }
     if (elements.errorSection) {
         elements.errorSection.style.display = 'none';
     }
-    
+
     // 重置進度
     if (elements.progressBar) {
         elements.progressBar.style.width = '0%';
@@ -901,6 +973,9 @@ function setupEventListeners() {
     }
     if (elements.downloadDocxBtn) {
         elements.downloadDocxBtn.addEventListener('click', downloadDocxResult);
+    }
+    if (elements.downloadAttachmentBtn) {
+        elements.downloadAttachmentBtn.addEventListener('click', downloadAttachmentResult);
     }
     if (elements.downloadTranscriptBtn) {
         elements.downloadTranscriptBtn.addEventListener('click', downloadTranscript);

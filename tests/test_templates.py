@@ -186,6 +186,165 @@ class TestProcurementTemplate:
         assert template_glossary_block("general") == ""
 
 
+# 近似官方範本的科務會議紀錄本文（v4.5.0 測試 fixture）
+_SECTION_SAMPLE_RECORD = """嘉義縣財政稅務局電子作業科115年7月份第1次科務會議紀錄
+時間：中華民國115年7月8日（星期三）上午11時20分
+地點：本局電子作業科
+主持人：何科長　紀錄：AI 會議助理
+出席人員：如後附簽到表
+歷次科務會議決議事項繼續列管案件：無
+115年7月份第1次科務會議決議事項辦理情形彙整表
+決議事項：
+| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |
+| --- | --- | --- | --- |
+| 實地評核當天會議室筆電準備，請資管股負責評估 | 資管股： |  |  |
+| 聯繫會議各縣市提案認領，請系統股彙整列管表 | 系統股： |  |  |
+一、科長轉知局務會議工作報告及相關注意事項：（略，請參考局務會議紀錄）
+二、科長指示及提醒事項：
+（一）稅務節活動配合事項。
+1. 全員於11時40分就座完畢，統一著局服。
+（二）晶質獎實地評核事宜。
+1. 7月14日本科先行演練，7月15日正式演練。
+散會：上午11時58分"""
+
+
+class TestSectionMeetingTemplate:
+    def setup_method(self):
+        self.template = get_template("section_meeting")
+
+    def test_cloud_allowed(self):
+        """科務會議屬內部行政會議，使用者確認允許雲端處理。"""
+        assert self.template.local_only is False
+
+    def test_result_title(self):
+        assert self.template.result_title == "# 科務會議紀錄"
+
+    def test_attachment_defined(self):
+        attachment = self.template.attachment
+        assert attachment is not None
+        assert attachment.label == "列管資料"
+        assert attachment.download_name == "科務會議列管資料"
+        assert callable(attachment.build_markdown)
+
+    def test_other_templates_have_no_attachment(self):
+        assert get_template("general").attachment is None
+        assert get_template("procurement_evaluation").attachment is None
+
+    def test_public_info_exposes_attachment(self):
+        info = {item["id"]: item for item in template_public_info()}
+        assert info["section_meeting"]["has_attachment"] is True
+        assert info["section_meeting"]["attachment_label"] == "列管資料"
+        assert info["general"]["has_attachment"] is False
+        assert info["general"]["attachment_label"] is None
+
+    def test_system_prompt_contains_key_rules(self):
+        prompt = self.template.resolve_system_prompt()
+        for keyword in (
+            "科務會議紀錄",
+            "決議事項辦理情形彙整表",
+            "案由及承辦單位",
+            "科長指示及提醒事項",
+            "歷次科務會議決議事項繼續列管案件",
+            "（待確認）",
+        ):
+            assert keyword in prompt, f"系統提示詞缺少關鍵規則: {keyword}"
+
+    def test_required_patterns_hit_official_sample(self):
+        """官方範本結構必須全數命中 required patterns（不誤報缺漏）。"""
+        misses = [
+            label
+            for label, pattern in self.template.required_section_patterns
+            if not pattern.search(_SECTION_SAMPLE_RECORD)
+        ]
+        assert not misses, f"官方範本結構未命中: {misses}"
+
+    def test_ensure_record_structure_builds_skeleton(self):
+        from backend.core.text_postprocess import ensure_record_structure
+
+        result = ensure_record_structure("", template=self.template)
+        assert "科務會議紀錄" in result
+        assert "時間：（待確認）" in result
+        assert "| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |" in result
+        assert "一、科長轉知局務會議工作報告及相關注意事項：" in result
+        assert "二、科長指示及提醒事項：" in result
+        assert "散會：（待確認）" in result
+
+    def test_ensure_record_structure_keeps_complete_record(self):
+        from backend.core.text_postprocess import ensure_record_structure
+
+        assert ensure_record_structure(
+            _SECTION_SAMPLE_RECORD, template=self.template
+        ) == _SECTION_SAMPLE_RECORD
+
+    def test_docx_section_pattern(self):
+        pattern = self.template.docx_section_pattern
+        assert pattern.match("一、科長轉知局務會議工作報告及相關注意事項：")
+        assert pattern.match("二、科長指示及提醒事項：")
+        assert not pattern.match("（一）稅務節活動配合事項。")
+
+    def test_docx_label_pattern(self):
+        pattern = self.template.docx_label_pattern
+        assert pattern.match("時間：中華民國115年7月8日")
+        assert pattern.match("散會：上午11時58分")
+        assert pattern.match("歷次科務會議決議事項繼續列管案件：無")
+
+    def test_glossary_block_contains_corrections(self):
+        block = template_glossary_block("section_meeting")
+        assert "列管" in block
+        assert "課務會議 → 科務會議" in block
+
+
+class TestTrackingAttachmentBuilder:
+    def setup_method(self):
+        from backend.core.prompt_templates.section_meeting import build_tracking_attachment
+
+        self.build = build_tracking_attachment
+
+    def test_inline_value_becomes_single_row_table(self):
+        """「歷次…：無」行內值須組成單列表格，不得誤抓本次彙整表。"""
+        attachment = self.build(_SECTION_SAMPLE_RECORD)
+        previous_part = attachment.split("科務會議決議事項辦理情形彙整表")[0]
+        assert "| 無 |  |  |  |" in previous_part
+        assert "資管股" not in previous_part  # 本次彙整表內容不得混入歷次段
+
+    def test_summary_table_extracted_with_title(self):
+        attachment = self.build(_SECTION_SAMPLE_RECORD)
+        assert "115年7月份第1次科務會議決議事項辦理情形彙整表" in attachment
+        assert "決議事項：" in attachment
+        assert "| 實地評核當天會議室筆電準備，請資管股負責評估 | 資管股： |  |  |" in attachment
+        assert "| 聯繫會議各縣市提案認領，請系統股彙整列管表 | 系統股： |  |  |" in attachment
+
+    def test_previous_tracking_table_extracted(self):
+        record = (
+            "標題科務會議紀錄\n"
+            "歷次科務會議決議事項繼續列管案件：\n\n"
+            "| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 前次交辦之AI知識庫盤點 | 資管股： |  | V |\n\n"
+            "115年8月份第1次科務會議決議事項辦理情形彙整表\n"
+            "決議事項：\n"
+            "| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 新交辦事項 | 系統股： |  |  |"
+        )
+        attachment = self.build(record)
+        previous_part = attachment.split("科務會議決議事項辦理情形彙整表")[0]
+        assert "| 前次交辦之AI知識庫盤點 | 資管股： |  | V |" in previous_part
+        assert "| 新交辦事項 | 系統股： |  |  |" in attachment
+
+    def test_missing_sections_fall_back_to_skeleton(self):
+        """兩段皆缺時補（待確認）骨架且不拋例外（附件不得阻斷本文下載）。"""
+        attachment = self.build("完全無關的內容")
+        assert "歷次科務會議決議事項繼續列管案件" in attachment
+        assert "科務會議決議事項辦理情形彙整表" in attachment
+        assert "（待確認）" in attachment
+
+    def test_never_raises_on_empty_input(self):
+        for value in ("", None):
+            attachment = self.build(value)
+            assert "歷次科務會議決議事項繼續列管案件" in attachment
+
+
 class TestValidationWithTemplate:
     def test_procurement_validation_flags_missing_qa_and_leakage(self):
         from backend.services.summarization import SummarizationService

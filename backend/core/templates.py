@@ -20,9 +20,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Optional
+from typing import Callable, Optional
 
-from backend.core.prompt_templates import procurement
+from backend.core.prompt_templates import procurement, section_meeting
 
 # 與 text_postprocess.MISSING_TEXT 同值；為避免匯入循環在此重複定義，
 # 由 tests/test_templates.py 驗證兩者一致。
@@ -47,6 +47,19 @@ class RecordSectionSpec:
     presence_pattern: re.Pattern
     skeleton_lines: tuple[str, ...]
     subfields: tuple[tuple[re.Pattern, tuple[str, ...]], ...] = ()
+
+
+@dataclass(frozen=True)
+class AttachmentSpec:
+    """模板附件定義（v4.5.0）：由紀錄本文 Markdown 確定性建構第二份文件。
+
+    build_markdown 為純文字轉換函式（本文 md → 附件 md），
+    不得依賴 LLM 二次生成，以保證本文與附件內容一致。
+    """
+
+    label: str  # 前端按鈕文字（如「列管資料」）
+    download_name: str  # 下載檔名主體（如「科務會議列管資料」）
+    build_markdown: Callable[[str], str]
 
 
 @dataclass(frozen=True)
@@ -81,6 +94,8 @@ class MeetingTemplate:
     glossary_terms: tuple[str, ...] = ()
     glossary_corrections: tuple[tuple[str, str], ...] = ()
     result_title: str = "# 會議紀錄"
+    # 附件輸出（v4.5.0）：None 表示此會議類型無附件
+    attachment: Optional[AttachmentSpec] = None
 
     def resolve_system_prompt(self) -> str:
         """取得系統提示詞；general 延遲讀取設定值，env 覆寫仍生效。"""
@@ -274,9 +289,94 @@ _PROCUREMENT_TEMPLATE = MeetingTemplate(
 )
 
 
+# ---------------------------------------------------------------------------
+# section_meeting：科務會議（科室內部會議；含決議事項彙整表與列管資料附件）
+# 格式依據使用者提供之官方範本（115年7月份第1次科務會議紀錄／列管資料）。
+# ---------------------------------------------------------------------------
+
+_SECTION_MEETING_TEMPLATE = MeetingTemplate(
+    id="section_meeting",
+    display_name="科務會議",
+    description="科室內部科務會議紀錄（含決議事項辦理情形彙整表與列管資料附件）",
+    local_only=False,
+    system_prompt=section_meeting.SECTION_MEETING_SYSTEM_PROMPT,
+    extraction_prompt_extra=section_meeting.SECTION_MEETING_EXTRACTION_EXTRA,
+    generation_message_extra=section_meeting.SECTION_MEETING_GENERATION_EXTRA,
+    # 驗證樣式只留關鍵結構（過嚴會讓本地模型補強輪耗盡）
+    required_section_patterns=(
+        ("紀錄標題（科務會議）", re.compile(r"科務會議紀錄")),
+        ("時間", re.compile(r"時間\s*[:：]")),
+        ("主持人", re.compile(r"主持人\s*[:：]")),
+        ("決議事項彙整表（表頭）", re.compile(r"案由及承辦單位")),
+        ("科長指示及提醒事項", re.compile(r"指示及提醒")),
+        ("散會", re.compile(r"散會\s*[:：]")),
+    ),
+    forbidden_patterns=(),
+    record_header_fields=(
+        RecordFieldSpec(
+            f"{_MISSING_CONFIRM}{_MISSING_CONFIRM}年{_MISSING_CONFIRM}月份第{_MISSING_CONFIRM}次科務會議紀錄",
+            re.compile(r"科務會議紀錄"),
+        ),
+        RecordFieldSpec(f"時間：{_MISSING_CONFIRM}", re.compile(r"^時間\s*[:：]", re.MULTILINE)),
+        RecordFieldSpec(f"地點：{_MISSING_CONFIRM}", re.compile(r"^地點\s*[:：]", re.MULTILINE)),
+        RecordFieldSpec(
+            f"主持人：{_MISSING_CONFIRM}　紀錄：AI 會議助理",
+            re.compile(r"^主持人\s*[:：]", re.MULTILINE),
+        ),
+        RecordFieldSpec("出席人員：如後附簽到表", re.compile(r"^出席人員\s*[:：]", re.MULTILINE)),
+        RecordFieldSpec(
+            f"歷次科務會議決議事項繼續列管案件：{_MISSING_CONFIRM}",
+            re.compile(r"歷次.{0,14}列管案件"),
+        ),
+    ),
+    record_sections=(
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"決議事項辦理情形彙整表|案由及承辦單位"),
+            skeleton_lines=(
+                f"{_MISSING_CONFIRM}科務會議決議事項辦理情形彙整表",
+                "決議事項：",
+                section_meeting.TRACKING_TABLE_HEADER,
+                section_meeting.TRACKING_TABLE_SEPARATOR,
+                f"| {_MISSING_CONFIRM} | {_MISSING_CONFIRM}： |  |  |",
+            ),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"科長轉知"),
+            skeleton_lines=(
+                f"一、科長轉知局務會議工作報告及相關注意事項：{_MISSING_CONFIRM}",
+            ),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"指示及提醒"),
+            skeleton_lines=(
+                "二、科長指示及提醒事項：",
+                f"（一）{_MISSING_CONFIRM}",
+            ),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"散會\s*[:：]"),
+            skeleton_lines=(f"散會：{_MISSING_CONFIRM}",),
+        ),
+    ),
+    docx_section_pattern=re.compile(r"^[一二三四五六七八九十]+、"),
+    docx_label_pattern=re.compile(
+        r"^(時間|地點|主持人|出席人員|紀\s*錄|散會|決議事項|"
+        r"歷次科務會議決議事項繼續列管案件)\s*([：:])\s*(.*)$"
+    ),
+    glossary_terms=section_meeting.SECTION_MEETING_GLOSSARY_TERMS,
+    glossary_corrections=section_meeting.SECTION_MEETING_GLOSSARY_CORRECTIONS,
+    result_title="# 科務會議紀錄",
+    attachment=AttachmentSpec(
+        label="列管資料",
+        download_name="科務會議列管資料",
+        build_markdown=section_meeting.build_tracking_attachment,
+    ),
+)
+
+
 _TEMPLATES: dict[str, MeetingTemplate] = {
     template.id: template
-    for template in (_GENERAL_TEMPLATE, _PROCUREMENT_TEMPLATE)
+    for template in (_GENERAL_TEMPLATE, _PROCUREMENT_TEMPLATE, _SECTION_MEETING_TEMPLATE)
 }
 
 
@@ -304,6 +404,10 @@ def template_public_info() -> list[dict]:
             "description": template.description,
             "local_only": template.local_only,
             "is_default": template.id == GENERAL_TEMPLATE_ID,
+            "has_attachment": template.attachment is not None,
+            "attachment_label": (
+                template.attachment.label if template.attachment else None
+            ),
         }
         for template in list_templates()
     ]
