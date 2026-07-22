@@ -77,7 +77,7 @@ class Settings(BaseSettings):
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description="Gemini API 端點"
     )
-    GEMINI_MODEL: str = Field(default="gemini-3.1-flash-lite", description="Gemini 模型名稱")
+    GEMINI_MODEL: str = Field(default="gemini-3.5-flash-lite", description="Gemini 模型名稱")
     CLOUD_LLM_CHUNK_TOKENS: int = Field(
         default=3200,
         description="雲端萃取分塊大小（tokens）；沿用地端實證的分塊密度——分段萃取是筆記豐富度的結構保證（v4.3.3）"

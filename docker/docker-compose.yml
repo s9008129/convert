@@ -70,7 +70,9 @@ services:
       # 雲端模式設定（Gemini API）
       # ========================================
       - GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-      - GEMINI_MODEL=gemini-3.5-flash-lite
+      # GEMINI_MODEL 不在此寫死：由 .env（env_file）或後端預設值控制。
+      # 教訓（v4.5.1）：environment 優先權高於 env_file，寫死會讓 .env 的
+      # 模型設定永遠無效；GPU 版 compose 亦同此原則（從未寫死）。
       # GEMINI_API_KEY 從 .env 檔案讀取
       
       # ========================================

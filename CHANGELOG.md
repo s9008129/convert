@@ -1,5 +1,37 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.5.1] - 2026-07-22
+
+### 🎯 主題：雲端模型升級 gemini-3.5-flash-lite ＋ 環境變數生效機制根治
+
+### 🔧 變更
+
+- **雲端模型升級**：預設 Gemini 模型 `gemini-3.1-flash-lite` → `gemini-3.5-flash-lite`
+  （已於開發機以 OpenAI 相容端點實測連通，HTTP 200）。
+  同步更新 `backend/core/config.py`、`.env.example`、`config.macos.yaml`、
+  README、系統架構書、部署更新手冊。
+
+### 🐛 根因修復（正式機模型不生效問題）
+
+- **問題現象**：正式機（GPU 版）依手冊 `git pull` → `restart` 後，
+  `/api/config` 的 `cloud_llm_model` 仍回報舊模型。
+- **根因鏈**（三層疊加）：
+  1. GPU 版 compose 未定義 `GEMINI_MODEL`，值僅來自 `env_file: ../.env`
+     或程式內預設值；而程式內預設值仍是舊模型。
+  2. `env_file` 內容在容器**建立**時凍結，`docker compose restart`
+     不會重讀 `.env` → 手冊「步驟四改 `.env` ＋ 步驟六 restart」的
+     組合對 `.env` 變更從未真正生效。
+  3. 標準版 `docker-compose.yml` 在 `environment` 寫死 `GEMINI_MODEL`，
+     優先權高於 `env_file`，堵死 `.env` 覆蓋能力。
+- **修法**：
+  1. `config.py` 預設值升級（backend/ 為 volume 掛載，`git pull` ＋
+     `restart` 即生效，作為無 `.env` 設定時的正確回退）。
+  2. 標準版 compose 移除 `environment` 寫死的 `GEMINI_MODEL`，
+     統一「`.env` > 程式預設值」的單一生效路徑。
+  3. 部署手冊新增 v4.5.1 捷徑與「`env_file` 凍結陷阱」說明：
+     凡動過 `.env` 一律改用 `up -d`（秒級重建容器、零下載），
+     未動 `.env` 照舊 `restart`。
+
 ## [v4.5.0] - 2026-07-20
 
 ### 🎯 主題：「科務會議」專屬模板＋列管資料附件輸出（模板系統首次擴充）

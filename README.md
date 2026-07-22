@@ -103,7 +103,7 @@ DOCX 公文層次與領域術語表。v4.5.0 依使用者提供的真實科室�
 
 - **後端**：FastAPI（提供網頁與 RESTful API，預設埠 `9527`）。
 - **語音辨識**：`MediaTek-Research/Breeze-ASR-26`（transformers 路徑）／`faster-whisper` Breeze-ASR-25（可依環境切換）。
-- **語言模型**：本地 Ollama（預設 `gemma4:31b`）／LM Studio，或雲端 Gemini（`gemini-3.1-flash-lite`）。
+- **語言模型**：本地 Ollama（預設 `gemma4:31b`）／LM Studio，或雲端 Gemini（`gemini-3.5-flash-lite`）。
 - **輸出**：Markdown 與 Word（DOCX，相容 Office 2024 / M365），依會議類型另有列管資料等附件。
 - **部署**：Docker（GPU／標準兩種 compose，程式碼 volume 掛載、零 rebuild）或原生服務（`uv run` / `start_service.sh`）。
 
@@ -305,7 +305,7 @@ ws.onmessage = (event) => {
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 端點（Docker 內為 `host.docker.internal`） |
 | `LOCAL_LLM_MODEL` | `gemma4:31b` | 本地 LLM 模型 |
 | `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio 端點（OpenAI 相容 API） |
-| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | 雲端 LLM 模型 |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | 雲端 LLM 模型 |
 | `WHISPER_MODEL` | `MediaTek-Research/Breeze-ASR-26` | Whisper / ASR 模型名稱 |
 | `ENABLE_TRANSCRIPT_CORRECTION` | `true` | 是否啟用語意校正（詞彙表＋LLM＋同音閘門） |
 
