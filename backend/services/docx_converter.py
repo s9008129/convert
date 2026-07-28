@@ -41,6 +41,13 @@ RECORD_SECTION_PATTERN = get_template("general").docx_section_pattern
 RECORD_LABEL_PATTERN = get_template("general").docx_label_pattern
 
 
+class _FormFieldMap(dict):
+    """表單欄位插值容錯 map：缺鍵回（待確認），避免 KeyError 觸發整體退回。"""
+
+    def __missing__(self, key):
+        return "（待確認）"
+
+
 class MarkdownToDocxConverter:
     """
     將會議紀錄 Markdown 轉換為 Word (.docx) 文件。
@@ -73,7 +80,21 @@ class MarkdownToDocxConverter:
         template = get_template(template_id)
         doc = Document()
         self._setup_document_styles(doc)
-        self._parse_and_build(doc, md_content, template)
+
+        # 表單式版面（v4.6.0）：模板宣告 form_layout 且本文命中適用樣式
+        # 才走表單渲染；未命中（如摘要失敗 result 為逐字稿）或渲染失敗
+        # 一律退回一般渲染，convert 永不因表單版面拋例外。
+        layout = template.form_layout
+        if layout is not None and layout.applicability_pattern.search(md_content):
+            try:
+                self._build_form_document(doc, md_content, layout, template)
+            except Exception as e:  # noqa: BLE001 — 表單版面問題不得阻斷下載
+                log.error(f"[DOCX] 表單版面渲染失敗，退回一般渲染: {e}")
+                doc = Document()
+                self._setup_document_styles(doc)
+                self._parse_and_build(doc, md_content, template)
+        else:
+            self._parse_and_build(doc, md_content, template)
         doc.save(output_path)
 
         log.info(f"[DOCX] 轉換完成: {output_path}")
@@ -219,6 +240,134 @@ class MarkdownToDocxConverter:
         # 迴圈結束後，檢查是否有未完成的表格
         if table_rows:
             self._add_table(doc, table_rows)
+
+    # ------------------------------------------------------------------
+    # 表單式版面渲染（v4.6.0；依 FormLayoutSpec 忠實還原官方會議記錄表）
+    # ------------------------------------------------------------------
+
+    def _build_form_document(self, doc: Document, md_content: str, layout, template):
+        """依 FormLayoutSpec 渲染表單式文件：開頭段落＋各表單表格＋附錄尾段。"""
+        fields = layout.extract_fields(md_content)
+        if not isinstance(fields, dict):
+            fields = {}
+
+        for para_spec in layout.intro_paragraphs:
+            self._add_form_intro_paragraph(doc, para_spec, fields)
+
+        for table_idx, table_spec in enumerate(layout.tables):
+            if table_idx > 0:
+                doc.add_paragraph()  # 表格間隔（照範本：主表格與簽到表間空一段）
+            self._add_form_table(doc, table_spec, fields)
+
+        # 本文水平線之後的附錄（原始逐字稿等）以一般解析續渲染，不遺失內容
+        lines = md_content.split("\n")
+        for idx, line in enumerate(lines):
+            if line.strip() in ("---", "***", "___"):
+                appendix = "\n".join(lines[idx:])
+                if appendix.strip():
+                    doc.add_paragraph()
+                    self._parse_and_build(doc, appendix, template)
+                break
+
+    def _add_form_intro_paragraph(self, doc: Document, para_spec, fields: dict):
+        """表單開頭段落：text_template 以欄位插值（缺鍵代（待確認））。"""
+        safe_fields = _FormFieldMap(fields)
+        text = para_spec.text_template.format_map(safe_fields)
+        para = doc.add_paragraph()
+        if para_spec.align_center:
+            para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        run = para.add_run(text)
+        run.bold = para_spec.bold
+        run.font.size = Pt(para_spec.font_size_pt)
+        if para_spec.bold:
+            run.font.name = FONT_HEADING
+            run.font.element.rPr.rFonts.set(qn('w:eastAsia'), FONT_HEADING)
+        else:
+            self._set_run_font(run)
+
+    def _add_form_table(self, doc: Document, table_spec, fields: dict):
+        """表單表格：固定欄格線、XML 框線、依 span 水平合併、簽名列最小高。"""
+        num_cols = len(table_spec.column_widths_cm)
+        table = doc.add_table(rows=len(table_spec.rows), cols=num_cols)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        self._set_table_borders(table)
+        self._set_form_table_widths(table, table_spec.column_widths_cm)
+
+        for row_idx, row_spec in enumerate(table_spec.rows):
+            row = table.rows[row_idx]
+            if row_spec.min_height_cm > 0:
+                self._set_row_min_height(row, row_spec.min_height_cm)
+            col = 0
+            for cell_spec in row_spec.cells:
+                cell = row.cells[col]
+                if cell_spec.span > 1:
+                    cell = cell.merge(row.cells[col + cell_spec.span - 1])
+                self._fill_form_cell(cell, cell_spec, fields)
+                col += cell_spec.span
+
+    def _set_form_table_widths(self, table, column_widths_cm):
+        """表單表格採固定版面（tblLayout fixed）與明確欄寬，確保 Word 不自動調欄。"""
+        tbl = table._tbl
+        tbl_pr = tbl.tblPr
+        if tbl_pr is None:
+            tbl_pr = parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+            tbl.insert(0, tbl_pr)
+
+        for existing in tbl_pr.findall(qn('w:tblW')):
+            tbl_pr.remove(existing)
+        for existing in tbl_pr.findall(qn('w:tblLayout')):
+            tbl_pr.remove(existing)
+
+        total_dxa = int(sum(column_widths_cm) * 567)  # 1cm ≈ 567 twips
+        tbl_pr.append(parse_xml(f'<w:tblW {nsdecls("w")} w:type="dxa" w:w="{total_dxa}"/>'))
+        tbl_pr.append(parse_xml(f'<w:tblLayout {nsdecls("w")} w:type="fixed"/>'))
+
+        for idx, width_cm in enumerate(column_widths_cm):
+            table.columns[idx].width = Cm(width_cm)
+
+    def _set_row_min_height(self, row, min_height_cm: float):
+        """設定表格列最小高度（簽名空列保留書寫空間）。"""
+        tr_pr = row._tr.get_or_add_trPr()
+        height_dxa = int(min_height_cm * 567)
+        tr_pr.append(
+            parse_xml(f'<w:trHeight {nsdecls("w")} w:val="{height_dxa}" w:hRule="atLeast"/>')
+        )
+
+    def _fill_form_cell(self, cell, cell_spec, fields: dict):
+        """填入儲存格內容：標籤加粗、多行欄位一行一段、多區塊間插空段。"""
+        # 先展開為（標籤, 內文）段落序列，再一次寫入儲存格
+        paragraph_plan: list[tuple[str, str]] = []
+        for block_idx, block in enumerate(cell_spec.blocks):
+            if block_idx > 0:
+                paragraph_plan.append(("", ""))  # 區塊間空段（決議事項／臨時動議）
+            value = ""
+            if block.field_key:
+                value = str(fields.get(block.field_key) or "").strip()
+                if not value:
+                    value = "（待確認）"
+            value_lines = value.split("\n") if value else []
+            if block.label:
+                if block.label_own_line or not value_lines:
+                    paragraph_plan.append((block.label, ""))
+                else:
+                    paragraph_plan.append((block.label, value_lines.pop(0)))
+            for line in value_lines:
+                paragraph_plan.append(("", line))
+
+        for para_idx, (label, text) in enumerate(paragraph_plan):
+            para = cell.paragraphs[0] if para_idx == 0 else cell.add_paragraph()
+            if label:
+                label_run = para.add_run(label)
+                label_run.bold = True
+                self._set_run_font(label_run)
+            if text:
+                text_run = para.add_run(text)
+                self._set_run_font(text_run)
+            para.paragraph_format.space_before = Pt(2)
+            para.paragraph_format.space_after = Pt(2)
+            para.paragraph_format.line_spacing = 1.15
+            if cell_spec.align_center:
+                para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
 
     def _add_heading(self, doc: Document, text: str, level: int):
         """新增標題。"""

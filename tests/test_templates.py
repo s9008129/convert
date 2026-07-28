@@ -345,6 +345,190 @@ class TestTrackingAttachmentBuilder:
             assert "歷次科務會議決議事項繼續列管案件" in attachment
 
 
+# 近似官方範本的 ISMS 月工作會議紀錄本文（v4.6.0 測試 fixture）
+_ISMS_SAMPLE_RECORD = """機關名稱：嘉義縣財政稅務局
+專案名稱：嘉義縣財政稅務局115年度資通安全管理與個人資料保護制度整合委外維護案
+會議議題：嘉義縣財政稅務局115年度資通安全管理與個人資料保護制度整合委外維護案
+7月工作執行報告
+地點：電子作業科會議室
+主席：何科長
+日期：115.07.28（二）
+記錄：龔君
+機關單位：財政稅務局電子作業科
+廠商單位：天雷科技有限公司
+參加人員：
+嘉義縣財政稅務局：陳股長、王管理師及李助理稅務員
+駐點工程師：張工程師
+天雷科技顧問：龔君
+內容：
+一、天雷科技有限公司針對7月份工作進行說明。
+二、天雷科技有限公司針對8月份工作安排說明。
+追蹤事項：
+無
+決議事項：
+一、與AI智慧分文之承辦人員討論「人工智慧應用風險處理計畫表」規劃改善事項及預計完成時間。
+二、房屋稅清查所識別之人工智慧應用風險，決議接受該風險。
+三、內部稽核時間為9月7日；外部驗證時間為10月14日。
+四、下次工作會議為8月20日上午10:00。
+臨時動議：
+無。"""
+
+
+class TestIsmsMonthlyTemplate:
+    def setup_method(self):
+        self.template = get_template("isms_monthly")
+
+    def test_cloud_allowed(self):
+        """ISMS 月工作會議有外部廠商顧問參與，使用者確認允許雲端處理。"""
+        assert self.template.local_only is False
+
+    def test_result_title(self):
+        assert self.template.result_title == "# ISMS月工作會議紀錄"
+
+    def test_no_attachment_and_public_info(self):
+        assert self.template.attachment is None
+        info = {item["id"]: item for item in template_public_info()}
+        assert "isms_monthly" in info
+        assert info["isms_monthly"]["has_attachment"] is False
+        assert info["isms_monthly"]["local_only"] is False
+
+    def test_system_prompt_contains_key_rules(self):
+        prompt = self.template.resolve_system_prompt()
+        for keyword in (
+            "會議記錄表",
+            "機關名稱",
+            "專案名稱",
+            "參加人員",
+            "追蹤事項",
+            "決議事項",
+            "臨時動議",
+            "（待確認）",
+            "115.07.28",
+        ):
+            assert keyword in prompt, f"系統提示詞缺少關鍵規則: {keyword}"
+
+    def test_required_patterns_hit_official_sample(self):
+        """官方範本結構必須全數命中 required patterns（不誤報缺漏）。"""
+        misses = [
+            label
+            for label, pattern in self.template.required_section_patterns
+            if not pattern.search(_ISMS_SAMPLE_RECORD)
+        ]
+        assert not misses, f"官方範本結構未命中: {misses}"
+
+    def test_ensure_record_structure_builds_skeleton(self):
+        from backend.core.text_postprocess import ensure_record_structure
+
+        result = ensure_record_structure("", template=self.template)
+        for line in (
+            "機關名稱：（待確認）",
+            "專案名稱：（待確認）",
+            "日期：（待確認）",
+            "廠商單位：（待確認）",
+            "參加人員：",
+            "內容：",
+            "追蹤事項：",
+            "決議事項：",
+            "臨時動議：",
+        ):
+            assert line in result, f"骨架缺少欄位: {line}"
+
+    def test_ensure_record_structure_keeps_complete_record(self):
+        from backend.core.text_postprocess import ensure_record_structure
+
+        assert ensure_record_structure(
+            _ISMS_SAMPLE_RECORD, template=self.template
+        ) == _ISMS_SAMPLE_RECORD
+
+    def test_form_layout_defined(self):
+        layout = self.template.form_layout
+        assert layout is not None
+        assert len(layout.tables) == 2  # 主表格＋簽到表
+        assert callable(layout.extract_fields)
+        assert layout.applicability_pattern.search(_ISMS_SAMPLE_RECORD)
+
+    def test_other_templates_have_no_form_layout(self):
+        for template_id in ("general", "procurement_evaluation", "section_meeting"):
+            assert get_template(template_id).form_layout is None
+
+    def test_docx_label_pattern_covers_form_labels(self):
+        pattern = self.template.docx_label_pattern
+        for line in (
+            "機關名稱：嘉義縣財政稅務局",
+            "地點：電子作業科會議室",
+            "日期：115.07.28（二）",
+            "決議事項：",
+            "臨時動議：無。",
+        ):
+            assert pattern.match(line), f"欄位標籤未被辨識: {line}"
+
+    def test_glossary_block_contains_corrections(self):
+        block = template_glossary_block("isms_monthly")
+        assert "風險評鑑" in block
+        assert "風險平鑑 → 風險評鑑" in block
+
+
+class TestIsmsFormFieldExtraction:
+    def setup_method(self):
+        from backend.core.prompt_templates.isms_meeting import extract_form_fields
+
+        self.extract = extract_form_fields
+
+    def test_all_keys_extracted_from_sample(self):
+        from backend.core.prompt_templates.isms_meeting import ISMS_FORM_FIELD_KEYS
+
+        fields = self.extract(_ISMS_SAMPLE_RECORD)
+        assert set(fields) == set(ISMS_FORM_FIELD_KEYS)
+        assert fields["機關名稱"] == "嘉義縣財政稅務局"
+        assert fields["地點"] == "電子作業科會議室"
+        assert fields["日期"] == "115.07.28（二）"
+        assert fields["機關單位"] == "財政稅務局電子作業科"
+        assert fields["廠商單位"] == "天雷科技有限公司"
+        assert fields["追蹤事項"] == "無"
+        assert fields["臨時動議"] == "無。"
+
+    def test_multiline_blocks_preserved(self):
+        fields = self.extract(_ISMS_SAMPLE_RECORD)
+        assert fields["會議議題"].endswith("7月工作執行報告")
+        assert fields["參加人員"].count("\n") == 2  # 機關人員／駐點工程師／廠商顧問三行
+        decisions = fields["決議事項"].split("\n")
+        assert len(decisions) == 4
+        assert decisions[1] == "二、房屋稅清查所識別之人工智慧應用風險，決議接受該風險。"
+
+    def test_missing_fields_fall_back_to_confirm(self):
+        fields = self.extract("專案名稱：某案\n決議事項：\n一、某決議。")
+        assert fields["專案名稱"] == "某案"
+        assert fields["決議事項"] == "一、某決議。"
+        assert fields["日期"] == "（待確認）"
+        assert fields["追蹤事項"] == "（待確認）"
+
+    def test_never_raises(self):
+        from backend.core.prompt_templates.isms_meeting import ISMS_FORM_FIELD_KEYS
+
+        for value in ("", None, "完全無關的內容"):
+            fields = self.extract(value)
+            assert all(fields[key] == "（待確認）" for key in ISMS_FORM_FIELD_KEYS)
+
+    def test_title_line_skipped(self):
+        fields = self.extract(f"# ISMS月工作會議紀錄\n\n{_ISMS_SAMPLE_RECORD}")
+        assert fields["機關名稱"] == "嘉義縣財政稅務局"
+
+    def test_transcript_appendix_not_swallowed(self):
+        """水平線後的逐字稿附錄不得吞入最後一個欄位。"""
+        md = f"{_ISMS_SAMPLE_RECORD}\n\n---\n\n## 原始逐字稿\n\n這是逐字稿內容。"
+        fields = self.extract(md)
+        assert fields["臨時動議"] == "無。"
+        assert "逐字稿" not in fields["臨時動議"]
+
+    def test_fullwidth_padded_labels_tolerated(self):
+        """官方範本的全形空白對齊標籤（地　　點）也要能抽取。"""
+        md = "專案名稱：某案\n地　　點：會議室\n主　　席：何科長\n記　　錄：龔君"
+        fields = self.extract(md)
+        assert fields["地點"] == "會議室"
+        assert fields["主席"] == "何科長"
+        assert fields["記錄"] == "龔君"
+
+
 class TestValidationWithTemplate:
     def test_procurement_validation_flags_missing_qa_and_leakage(self):
         from backend.services.summarization import SummarizationService

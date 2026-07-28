@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Callable, Optional
 
-from backend.core.prompt_templates import procurement, section_meeting
+from backend.core.prompt_templates import isms_meeting, procurement, section_meeting
 
 # 與 text_postprocess.MISSING_TEXT 同值；為避免匯入循環在此重複定義，
 # 由 tests/test_templates.py 驗證兩者一致。
@@ -63,6 +63,69 @@ class AttachmentSpec:
 
 
 @dataclass(frozen=True)
+class FormParagraphSpec:
+    """表單文件開頭段落（標題／勾選行）。text_template 可含 {欄位鍵} 插值。"""
+
+    text_template: str
+    align_center: bool = False
+    bold: bool = False
+    font_size_pt: int = 12
+
+
+@dataclass(frozen=True)
+class FormCellBlock:
+    """儲存格內一個「標籤＋欄位值」區塊；field_key 空字串＝純標籤格。
+
+    label_own_line=True 時標籤獨立成段、欄位值逐行各自成段（多行欄位）；
+    False 時欄位值第一行接在標籤同段之後。
+    """
+
+    label: str = ""
+    field_key: str = ""
+    label_own_line: bool = False
+
+
+@dataclass(frozen=True)
+class FormCellSpec:
+    """表單表格一個儲存格：blocks 為內容區塊、span 為水平合併欄數。"""
+
+    blocks: tuple[FormCellBlock, ...]
+    span: int = 1
+    align_center: bool = False
+
+
+@dataclass(frozen=True)
+class FormRowSpec:
+    """表單表格一列；min_height_cm 供簽名空列保留書寫高度。"""
+
+    cells: tuple[FormCellSpec, ...]
+    min_height_cm: float = 0.0
+
+
+@dataclass(frozen=True)
+class FormTableSpec:
+    """表單表格：column_widths_cm 定義欄格線，rows 依 span 對齊欄格線。"""
+
+    column_widths_cm: tuple[float, ...]
+    rows: tuple[FormRowSpec, ...]
+
+
+@dataclass(frozen=True)
+class FormLayoutSpec:
+    """表單式 DOCX 版面（v4.6.0）：docx_converter 依此渲染官方表格版面。
+
+    extract_fields 為純文字轉換函式（本文 md → 欄位 dict），不得依賴
+    LLM 二次生成；applicability_pattern 未命中本文時退回一般渲染
+    （防摘要失敗時表單版面吞掉逐字稿）。
+    """
+
+    intro_paragraphs: tuple[FormParagraphSpec, ...]
+    tables: tuple[FormTableSpec, ...]
+    extract_fields: Callable[[str], dict]
+    applicability_pattern: re.Pattern
+
+
+@dataclass(frozen=True)
 class MeetingTemplate:
     """一種會議類型的完整定義。"""
 
@@ -96,6 +159,8 @@ class MeetingTemplate:
     result_title: str = "# 會議紀錄"
     # 附件輸出（v4.5.0）：None 表示此會議類型無附件
     attachment: Optional[AttachmentSpec] = None
+    # 表單式 DOCX 版面（v4.6.0）：None 表示採一般公文段落式渲染
+    form_layout: Optional[FormLayoutSpec] = None
 
     def resolve_system_prompt(self) -> str:
         """取得系統提示詞；general 延遲讀取設定值，env 覆寫仍生效。"""
@@ -374,9 +439,215 @@ _SECTION_MEETING_TEMPLATE = MeetingTemplate(
 )
 
 
+# ---------------------------------------------------------------------------
+# isms_monthly：ISMS 月工作會議（資安委外維護案月會；表單式官方版面）
+# 格式依據使用者提供之官方範本（ISMS_7月工作會議記錄-sample.docx）。
+# ---------------------------------------------------------------------------
+
+# 官方會議記錄表版面（欄寬以 A4 文字區約 14.66cm 計）
+_ISMS_FORM_LAYOUT = FormLayoutSpec(
+    intro_paragraphs=(
+        FormParagraphSpec(
+            "{機關名稱} 會議記錄表", align_center=True, bold=True, font_size_pt=18
+        ),
+        FormParagraphSpec("□專案啟動會議；■月工作會議"),
+    ),
+    tables=(
+        # 主表格：專案名稱／會議議題／地點·主席／日期·記錄／參加人員／
+        # 內容／追蹤事項／決議事項（同格含臨時動議）
+        FormTableSpec(
+            column_widths_cm=(2.6, 4.7, 2.6, 4.76),
+            rows=(
+                FormRowSpec(cells=(
+                    FormCellSpec(blocks=(FormCellBlock(label="專案名稱"),)),
+                    FormCellSpec(blocks=(FormCellBlock(field_key="專案名稱"),), span=3),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(FormCellBlock(label="會議議題：", field_key="會議議題"),),
+                        span=4,
+                    ),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(blocks=(FormCellBlock(label="地    點"),)),
+                    FormCellSpec(blocks=(FormCellBlock(field_key="地點"),)),
+                    FormCellSpec(blocks=(FormCellBlock(label="主    席"),)),
+                    FormCellSpec(blocks=(FormCellBlock(field_key="主席"),)),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(blocks=(FormCellBlock(label="日    期"),)),
+                    FormCellSpec(blocks=(FormCellBlock(field_key="日期"),)),
+                    FormCellSpec(blocks=(FormCellBlock(label="記    錄"),)),
+                    FormCellSpec(blocks=(FormCellBlock(field_key="記錄"),)),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(
+                            FormCellBlock(
+                                label="參加人員：", field_key="參加人員", label_own_line=True
+                            ),
+                        ),
+                        span=4,
+                    ),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(
+                            FormCellBlock(
+                                label="內    容：", field_key="內容", label_own_line=True
+                            ),
+                        ),
+                        span=4,
+                    ),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(
+                            FormCellBlock(
+                                label="追蹤事項：", field_key="追蹤事項", label_own_line=True
+                            ),
+                        ),
+                        span=4,
+                    ),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(
+                            FormCellBlock(
+                                label="決議事項：", field_key="決議事項", label_own_line=True
+                            ),
+                            FormCellBlock(
+                                label="臨時動議：", field_key="臨時動議", label_own_line=True
+                            ),
+                        ),
+                        span=4,
+                    ),
+                )),
+            ),
+        ),
+        # 簽到表：跨欄標題＋機關科室、廠商公司兩欄＋簽名空列
+        FormTableSpec(
+            column_widths_cm=(7.33, 7.33),
+            rows=(
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(FormCellBlock(label="簽             到"),),
+                        span=2,
+                        align_center=True,
+                    ),
+                )),
+                FormRowSpec(cells=(
+                    FormCellSpec(
+                        blocks=(FormCellBlock(field_key="機關單位"),), align_center=True
+                    ),
+                    FormCellSpec(
+                        blocks=(FormCellBlock(field_key="廠商單位"),), align_center=True
+                    ),
+                )),
+                FormRowSpec(
+                    cells=(FormCellSpec(blocks=()), FormCellSpec(blocks=())),
+                    min_height_cm=3.0,
+                ),
+            ),
+        ),
+    ),
+    extract_fields=isms_meeting.extract_form_fields,
+    applicability_pattern=re.compile(r"專案名稱\s*[:：]"),
+)
+
+_ISMS_MONTHLY_TEMPLATE = MeetingTemplate(
+    id="isms_monthly",
+    display_name="ISMS月工作會議",
+    description="資通安全管理制度（ISMS）委外維護案月工作會議記錄表（表單式官方版面）",
+    local_only=False,
+    system_prompt=isms_meeting.ISMS_MEETING_SYSTEM_PROMPT,
+    extraction_prompt_extra=isms_meeting.ISMS_MEETING_EXTRACTION_EXTRA,
+    generation_message_extra=isms_meeting.ISMS_MEETING_GENERATION_EXTRA,
+    # 驗證樣式只留關鍵結構（過嚴會讓本地模型補強輪耗盡）
+    required_section_patterns=(
+        ("專案名稱", re.compile(r"專案名稱\s*[:：]")),
+        ("會議議題", re.compile(r"會議議題\s*[:：]")),
+        ("參加人員", re.compile(r"參加人員\s*[:：]")),
+        ("內容", re.compile(r"內\s*容\s*[:：]")),
+        ("追蹤事項", re.compile(r"追蹤事項\s*[:：]")),
+        ("決議事項", re.compile(r"決議事項\s*[:：]")),
+        ("臨時動議", re.compile(r"臨時動議\s*[:：]")),
+    ),
+    forbidden_patterns=(),
+    record_header_fields=(
+        RecordFieldSpec(
+            f"機關名稱：{_MISSING_CONFIRM}", re.compile(r"^機關名稱\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"專案名稱：{_MISSING_CONFIRM}", re.compile(r"^專案名稱\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"會議議題：{_MISSING_CONFIRM}", re.compile(r"^會議議題\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"地點：{_MISSING_CONFIRM}", re.compile(r"^地\s*點\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"主席：{_MISSING_CONFIRM}",
+            re.compile(r"^(?:主\s*席|主持人)\s*[:：]", re.MULTILINE),
+        ),
+        RecordFieldSpec(
+            f"日期：{_MISSING_CONFIRM}", re.compile(r"^日\s*期\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"記錄：{_MISSING_CONFIRM}", re.compile(r"^[記紀]\s*錄\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"機關單位：{_MISSING_CONFIRM}", re.compile(r"^機關單位\s*[:：]", re.MULTILINE)
+        ),
+        RecordFieldSpec(
+            f"廠商單位：{_MISSING_CONFIRM}", re.compile(r"^廠商單位\s*[:：]", re.MULTILINE)
+        ),
+    ),
+    record_sections=(
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"參加人員\s*[:：]"),
+            skeleton_lines=("參加人員：", _MISSING_CONFIRM),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"內\s*容\s*[:：]"),
+            skeleton_lines=("內容：", f"一、{_MISSING_CONFIRM}"),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"追蹤事項\s*[:：]"),
+            skeleton_lines=("追蹤事項：", _MISSING_CONFIRM),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"決議事項\s*[:：]"),
+            skeleton_lines=("決議事項：", f"一、{_MISSING_CONFIRM}"),
+        ),
+        RecordSectionSpec(
+            presence_pattern=re.compile(r"臨時動議\s*[:：]"),
+            skeleton_lines=("臨時動議：", _MISSING_CONFIRM),
+        ),
+    ),
+    docx_section_pattern=re.compile(r"^[一二三四五六七八九十]+、"),
+    # 表單渲染退回一般渲染時仍保有公文層次（十四個欄位標籤）
+    docx_label_pattern=re.compile(
+        r"^(機關名稱|專案名稱|會議議題|地\s*點|主\s*席|主持人|日\s*期|[記紀]\s*錄|"
+        r"機關單位|廠商單位|參加人員|內\s*容|追蹤事項|決議事項|臨時動議)\s*([：:])\s*(.*)$"
+    ),
+    glossary_terms=isms_meeting.ISMS_GLOSSARY_TERMS,
+    glossary_corrections=isms_meeting.ISMS_GLOSSARY_CORRECTIONS,
+    result_title="# ISMS月工作會議紀錄",
+    attachment=None,
+    form_layout=_ISMS_FORM_LAYOUT,
+)
+
+
 _TEMPLATES: dict[str, MeetingTemplate] = {
     template.id: template
-    for template in (_GENERAL_TEMPLATE, _PROCUREMENT_TEMPLATE, _SECTION_MEETING_TEMPLATE)
+    for template in (
+        _GENERAL_TEMPLATE,
+        _PROCUREMENT_TEMPLATE,
+        _SECTION_MEETING_TEMPLATE,
+        _ISMS_MONTHLY_TEMPLATE,
+    )
 }
 
 
