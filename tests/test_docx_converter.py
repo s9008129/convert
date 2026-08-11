@@ -315,6 +315,17 @@ class TestBoldParsing:
         assert has_bold, "缺少粗體 Run"
         assert has_normal, "缺少一般 Run"
 
+    def test_same_text_bold_and_plain_not_confused(self, converter, tmp_docx):
+        """同一行有相同文字的粗體與非粗體片段時，位置不得前後誤置（v4.6.1）。"""
+        converter.convert("## 測試\n\n重要**重要**\n", tmp_docx)
+        doc = Document(tmp_docx)
+
+        target = next(p for p in doc.paragraphs if p.text == "重要重要")
+        assert target.runs[0].text == "重要"
+        assert target.runs[0].bold is not True  # 前段為一般文字
+        assert target.runs[1].text == "重要"
+        assert target.runs[1].bold is True  # 後段才是 **粗體**
+
 
 # ===== 列表項目測試 =====
 
@@ -541,6 +552,72 @@ class TestRecordStructureStyling:
         # 全形空白欄位（主  席）也要能辨識
         chair = by_text["主  席：局長"]
         assert chair.runs[0].bold is True
+
+
+# =============================================================================
+# v4.6.1：章節白名單——雲端紀錄的編號條列項目不得整段粗體放大
+# （2026-08-11 使用者回報：雲端模式 DOCX 標題與內文全成粗體）
+# =============================================================================
+
+class TestNumberedItemsRenderAsBody:
+    """模擬雲端模型輸出：意見／決議以「一、二、三、」條列。"""
+
+    CLOUD_STYLE_MD = (
+        "# 會議紀錄\n\n"
+        "會議名稱：測試會議\n\n"
+        "一、 報告事項：\n"
+        "無。\n\n"
+        "二、 討論事項：\n"
+        "案由一：AI 工具功能調整，提請 審議。\n"
+        "說明：背景說明。\n"
+        "各單位意見（多方立場）：\n"
+        "一、 科長表示，本案應由人工檢視後判定。\n"
+        "二、 經討論後，決議捨棄複雜分類。\n"
+        "決議：\n"
+        "一、 取消自動判定功能，交由人工確認。\n"
+        "二、 檔案版本不強制使用者手動填寫，欄位保留空白。\n\n"
+        "三、 主席裁示事項（後續管考與追蹤）：\n"
+        "一、 請重新提供業務分類碼清單。\n"
+    )
+
+    def _convert(self, tmp_path):
+        out = str(tmp_path / "cloud_record.docx")
+        MarkdownToDocxConverter().convert(self.CLOUD_STYLE_MD, out)
+        doc = Document(out)
+        return {p.text: p for p in doc.paragraphs if p.text}
+
+    def test_real_sections_keep_heading_style(self, tmp_path):
+        by_text = self._convert(tmp_path)
+        for section_text in (
+            "一、 報告事項：",
+            "二、 討論事項：",
+            "三、 主席裁示事項（後續管考與追蹤）：",
+        ):
+            run = by_text[section_text].runs[0]
+            assert run.bold is True, f"章節應加粗: {section_text}"
+            assert run.font.size.pt == 15
+
+    def test_numbered_items_render_as_plain_body(self, tmp_path):
+        by_text = self._convert(tmp_path)
+        for item_text in (
+            "一、 科長表示，本案應由人工檢視後判定。",
+            "二、 經討論後，決議捨棄複雜分類。",
+            "一、 取消自動判定功能，交由人工確認。",
+            "二、 檔案版本不強制使用者手動填寫，欄位保留空白。",
+            "一、 請重新提供業務分類碼清單。",
+        ):
+            for run in by_text[item_text].runs:
+                assert run.bold is not True, f"條列項目不得粗體: {item_text}"
+                assert run.font.size is None, f"條列項目不得放大: {item_text}"
+                assert run.font.name == FONT_BODY
+
+    def test_numbered_proposal_label_bold(self, tmp_path):
+        """「案由一：」標籤加粗、內容照常。"""
+        by_text = self._convert(tmp_path)
+        proposal = by_text["案由一：AI 工具功能調整，提請 審議。"]
+        assert proposal.runs[0].text == "案由一："
+        assert proposal.runs[0].bold is True
+        assert proposal.runs[1].bold is not True
 
 
 # =============================================================================

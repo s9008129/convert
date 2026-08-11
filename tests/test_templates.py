@@ -122,6 +122,47 @@ class TestGeneralBackwardCompat:
         assert result == partial  # 完整輸入不應被改動
 
 
+class TestGeneralDocxSectionPattern:
+    """v4.6.1：章節白名單——編號條列項目不得誤判為章節。
+
+    雲端模型慣以「一、二、三、」條列意見與決議，舊 pattern
+    （^中文數字、）會把這些內文整段升級成粗體 15pt 章節，
+    造成整份紀錄看似全粗體（2026-08-11 使用者回報）。
+    """
+
+    def setup_method(self):
+        self.pattern = get_template("general").docx_section_pattern
+
+    def test_real_section_lines_match(self):
+        for line in (
+            "一、 報告事項：",
+            "一、報告事項",
+            "二、 討論事項：",
+            "三、 主席裁示事項（後續管考與追蹤）：",
+            "四、 臨時動議：",
+            "五、 散會",
+        ):
+            assert self.pattern.match(line), f"章節未被辨識: {line}"
+
+    def test_numbered_body_items_not_matched(self):
+        # 取自實際誤判文件的內文條列項目
+        for line in (
+            "一、 科長表示，工具主動命中資安資料夾 460 件機敏檔案之數字敏感。",
+            "二、 檔案版本不強制使用者手動填寫，欄位保留空白。",
+            "八、 製作兩種清冊輸出格式：長官陳核清冊以及同仁自行檢視清冊。",
+            "三、 報告事項所列各案均照案通過。",  # 以章節關鍵字開頭的長句
+            "一、准予備查",  # 短句但非章節名
+        ):
+            assert not self.pattern.match(line), f"條列項目被誤判為章節: {line}"
+
+    def test_label_pattern_accepts_numbered_proposal(self):
+        """「案由一：」「案由二：」等編號案由也應辨識為欄位標籤。"""
+        pattern = get_template("general").docx_label_pattern
+        match = pattern.match("案由一：AI 知識庫盤點工具功能調整，提請 審議。")
+        assert match and match.group(1) == "案由一"
+        assert pattern.match("案由：逐字稿未提及")
+
+
 class TestProcurementTemplate:
     def setup_method(self):
         self.template = get_template("procurement_evaluation")
@@ -281,6 +322,8 @@ class TestSectionMeetingTemplate:
         assert pattern.match("一、科長轉知局務會議工作報告及相關注意事項：")
         assert pattern.match("二、科長指示及提醒事項：")
         assert not pattern.match("（一）稅務節活動配合事項。")
+        # v4.6.1：一般編號條列項目不得誤判為章節（整段粗體放大）
+        assert not pattern.match("一、與會人員針對列管案件進行討論，決議繼續列管。")
 
     def test_docx_label_pattern(self):
         pattern = self.template.docx_label_pattern
@@ -450,6 +493,15 @@ class TestIsmsMonthlyTemplate:
     def test_other_templates_have_no_form_layout(self):
         for template_id in ("general", "procurement_evaluation", "section_meeting"):
             assert get_template(template_id).form_layout is None
+
+    def test_docx_section_pattern_never_matches(self):
+        """官方會議記錄表無公文章節列；退回一般渲染時編號行皆為條列項目。"""
+        pattern = self.template.docx_section_pattern
+        for line in (
+            "一、天雷科技有限公司針對7月份工作進行說明。",
+            "一、 報告事項：",
+        ):
+            assert not pattern.match(line)
 
     def test_docx_label_pattern_covers_form_labels(self):
         pattern = self.template.docx_label_pattern

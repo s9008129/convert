@@ -147,8 +147,11 @@ class MeetingTemplate:
     record_header_fields: tuple[RecordFieldSpec, ...] = ()
     record_sections: tuple[RecordSectionSpec, ...] = ()
     # DOCX 公文層次
+    # 預設不匹配任何行：章節樣式必須由模板以「章節名白名單」明確宣告。
+    # （v4.6.1 教訓：寬鬆的「^中文數字、」會把決議／意見的編號條列項目
+    # 誤判為章節，整段粗體放大，新模板不得再繼承這種預設。）
     docx_section_pattern: re.Pattern = field(
-        default_factory=lambda: re.compile(r"^[一二三四五六七八九十]+、")
+        default_factory=lambda: re.compile(r"$^")  # 預設不匹配任何行
     )
     docx_label_pattern: re.Pattern = field(
         default_factory=lambda: re.compile(r"$^")  # 預設不匹配任何行
@@ -252,10 +255,18 @@ _GENERAL_TEMPLATE = MeetingTemplate(
             ),
         ),
     ),
-    docx_section_pattern=re.compile(r"^[一二三四五六七八九十]+、"),
+    # 章節白名單（v4.6.1）：只有已知章節名才套章節樣式，並錨定行尾，
+    # 讓「一、 科長表示，…」等編號條列項目與「三、報告事項所列各案均
+    # 照案通過。」等以章節關鍵字開頭的長句都維持一般內文（雲端模型慣用
+    # 「一、二、三、」條列決議，寬鬆 pattern 會讓整份紀錄粗體放大）。
+    docx_section_pattern=re.compile(
+        r"^[一二三四五六七八九十壹貳參肆伍陸柒捌玖拾]+、\s*"
+        r"(?:報告事項|討論事項|主席裁示事項|臨時動議|散會|其他事項)"
+        r"(?:[（(][^（）()]{0,30}[）)])?\s*[：:]?\s*$"
+    ),
     docx_label_pattern=re.compile(
         r"^(會議名稱|會議時間|會議地點|主\s*席|出席人員|列席人員|記\s*錄|"
-        r"案由|說明|決議|各單位意見（多方立場）|各單位意見|"
+        r"案由[一二三四五六七八九十]{0,3}|說明|決議|各單位意見（多方立場）|各單位意見|"
         r"主辦單位|協辦單位|辦理期程)\s*([：:])\s*(.*)$"
     ),
     result_title="# 會議紀錄",
@@ -344,6 +355,9 @@ _PROCUREMENT_TEMPLATE = MeetingTemplate(
         _proc_section("拾伍、委員是否有不同意見：", r"拾伍、\s*委員是否有不同意見", "拾伍、委員是否有不同意見：無"),
         _proc_section("拾陸、散會：", r"拾陸、\s*散會"),
     ),
+    # 「壹貳參…」字元集與條列項目慣用的「一二三…」不相交（廠商子項為
+    # 一、／（一），見 test_docx_section_pattern_matches_official_numbering），
+    # 無誤判風險，維持寬鬆以容納壹～拾陸共 16 節的標題變體。
     docx_section_pattern=re.compile(r"^[壹貳參叁肆伍陸柒捌玖拾]+、"),
     docx_label_pattern=re.compile(
         r"^(委員提問|廠商答詢|簡報要點|（一）簡報要點|（二）詢答|決議)\s*([：:])\s*(.*)$"
@@ -423,7 +437,11 @@ _SECTION_MEETING_TEMPLATE = MeetingTemplate(
             skeleton_lines=(f"散會：{_MISSING_CONFIRM}",),
         ),
     ),
-    docx_section_pattern=re.compile(r"^[一二三四五六七八九十]+、"),
+    # 章節白名單（v4.6.1）：官方格式僅「一、科長轉知…」「二、科長指示…」
+    # 為章節（可帶行內值，故不錨定行尾）；其餘編號行維持一般內文。
+    docx_section_pattern=re.compile(
+        r"^[一二三四五六七八九十]+、\s*(?:科長轉知|科長指示|臨時動議|散會)"
+    ),
     docx_label_pattern=re.compile(
         r"^(時間|地點|主持人|出席人員|紀\s*錄|散會|決議事項|"
         r"歷次科務會議決議事項繼續列管案件)\s*([：:])\s*(.*)$"
@@ -626,7 +644,9 @@ _ISMS_MONTHLY_TEMPLATE = MeetingTemplate(
             skeleton_lines=("臨時動議：", _MISSING_CONFIRM),
         ),
     ),
-    docx_section_pattern=re.compile(r"^[一二三四五六七八九十]+、"),
+    # 官方會議記錄表無公文章節列；退回一般渲染時「一、…」皆為內容／
+    # 決議事項的條列項目，一律維持一般內文（v4.6.1）。
+    docx_section_pattern=re.compile(r"$^"),
     # 表單渲染退回一般渲染時仍保有公文層次（十四個欄位標籤）
     docx_label_pattern=re.compile(
         r"^(機關名稱|專案名稱|會議議題|地\s*點|主\s*席|主持人|日\s*期|[記紀]\s*錄|"

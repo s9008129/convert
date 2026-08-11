@@ -579,18 +579,16 @@ class MarkdownToDocxConverter:
 
         將文字拆分為粗體與非粗體片段，分別建立 Run 並套用格式。
         """
-        # 分割粗體片段
+        # 分割粗體片段：split 帶單一擷取群組，奇數索引必為 **…** 內文。
+        # （v4.6.1：改用索引奇偶判斷；先前以內容比對，遇到同一行有相同
+        # 文字的粗體與非粗體片段會前後誤置。）
         parts = BOLD_PATTERN.split(text)
-        bold_matches = BOLD_PATTERN.findall(text)
 
-        bold_idx = 0
         for i, part in enumerate(parts):
             if not part:
                 continue
 
-            is_bold = part in bold_matches and bold_idx < len(bold_matches)
-            if is_bold:
-                bold_idx += 1
+            is_bold = i % 2 == 1
 
             run = para.add_run(part)
 
