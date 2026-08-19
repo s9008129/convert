@@ -8,6 +8,9 @@ v4.2 起記錄級清理移至 backend.core.text_postprocess（P1-9，於驗證�
 """
 
 import importlib
+from unittest.mock import AsyncMock
+
+import pytest
 
 from backend.core.text_postprocess import (
     ensure_record_structure,
@@ -242,6 +245,83 @@ def test_format_result_marks_summary_failure_explicitly(monkeypatch):
     assert "僅包含逐字稿" in result
     assert "Ollama 服務不可用" in result
     assert result.startswith("# 逐字稿（會議紀錄生成失敗）")
+
+
+def test_format_result_shows_reason_even_without_error_message(monkeypatch):
+    """v4.6.2：空訊息例外（如 httpx.ReadTimeout）不得讓「失敗原因」行整個消失。"""
+    processor = TaskProcessor()
+    _patch_device(monkeypatch)
+
+    result = processor._format_result(_make_task(), "逐字稿內容", None, summary_error=None)
+
+    assert "失敗原因：未知錯誤（無例外訊息）" in result
+
+
+def test_format_result_shows_exception_class_reason(monkeypatch):
+    """v4.6.2：describe_exception 產生的「類別: 訊息」需完整進入文件。"""
+    processor = TaskProcessor()
+    _patch_device(monkeypatch)
+
+    result = processor._format_result(
+        _make_task(), "逐字稿內容", None, summary_error="ReadTimeout: ReadTimeout('')"
+    )
+
+    assert "失敗原因：ReadTimeout" in result
+
+
+@pytest.mark.asyncio
+async def test_process_task_warms_up_before_correction_and_reports_timeout(monkeypatch):
+    """v4.6.2：warmup 須在逐字稿之後、校正之前；摘要逾時（空訊息）仍要完成任務
+    並在輸出中標示例外類別、設定 summary_failed。"""
+    import httpx
+
+    processor = TaskProcessor()
+    _patch_device(monkeypatch)
+    task = _make_task()
+    calls: list[str] = []
+    saved: dict[str, str] = {}
+
+    monkeypatch.setattr(task_processor_module.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(processor, "_update_progress", AsyncMock())
+
+    async def fake_obtain(_task, _path):
+        calls.append("transcript")
+        return "逐字稿內容"
+
+    async def fake_warmup():
+        calls.append("warmup")
+
+    async def fake_correction(_task, transcript):
+        calls.append("correction")
+        return transcript, None
+
+    async def fake_summarize(*_args, **_kwargs):
+        calls.append("summarize")
+        raise httpx.ReadTimeout("")
+
+    async def fake_save_result(_task_id, _filename, content):
+        saved["content"] = content
+
+    monkeypatch.setattr(processor, "_obtain_transcript", fake_obtain)
+    monkeypatch.setattr(processor, "_apply_semantic_correction", fake_correction)
+    monkeypatch.setattr(
+        task_processor_module.summarization_service, "warmup_local_model", fake_warmup
+    )
+    monkeypatch.setattr(
+        task_processor_module.summarization_service, "summarize", fake_summarize
+    )
+    monkeypatch.setattr(
+        task_processor_module.file_manager, "save_transcript_result", AsyncMock()
+    )
+    monkeypatch.setattr(task_processor_module.file_manager, "save_result", fake_save_result)
+    monkeypatch.setattr(task_processor_module.task_queue, "complete_task", AsyncMock())
+
+    await processor._process_task(task)
+
+    assert calls == ["transcript", "warmup", "correction", "summarize"]
+    assert task.summary_failed is True
+    assert "失敗原因：ReadTimeout" in saved["content"]
+    assert "會議紀錄生成失敗" in saved["content"]
 
 
 def test_device_info_reports_gpu_present_even_when_busy():

@@ -9,15 +9,17 @@ v3.5.0 改進：
 """
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI, AsyncOpenAI, APIConnectionError, APITimeoutError
 
 from backend.core.config import settings
+from backend.core.errors import describe_exception
 from backend.core.logger import log
 from backend.core.platform_config import (
     get_global_config,
@@ -25,6 +27,16 @@ from backend.core.platform_config import (
 )
 from backend.core.templates import MeetingTemplate, get_template
 from backend.models.schemas import ProcessingMode
+
+
+class OllamaStreamRetryable(RuntimeError):
+    """串流層可重試失敗（v4.7.0）。
+
+    三種情況（皆源自參考專案 D:\\dev\\local 的量產經驗）：
+    1. 串流中途收到 {"error": ...} chunk（模型卸載／runner 崩潰）
+    2. 串流結束卻沒有 done:true（連線中斷）
+    3. done_reason 非 stop（如 length＝輸出被截斷，JSON 不完整）
+    """
 
 
 @dataclass
@@ -118,12 +130,16 @@ class SummarizationService:
         self._resolved_model: Optional[str] = None
         self._ollama_model_error: Optional[str] = None
 
+        # v4.7.0: warmup 自我修復失敗時的本任務降級 num_ctx
+        # （None＝使用 settings 預設；每次 warmup 開頭重設，防跨任務殘留）
+        self._active_context_tokens: Optional[int] = None
+
     async def _get_ollama_client(self) -> httpx.AsyncClient:
         """取得 Ollama HTTP 客戶端"""
         if not self._ollama_client:
             self._ollama_client = httpx.AsyncClient(
                 base_url=settings.OLLAMA_BASE_URL,
-                timeout=300.0
+                timeout=settings.LOCAL_LLM_REQUEST_TIMEOUT
             )
         return self._ollama_client
 
@@ -155,7 +171,9 @@ class SummarizationService:
             api_key = self._get_gemini_api_key()
             self._gemini_client = OpenAI(
                 api_key=api_key,
-                base_url=settings.GEMINI_BASE_URL
+                base_url=settings.GEMINI_BASE_URL,
+                timeout=settings.CLOUD_LLM_REQUEST_TIMEOUT,
+                max_retries=settings.CLOUD_LLM_MAX_RETRIES,
             )
         return self._gemini_client
 
@@ -165,7 +183,9 @@ class SummarizationService:
             api_key = self._get_gemini_api_key()
             self._gemini_async_client = AsyncOpenAI(
                 api_key=api_key,
-                base_url=settings.GEMINI_BASE_URL
+                base_url=settings.GEMINI_BASE_URL,
+                timeout=settings.CLOUD_LLM_REQUEST_TIMEOUT,
+                max_retries=settings.CLOUD_LLM_MAX_RETRIES,
             )
         return self._gemini_async_client
 
@@ -215,7 +235,7 @@ class SummarizationService:
             return summary
 
         except Exception as e:
-            log.error(f"摘要生成失敗: {e}")
+            log.exception(f"摘要生成失敗: {describe_exception(e)}")
             raise
 
     @staticmethod
@@ -256,14 +276,16 @@ class SummarizationService:
         transcript: str,
         system_prompt: str,
         template: Optional[MeetingTemplate] = None,
+        context_window_tokens: Optional[int] = None,
     ) -> LocalContextPlan:
         """根據有效上下文視窗估算是否需要分塊。
 
         P0-6 延伸（v4.4.0）：萃取 prompt 須以「模板增補後」的實際文字估算，
         否則採購等較長模板會讓輸入超出 num_ctx 被 Ollama 靜默截斷。
+        v4.7.0：視窗可由 warmup 降級結果覆蓋（offload 自我修復失敗時）。
         """
         transcript_tokens = self._estimate_tokens(transcript)
-        context_window = settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
+        context_window = context_window_tokens or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
         output_budget = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
         extraction_overhead = (
             self._estimate_tokens(system_prompt)
@@ -683,7 +705,8 @@ class SummarizationService:
         engine: str,
         extracted_notes: list[str],
         notes_merge_budget_tokens: int,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        context_window_tokens: Optional[int] = None,
     ) -> str:
         """反覆整併 chunk 筆記，直到可被最終摘要步驟安全承接。"""
         current_notes = [self._clean_ollama_output(note) for note in extracted_notes if note and note.strip()]
@@ -732,6 +755,7 @@ class SummarizationService:
                     temperature=0.1,
                     # 輸出上限綁定預算：讓整併輸出「物理上」不可能超過預算太多
                     num_predict=merge_predict_cap,
+                    context_window_tokens=context_window_tokens,
                 )
                 merged_round.append(self._clean_ollama_output(merged))
 
@@ -783,7 +807,8 @@ class SummarizationService:
         user_message: str,
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
-        num_predict: Optional[int] = None
+        num_predict: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
     ) -> str:
         """對選定的本地引擎執行一次生成。"""
         if engine == "ollama":
@@ -793,6 +818,7 @@ class SummarizationService:
                 progress_callback=progress_callback,
                 temperature=temperature,
                 num_predict=num_predict,
+                context_window_tokens=context_window_tokens,
             )
 
         if engine == "lmstudio":
@@ -815,9 +841,15 @@ class SummarizationService:
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
         engine = await self._select_local_engine()
-        plan = self._build_local_context_plan(transcript, system_prompt, template=template)
+        # v4.7.0：任務級 num_ctx——warmup 自我修復失敗時降級，一次讀取、全程顯式傳遞
+        context_tokens = self._effective_context_tokens()
+        plan = self._build_local_context_plan(
+            transcript, system_prompt, template=template,
+            context_window_tokens=context_tokens,
+        )
         log.info(
             "本地摘要上下文規劃："
+            f"context_window={context_tokens}, "
             f"estimated_tokens={plan.estimated_transcript_tokens}, "
             f"chunk_budget={plan.chunk_input_budget_tokens}, "
             f"merge_budget={plan.notes_merge_budget_tokens}, "
@@ -843,6 +875,7 @@ class SummarizationService:
                 self._build_chunk_extraction_message(chunk, chunk_index, total_chunks),
                 temperature=0.1,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                context_window_tokens=context_tokens,
             )
             extracted_notes.append(self._clean_ollama_output(notes))
 
@@ -851,6 +884,7 @@ class SummarizationService:
             extracted_notes,
             plan.notes_merge_budget_tokens,
             progress_callback,
+            context_window_tokens=context_tokens,
         )
 
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
@@ -860,6 +894,7 @@ class SummarizationService:
             self._build_summary_from_notes_message(merged_notes, template=template),
             temperature=0.2,
             num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+            context_window_tokens=context_tokens,
         )
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
@@ -876,6 +911,7 @@ class SummarizationService:
                 self._build_refinement_message(summary, merged_notes, issues, template=template),
                 temperature=0.15,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                context_window_tokens=context_tokens,
             )
             summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
             issues = self._validate_summary_quality(summary, merged_notes, template=template)
@@ -915,6 +951,144 @@ class SummarizationService:
             num_predict=num_predict,
         )
 
+    async def _stream_ollama_chat_once(
+        self,
+        client: httpx.AsyncClient,
+        body: dict,
+    ) -> tuple[str, dict]:
+        """單次串流 /api/chat（v4.7.0）。
+
+        stream:false 在長生成期間零位元組回傳，會讓 read timeout 變成
+        「總時長硬上限」而誤殺合法長會議（本次空白紀錄事故根因之一）。
+        改為串流後：
+        - httpx read timeout ＝ chunk 間「閒置」逾時（快速偵測真正卡死）
+        - asyncio.timeout ＝ 總時長上限（寧可等待、不截斷）
+
+        回傳 (累積內容, 最終 done chunk——含 load_duration/eval_count 等指標)。
+        """
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=settings.LOCAL_LLM_STREAM_IDLE_TIMEOUT,
+            write=30.0,
+            pool=10.0,
+        )
+        content_parts: list[str] = []
+        final_chunk: Optional[dict] = None
+
+        async with asyncio.timeout(settings.LOCAL_LLM_REQUEST_TIMEOUT):
+            async with client.stream("POST", "/api/chat", json=body, timeout=timeout) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        raise OllamaStreamRetryable(f"串流回應非 JSON: {line[:120]}")
+
+                    if chunk.get("error"):
+                        raise OllamaStreamRetryable(f"串流中途錯誤: {chunk['error']}")
+
+                    message_content = (chunk.get("message") or {}).get("content")
+                    if message_content:
+                        content_parts.append(message_content)
+
+                    if chunk.get("done"):
+                        final_chunk = chunk
+                        break
+
+        if final_chunk is None:
+            raise OllamaStreamRetryable("串流結束但未收到 done chunk（連線中斷）")
+
+        done_reason = final_chunk.get("done_reason")
+        if done_reason not in (None, "stop"):
+            raise OllamaStreamRetryable(f"done_reason={done_reason}（輸出被截斷或異常結束）")
+
+        return "".join(content_parts), final_chunk
+
+    @staticmethod
+    def _log_generation_metrics(final_chunk: dict) -> None:
+        """記錄單次生成的載入時間與吞吐（v4.7.0 觀測——參考專案經驗：
+        load_duration 能區分「冷啟動慢」與「推理慢」，tokens/s 過低＝offload 直接證據。"""
+        load_seconds = (final_chunk.get("load_duration") or 0) / 1e9
+        eval_count = final_chunk.get("eval_count") or 0
+        eval_seconds = (final_chunk.get("eval_duration") or 0) / 1e9
+        tokens_per_second = eval_count / eval_seconds if eval_seconds > 0 else 0.0
+
+        log.info(
+            f"Ollama 生成完成：load={load_seconds:.1f}s, "
+            f"tokens/s={tokens_per_second:.1f}, eval_count={eval_count}"
+        )
+        if 0 < tokens_per_second < settings.LOCAL_LLM_MIN_TOKENS_PER_SECOND:
+            log.warning(
+                f"生成吞吐僅 {tokens_per_second:.1f} tokens/s"
+                f"（門檻 {settings.LOCAL_LLM_MIN_TOKENS_PER_SECOND}）——"
+                "疑似模型部分卸載至 CPU，請檢查 warmup log 與主機 VRAM 佔用"
+            )
+
+    async def _post_ollama_chat(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict,
+        send_think_field: bool,
+    ) -> tuple[str, dict, bool]:
+        """送出一次 /api/chat：串流＋think 相容降級＋瞬時錯誤重試（v4.7.0）。
+
+        瞬時錯誤（閒置逾時／連線中斷／串流層可重試失敗）重試
+        LOCAL_LLM_TRANSIENT_RETRIES 次；HTTP 4xx/5xx 與總時長超限非瞬時，不重試。
+        回傳 (內容, done chunk 指標, 可能已降級的 send_think_field)。
+        """
+        retries = settings.LOCAL_LLM_TRANSIENT_RETRIES
+        for attempt in range(retries + 1):
+            body = dict(payload, think=False) if send_think_field else payload
+            try:
+                try:
+                    content, final_chunk = await self._stream_ollama_chat_once(client, body)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 400 and send_think_field:
+                        log.info("模型不支援 think 參數，改以相容模式重送")
+                        send_think_field = False
+                        content, final_chunk = await self._stream_ollama_chat_once(
+                            client, payload
+                        )
+                    else:
+                        raise
+                self._log_generation_metrics(final_chunk)
+                return content, final_chunk, send_think_field
+            except TimeoutError:
+                # asyncio.timeout 總時長超限：重跑同樣 30 分鐘無望，直接失敗並講清楚
+                raise RuntimeError(
+                    f"Ollama 生成超過總時長上限 {settings.LOCAL_LLM_REQUEST_TIMEOUT:.0f} 秒"
+                    "（串流仍有進展但過慢）——請檢查模型是否部分卸載至 CPU"
+                )
+            except (
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                httpx.RemoteProtocolError,
+                OllamaStreamRetryable,
+            ) as exc:
+                if attempt >= retries:
+                    raise
+                wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                log.warning(
+                    f"Ollama 請求瞬時失敗（第 {attempt + 1}/{retries + 1} 次）："
+                    f"{describe_exception(exc)}，{wait_seconds:.0f} 秒後重試"
+                )
+                await asyncio.sleep(wait_seconds)
+
+        raise RuntimeError("Ollama 請求重試邏輯異常（不應執行到此）")
+
+    def _effective_context_tokens(self, override: Optional[int] = None) -> int:
+        """本任務生效的 num_ctx：顯式覆蓋 > warmup 降級值 > settings 預設（v4.7.0）。"""
+        return (
+            override
+            or self._active_context_tokens
+            or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
+        )
+
     async def _summarize_with_ollama(
         self,
         system_prompt: str,
@@ -922,19 +1096,17 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
         num_predict: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
     ) -> str:
         """
         使用 Ollama 本地模式生成摘要
 
+        v4.7.0 改進：
+        - 串流生成（閒置逾時／總時長分離）＋每呼叫 tokens/s 觀測
+        - num_ctx 依 warmup 自我修復結果可任務級降級
+
         v4.2.1 改進：
         - Gemma4 預設參數：top_k 64、top_p 0.95、repeat_penalty 1.08
-        - 維持 8192 context 預設，避免把高風險視窗擴大成全域預設
-        - 維持 keep_alive=0 確保 VRAM 釋放
-
-        v3.5.2 改進：
-        - 新增 keep_alive=0 參數，使用完畢後立即釋放 VRAM
-        - 優化參數以提升長逐字稿處理品質
-        - 增加 num_ctx 到 16384 以處理更長的逐字稿
         """
         client = await self._get_ollama_client()
 
@@ -958,9 +1130,10 @@ class SummarizationService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "stream": False,
+                    # v4.7.0：串流生成——閒置逾時偵測卡死、總時長上限放寬
+                    "stream": True,
                     # P0-7：三階段流程會連續呼叫十數次，keep_alive=0 會導致每階段
-                    # 重載 20GB 模型。改為可設定（預設 10m），流程結束後自然逾時釋放。
+                    # 重載 20GB 模型。改為可設定（預設 30m），流程結束後自然逾時釋放。
                     "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
                     "options": {
                         # 重試時略升溫度以跳出空回應狀態
@@ -968,29 +1141,17 @@ class SummarizationService:
                         "top_p": 0.95,
                         "top_k": 64,
                         "repeat_penalty": 1.08,
-                        "num_ctx": settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+                        "num_ctx": self._effective_context_tokens(context_window_tokens),
                         "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                         "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
                     }
                 }
-                if send_think_field:
-                    payload["think"] = False
-
-                response = await client.post("/api/chat", json=payload, timeout=600.0)
-                if response.status_code == 400 and send_think_field:
-                    log.info("模型不支援 think 參數，改以相容模式重送")
-                    send_think_field = False
-                    response = await client.post(
-                        "/api/chat",
-                        json={k: v for k, v in payload.items() if k != "think"},
-                        timeout=600.0,
-                    )
-                response.raise_for_status()
+                raw_content, _metrics, send_think_field = await self._post_ollama_chat(
+                    client, payload, send_think_field
+                )
 
                 self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
 
-                data = response.json()
-                raw_content = data.get("message", {}).get("content", "")
                 summary = self._clean_ollama_output(raw_content)
 
                 # 清理後為空但原始輸出非空 → 用原始輸出（後續驗證/補強會把關格式）
@@ -1041,7 +1202,7 @@ class SummarizationService:
                 log.error(f"Ollama API 錯誤: HTTP {e.response.status_code}")
                 raise
         except Exception as e:
-            log.error(f"Ollama 摘要生成失敗: {e}")
+            log.exception(f"Ollama 摘要生成失敗: {describe_exception(e)}")
             raise
 
     def _clean_ollama_output(self, summary: str) -> str:
@@ -1147,8 +1308,8 @@ class SummarizationService:
             return summary.strip()
 
         except Exception as e:
-            log.error(f"LM Studio 摘要生成失敗: {e}")
-            raise RuntimeError(f"LM Studio 服務不可用: {e}")
+            log.exception(f"LM Studio 摘要生成失敗: {describe_exception(e)}")
+            raise RuntimeError(f"LM Studio 服務不可用: {describe_exception(e)}")
 
     def _estimate_cloud_min_summary_chars(self, transcript: str) -> int:
         """依逐字稿規模估算雲端紀錄的動態長度下限（v4.3.3 豐富度閘門）。
@@ -1195,7 +1356,10 @@ class SummarizationService:
                     notes = await self._gemini_chat(extraction_prompt, message, 0.1)
                 except Exception as exc:  # noqa: BLE001 — 單次重試後仍失敗則向外拋出
                     log.warning(
-                        "雲端萃取第 {}/{} 段失敗（{}），重試一次", chunk_index, total_chunks, exc
+                        "雲端萃取第 {}/{} 段失敗（{}），重試一次",
+                        chunk_index,
+                        total_chunks,
+                        describe_exception(exc),
                     )
                     notes = await self._gemini_chat(extraction_prompt, message, 0.1)
                 completed_count += 1
@@ -1291,51 +1455,85 @@ class SummarizationService:
         temperature: float = 0.2,
         progress_callback: Optional[callable] = None,
     ) -> str:
-        """對 Gemini 發出單次（異步流式）對話請求並回傳清理後的內容。"""
+        """對 Gemini 發出單次（異步流式）對話請求並回傳清理後的內容。
+
+        v4.6.2：串流中途斷線／逾時不在 SDK max_retries 涵蓋範圍，
+        改由本層對瞬時錯誤重試——最終生成與補強輪呼叫因此自動受保護。
+        """
+        retries = settings.CLOUD_LLM_MAX_RETRIES
+        for attempt in range(retries + 1):
+            try:
+                return await self._gemini_chat_once(
+                    system_prompt, user_message, temperature, progress_callback
+                )
+            except (
+                APITimeoutError,
+                APIConnectionError,
+                httpx.TimeoutException,
+                httpx.RemoteProtocolError,
+            ) as exc:
+                if attempt >= retries:
+                    log.exception(f"Gemini 摘要生成失敗: {describe_exception(exc)}")
+                    raise
+                wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                log.warning(
+                    f"Gemini 請求瞬時失敗（第 {attempt + 1}/{retries + 1} 次）："
+                    f"{describe_exception(exc)}，{wait_seconds:.0f} 秒後重試"
+                )
+                await asyncio.sleep(wait_seconds)
+            except Exception as e:
+                log.exception(f"Gemini 摘要生成失敗: {describe_exception(e)}")
+                raise
+
+        raise RuntimeError("Gemini 請求重試邏輯異常（不應執行到此）")
+
+    async def _gemini_chat_once(
+        self,
+        system_prompt: str,
+        user_message: str,
+        temperature: float,
+        progress_callback: Optional[callable],
+    ) -> str:
+        """單次 Gemini 流式請求（由 _gemini_chat 負責重試與錯誤記錄）。"""
         client = self._get_gemini_async_client()
 
-        try:
-            # 使用異步流式響應以獲得實時進度更新
-            summary_parts = []
-            chunk_count = 0
+        # 使用異步流式響應以獲得實時進度更新
+        summary_parts = []
+        chunk_count = 0
 
-            # 創建異步流式請求
-            async with await client.chat.completions.create(
-                model=settings.GEMINI_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=temperature,
-                stream=True  # 啟用流式響應
-            ) as response:
-                async for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        content = chunk.choices[0].delta.content
-                        summary_parts.append(content)
-                        chunk_count += 1
+        # 創建異步流式請求
+        async with await client.chat.completions.create(
+            model=settings.GEMINI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=temperature,
+            stream=True  # 啟用流式響應
+        ) as response:
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    summary_parts.append(content)
+                    chunk_count += 1
 
-                        # 定期更新進度（每 5 個 chunk 更新一次；訊息一律中文）
-                        # v4.3.3：區間改為 86-94%——萃取階段（68-84%）已有自己的
-                        # 進度回報，串流進度從 65% 起算會讓進度條倒退
-                        if progress_callback and chunk_count % 5 == 0:
-                            progress = 86.0 + min(chunk_count / 10, 8.0)
-                            progress_callback(progress, "雲端回應接收中...")
+                    # 定期更新進度（每 5 個 chunk 更新一次；訊息一律中文）
+                    # v4.3.3：區間改為 86-94%——萃取階段（68-84%）已有自己的
+                    # 進度回報，串流進度從 65% 起算會讓進度條倒退
+                    if progress_callback and chunk_count % 5 == 0:
+                        progress = 86.0 + min(chunk_count / 10, 8.0)
+                        progress_callback(progress, "雲端回應接收中...")
 
-            summary = "".join(summary_parts)
+        summary = "".join(summary_parts)
 
-            # 檢查摘要是否為空
-            if not summary or not summary.strip():
-                log.warning("Gemini 摘要生成結果為空")
-                raise RuntimeError("摘要生成失敗：結果為空")
+        # 檢查摘要是否為空
+        if not summary or not summary.strip():
+            log.warning("Gemini 摘要生成結果為空")
+            raise RuntimeError("摘要生成失敗：結果為空")
 
-            summary = self._clean_ollama_output(summary)
-            log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}，接收 {chunk_count} 個 chunks")
-            return summary
-
-        except Exception as e:
-            log.error(f"Gemini 摘要生成失敗: {e}")
-            raise
+        summary = self._clean_ollama_output(summary)
+        log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}，接收 {chunk_count} 個 chunks")
+        return summary
 
     async def check_ollama_health(self) -> bool:
         """
@@ -1385,7 +1583,7 @@ class SummarizationService:
             return True
 
         except Exception as e:
-            log.error(f"Ollama 健康檢查失敗: {e}")
+            log.error(f"Ollama 健康檢查失敗: {describe_exception(e)}")
             self._ollama_model_error = None
             return False
 
@@ -1540,7 +1738,8 @@ class SummarizationService:
         """檢查 LM Studio 服務是否可用"""
         try:
             client = self._get_lmstudio_client()
-            client.models.list()
+            # 同步 client 直接呼叫會阻塞 event loop（v4.6.2 修正）
+            await asyncio.to_thread(client.models.list)
             return True
         except Exception:
             return False
@@ -1600,7 +1799,7 @@ class SummarizationService:
             return result
 
         except Exception as e:
-            log.warning(f"Gemini 健康檢查失敗: {str(e)}")
+            log.warning(f"Gemini 健康檢查失敗: {describe_exception(e)}")
             cache["status"] = False
             cache["last_check_time"] = now
             return False
@@ -1616,6 +1815,147 @@ class SummarizationService:
             "ttl_seconds": 86400
         }
         log.info("已重置 Gemini 健康檢查快取")
+
+    async def _load_model_and_check_offload(
+        self, client: httpx.AsyncClient, model: str, context_tokens: int
+    ) -> Optional[tuple[int, int]]:
+        """load-only 載入模型並回傳 (/api/ps 的 size, size_vram)；查詢失敗回 None。
+
+        必須帶與後續 /api/chat 相同的 options.num_ctx——Ollama runner 依 num_ctx
+        載入，ctx 不一致會觸發整顆模型重載（參考專案實證教訓），warmup 就白做了。
+        """
+        start = asyncio.get_event_loop().time()
+        response = await client.post(
+            "/api/generate",
+            json={
+                "model": model,
+                "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
+                "options": {"num_ctx": context_tokens},
+            },
+            timeout=settings.LOCAL_LLM_WARMUP_TIMEOUT,
+        )
+        response.raise_for_status()
+        elapsed = asyncio.get_event_loop().time() - start
+        log.info(f"本地模型預熱完成：{model}，耗時 {elapsed:.1f} 秒")
+
+        ps = await client.get("/api/ps", timeout=10.0)
+        if ps.status_code != 200:
+            return None
+        for loaded in ps.json().get("models", []):
+            if loaded.get("name") != model and loaded.get("model") != model:
+                continue
+            return loaded.get("size", 0), loaded.get("size_vram", 0)
+        return None
+
+    async def _get_model_disk_size(self, client: httpx.AsyncClient, model: str) -> int:
+        """從 /api/tags 取模型磁碟大小（≈權重），供 KV 量化生效 heuristic 使用。"""
+        try:
+            tags = await client.get("/api/tags", timeout=10.0)
+            if tags.status_code != 200:
+                return 0
+            for item in tags.json().get("models", []):
+                if item.get("name") == model or item.get("model") == model:
+                    return item.get("size", 0)
+        except Exception:  # noqa: BLE001
+            pass
+        return 0
+
+    def _check_kv_quantization_heuristic(self, loaded_size: int, disk_size: int) -> None:
+        """KV 量化生效 heuristic（best-effort 近似，v4.7.0）。
+
+        載入大小 − 磁碟大小 ≈ KV cache＋overhead。以本機實測為錨：
+        f16 KV @16384 ≈ 3.1GB（23.0GB − 19.9GB）。overhead 依 num_ctx 線性縮放後，
+        高於 f16 預期的 8 成 → 疑似量化未生效；低於一半 → 判定已生效。
+        """
+        if not loaded_size or not disk_size or loaded_size <= disk_size:
+            return
+        overhead = loaded_size - disk_size
+        ctx = self._effective_context_tokens()
+        f16_expected = 3.1e9 * (ctx / 16384)
+        if overhead >= f16_expected * 0.8:
+            log.warning(
+                f"KV cache overhead ≈ {overhead / 1e9:.1f}GB（f16 特徵）——"
+                "OLLAMA_KV_CACHE_TYPE=q8_0 可能未生效；請用 scripts/diagnose_ollama_host.ps1 "
+                "檢查主機環境變數是否真的作用於 Ollama 程序（setx 常因 tray app 未重啟而無效）"
+            )
+        elif overhead <= f16_expected * 0.55:
+            log.info(f"KV 量化已生效：overhead ≈ {overhead / 1e9:.1f}GB（q8 特徵）")
+
+    async def warmup_local_model(self) -> None:
+        """預熱本地 Ollama 模型：載入＋offload 驗證＋自我修復＋降級（v4.7.0）。
+
+        背景：ASR 前會強制卸載模型（VRAM 交接），ASR 後第一個生成呼叫必為
+        冷啟動；且 Ollama scheduler 只在載入當下依可用 VRAM 決定 layer 配置
+        （offload 一旦發生就持續到下次重載）。因此這裡：
+        1. load-only 載入（專屬逾時，把冷載入成本從生成呼叫拆出）
+        2. /api/ps 驗證是否 offload；offload → 卸載→等待→重載（自我修復一次）
+        3. 仍 offload → 本任務降級 num_ctx（LOCAL_LLM_DEGRADED_CONTEXT_TOKENS），
+           確保即使主機環境（KV 量化）不可控也能全 VRAM 完成任務
+        4. KV 量化生效 heuristic：提示主機 OLLAMA_KV_CACHE_TYPE 是否真的作用
+
+        任何失敗都不上拋：warmup 只是把載入成本前移，生成呼叫自身已有重試。
+        """
+        # 防跨任務殘留：每個任務的 warmup 都從預設 ctx 重新出發
+        self._active_context_tokens = None
+
+        try:
+            if not await self.check_ollama_health():
+                return
+
+            client = await self._get_ollama_client()
+            model = self._get_effective_model()
+            configured_ctx = settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
+
+            sizes = await self._load_model_and_check_offload(client, model, configured_ctx)
+            if sizes is None:
+                return
+            size, size_vram = sizes
+
+            if size and size_vram < size:
+                log.warning(
+                    f"本地模型部分卸載至 CPU：size={size}, size_vram={size_vram}"
+                    f"（{size_vram / size:.0%} 在 VRAM）——嘗試自我修復（卸載後重載）"
+                )
+                # 自我修復：卸載（含 /api/ps 輪詢確認）→ 短暫等待 → 重載
+                await self.release_local_model()
+                await asyncio.sleep(2.0)
+                try:
+                    from backend.services.device_detector import device_detector
+                    device_detector.detect_best_device()
+                    log.info(f"重載前可用 VRAM：{device_detector.gpu_memory_mb} MB")
+                except Exception:  # noqa: BLE001
+                    pass
+
+                sizes = await self._load_model_and_check_offload(client, model, configured_ctx)
+                if sizes is not None:
+                    size, size_vram = sizes
+
+                if size and size_vram < size:
+                    self._active_context_tokens = settings.LOCAL_LLM_DEGRADED_CONTEXT_TOKENS
+                    log.warning(
+                        f"自我修復後仍部分卸載（{size_vram / size:.0%} 在 VRAM）——"
+                        f"本任務降級 num_ctx={self._active_context_tokens}；"
+                        "若持續發生，請將 LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS 永久調為 8192，"
+                        "或在主機啟用 OLLAMA_FLASH_ATTENTION=1 + OLLAMA_KV_CACHE_TYPE=q8_0"
+                    )
+                    # 以降級 ctx 重載一次，把 runner 重載成本吸收在 warmup 內
+                    # （否則第一個 chat 呼叫會因 ctx 改變觸發整顆模型重載）
+                    degraded_sizes = await self._load_model_and_check_offload(
+                        client, model, self._active_context_tokens
+                    )
+                    if degraded_sizes is not None:
+                        size, size_vram = degraded_sizes
+                        if size and size_vram >= size:
+                            log.info("降級 num_ctx 後模型已完全載入 VRAM")
+                else:
+                    log.info("自我修復成功：模型已完全載入 VRAM")
+            else:
+                log.info(f"本地模型完全載入 VRAM：size={size}, size_vram={size_vram}")
+
+            disk_size = await self._get_model_disk_size(client, model)
+            self._check_kv_quantization_heuristic(size, disk_size)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(f"本地模型預熱失敗（不影響流程，生成呼叫自帶重試）: {describe_exception(exc)}")
 
     async def release_local_model(self) -> None:
         """立即請 Ollama 卸載本地模型釋放 VRAM。
@@ -1644,7 +1984,7 @@ class SummarizationService:
                 await asyncio.sleep(1.0)
             log.info("已請求 Ollama 釋放模型 VRAM（供 ASR 使用），並確認卸載狀態")
         except Exception as exc:  # noqa: BLE001
-            log.debug("釋放 Ollama 模型失敗（不影響流程）: {}", exc)
+            log.debug("釋放 Ollama 模型失敗（不影響流程）: {}", describe_exception(exc))
 
     async def close(self):
         """關閉客戶端連接"""

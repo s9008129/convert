@@ -107,7 +107,7 @@ services:
       # ========================================
       - ENABLE_TRANSCRIPT_CORRECTION=${ENABLE_TRANSCRIPT_CORRECTION:-true}
       - CORRECTION_SCOPE=${CORRECTION_SCOPE:-auto}
-      - LOCAL_LLM_KEEP_ALIVE=${LOCAL_LLM_KEEP_ALIVE:-10m}
+      - LOCAL_LLM_KEEP_ALIVE=${LOCAL_LLM_KEEP_ALIVE:-30m}
 
       # ========================================
       # 4090 實測校調（v4.2.2）：
@@ -118,13 +118,39 @@ services:
       - LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS=${LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS:-16384}
       - LOCAL_LLM_RESERVED_OUTPUT_TOKENS=${LOCAL_LLM_RESERVED_OUTPUT_TOKENS:-2048}
       - LOCAL_LLM_DISABLE_THINKING=${LOCAL_LLM_DISABLE_THINKING:-true}
+
+      # ========================================
+      # LLM 逾時與重試（v4.6.2 引入，v4.7.0 改串流語意）：
+      # - REQUEST_TIMEOUT 現為「總時長上限」（串流下卡死由 IDLE_TIMEOUT 偵測，
+      #   放寬到 30 分鐘——寧可等待、不截斷）
+      # - STREAM_IDLE_TIMEOUT：chunk 間閒置逾時（快速偵測真正卡死）
+      # ========================================
+      - LOCAL_LLM_REQUEST_TIMEOUT=${LOCAL_LLM_REQUEST_TIMEOUT:-1800}
+      - LOCAL_LLM_STREAM_IDLE_TIMEOUT=${LOCAL_LLM_STREAM_IDLE_TIMEOUT:-120}
+      - LOCAL_LLM_WARMUP_TIMEOUT=${LOCAL_LLM_WARMUP_TIMEOUT:-600}
+      - LOCAL_LLM_TRANSIENT_RETRIES=${LOCAL_LLM_TRANSIENT_RETRIES:-2}
+      - LOCAL_LLM_RETRY_BACKOFF_SECONDS=${LOCAL_LLM_RETRY_BACKOFF_SECONDS:-5.0}
+      - CLOUD_LLM_REQUEST_TIMEOUT=${CLOUD_LLM_REQUEST_TIMEOUT:-600}
+      - CLOUD_LLM_MAX_RETRIES=${CLOUD_LLM_MAX_RETRIES:-2}
+
+      # ========================================
+      # VRAM offload 根治（v4.7.0）：
+      # - MIN_TOKENS_PER_SECOND：吞吐低於此值即警告疑似 offload
+      # - DEGRADED_CONTEXT_TOKENS：warmup 自我修復失敗時本任務降級 num_ctx
+      # - ASR_ISOLATION=subprocess：ASR 子程序隔離，VRAM 保證歸還（根因對策）
+      # ========================================
+      - LOCAL_LLM_MIN_TOKENS_PER_SECOND=${LOCAL_LLM_MIN_TOKENS_PER_SECOND:-5.0}
+      - LOCAL_LLM_DEGRADED_CONTEXT_TOKENS=${LOCAL_LLM_DEGRADED_CONTEXT_TOKENS:-8192}
+      - ASR_ISOLATION=${ASR_ISOLATION:-subprocess}
+      - ASR_WORKER_TIMEOUT_SECONDS=${ASR_WORKER_TIMEOUT_SECONDS:-7200}
       
       # ========================================
       # 檔案上傳限制（RTX 4090 可處理更大檔案）
       # ========================================
       - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-500}
       - ENABLE_BATCH_UPLOAD=${ENABLE_BATCH_UPLOAD:-true}
-      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-2}
+      # v4.7.0：單卡（24GB）序列化原則——GPU 上同時只能有一件事
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-1}
       - QUEUE_MAX_SIZE=${QUEUE_MAX_SIZE:-100}
       
       # ========================================
@@ -204,7 +230,10 @@ volumes:
 # ✅ NVIDIA Container Toolkit 已安裝
 # ✅ NVIDIA 驅動版本 >= 520
 # ✅ nvidia-smi 正常工作
-# ✅ Ollama 服務運行中（建議環境變數：OLLAMA_FLASH_ATTENTION=1、OLLAMA_KV_CACHE_TYPE=q8_0）
+# ✅ Ollama 服務運行中——主機【必要】環境變數：OLLAMA_FLASH_ATTENTION=1、OLLAMA_KV_CACHE_TYPE=q8_0
+#    （KV cache 減半，gemma4:31b@16K 從 ~23GB 降至 ~21GB，offload 根因對策；
+#      setx 沒生效／被管制時，改用 scripts/start_ollama_optimized.ps1 行內環境變數啟動，
+#      並以 scripts/diagnose_ollama_host.ps1 驗證 /api/ps 載入量）
 #
 # 部署命令（首次或 requirements.txt / Dockerfile 變更時才需要 build）：
 #   cd docker

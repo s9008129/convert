@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     # ========================================
     MAX_CONCURRENT_TASKS: int = Field(default=1, description="最大同時處理任務數")
     QUEUE_MAX_SIZE: int = Field(default=50, description="排隊佇列最大長度")
-    TASK_TIMEOUT_SECONDS: int = Field(default=3600, description="單一任務超時時間（秒）")
+    # v4.6.2：移除從未生效的 TASK_TIMEOUT_SECONDS——整任務 wait_for 對長會議
+    # 是合法超時，且無法安全取消 executor 中的 ASR；超時控制改在每次 LLM 請求層級
     ESTIMATED_MINUTES_PER_TASK: int = Field(default=4, description="預估每個任務處理時間（分鐘）")
     
     # ========================================
@@ -47,7 +48,7 @@ class Settings(BaseSettings):
     )
     LOCAL_LLM_MODEL: str = Field(
         default="gemma4:31b",
-        description="本地 LLM 模型名稱（預設 gemma4 家族；必要時可由環境變數覆蓋為較小或量化變體）"
+        description="本地 LLM 模型名稱（預設 gemma4 家族；VRAM 吃緊時可一行改 gemma4:26b——~16GB 全 VRAM、快 5.8 倍、品質略降，參考專案實測）"
     )
     
     # LM Studio 設定（OpenAI 相容 API）
@@ -104,8 +105,8 @@ class Settings(BaseSettings):
         description="本地摘要品質驗證後的最大補強輪數"
     )
     LOCAL_LLM_KEEP_ALIVE: str = Field(
-        default="10m",
-        description="Ollama keep_alive；三階段流程期間保留模型於記憶體，避免每階段重載大模型（P0-7）"
+        default="30m",
+        description="Ollama keep_alive；三階段流程期間保留模型於記憶體，避免每階段重載大模型（P0-7；v4.7.0 對齊參考專案調為 30m）"
     )
     LOCAL_LLM_MAX_MERGE_ROUNDS: int = Field(
         default=3,
@@ -114,6 +115,48 @@ class Settings(BaseSettings):
     LOCAL_LLM_DISABLE_THINKING: bool = Field(
         default=True,
         description="關閉思考型模型（如 gemma4）的 thinking 輸出；否則 num_predict 預算會被思考耗盡導致正文極短或為空（E2E 實測根因）"
+    )
+
+    # ========================================
+    # LLM 請求逾時與重試（v4.6.2）
+    # 根因背景：ASR 前強制卸載 Ollama 模型（VRAM 交接），冷載入＋長會議多次
+    # 呼叫使單一 /api/chat 逾時（httpx ReadTimeout，str() 為空）即毀掉整份紀錄
+    # ========================================
+    LOCAL_LLM_REQUEST_TIMEOUT: float = Field(
+        default=1800.0,
+        description="每次 Ollama /api/chat 總時長上限（秒）；v4.7.0 改 streaming 後卡死由閒置逾時偵測，總上限放寬（寧可等待不截斷）"
+    )
+    LOCAL_LLM_STREAM_IDLE_TIMEOUT: float = Field(
+        default=120.0,
+        description="串流回應 chunk 間最大閒置秒數；超過視為連線卡死（可重試）"
+    )
+    LOCAL_LLM_MIN_TOKENS_PER_SECOND: float = Field(
+        default=5.0,
+        description="生成吞吐低於此值即警告疑似 CPU offload（v4.7.0 觀測門檻）"
+    )
+    LOCAL_LLM_DEGRADED_CONTEXT_TOKENS: int = Field(
+        default=8192,
+        description="warmup 自我修復後仍偵測到 offload 時，本任務降級使用的 num_ctx（f16 KV 下 8192 約 21.5GB，含 scheduler 邊際仍可全載）"
+    )
+    LOCAL_LLM_WARMUP_TIMEOUT: float = Field(
+        default=600.0,
+        description="ASR 後預熱（load-only 重載模型）專用逾時（秒）；把冷載入時間從生成呼叫的逾時額度中拆出"
+    )
+    LOCAL_LLM_TRANSIENT_RETRIES: int = Field(
+        default=2,
+        description="每次本地 LLM 呼叫對瞬時錯誤（timeout/連線中斷）的額外重試次數"
+    )
+    LOCAL_LLM_RETRY_BACKOFF_SECONDS: float = Field(
+        default=5.0,
+        description="瞬時錯誤重試的線性退避基數（第 n 次重試前等待 n×backoff 秒）"
+    )
+    CLOUD_LLM_REQUEST_TIMEOUT: float = Field(
+        default=600.0,
+        description="Gemini（OpenAI 相容）請求逾時（秒）"
+    )
+    CLOUD_LLM_MAX_RETRIES: int = Field(
+        default=2,
+        description="雲端呼叫重試次數（SDK max_retries＋應用層串流中斷重試共用）"
     )
 
     # ========================================
@@ -252,6 +295,16 @@ class Settings(BaseSettings):
     ASR_INITIAL_PROMPT: str = Field(
         default="以下是台灣繁體中文的會議記錄。",
         description="轉錄初始提示詞"
+    )
+    # v4.7.0：ASR 子程序隔離——唯一能保證 CUDA context／分配器殘留完全釋回的方式
+    # 是程序退出（faster-whisper#992 實測長駐程序每次殘留 ~312MB，蠶食 Ollama 可用 VRAM）
+    ASR_ISOLATION: str = Field(
+        default="subprocess",
+        description="ASR 執行隔離模式：subprocess=獨立子程序（VRAM 保證歸還）／inprocess=舊行為（回退桿）"
+    )
+    ASR_WORKER_TIMEOUT_SECONDS: float = Field(
+        default=7200.0,
+        description="ASR 子程序硬上限（秒）；逾時 kill 並判定任務失敗（超長音檔屬病態輸入，不退回 in-process）"
     )
     
     # ========================================

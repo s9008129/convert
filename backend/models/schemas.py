@@ -48,6 +48,8 @@ class TaskInfo(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    # v4.6.2：摘要失敗但任務仍完成（僅逐字稿）——前端警示與下載檔名依此判斷
+    summary_failed: bool = False
 
 
 class TranscriptionResult(BaseModel):
@@ -76,6 +78,7 @@ class ProgressMessage(BaseModel):
     queue_position: Optional[int] = None
     queue_total: Optional[int] = None
     preview: Optional[str] = None  # 任務完成時的結果預覽
+    summary_failed: bool = False  # v4.6.2：完成但僅含逐字稿（會議紀錄生成失敗）
 
 
 class QueueStatus(BaseModel):

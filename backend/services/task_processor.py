@@ -17,9 +17,10 @@ import time
 from typing import Optional
 
 from backend.core.config import settings
+from backend.core.errors import describe_exception
 from backend.core.logger import log
 from backend.models.schemas import TaskInfo, TaskStatus, ProcessingMode, ProgressMessage
-from backend.services.transcription import transcription_service
+from backend.services.asr_subprocess import transcribe_isolated
 from backend.services.summarization import summarization_service
 from backend.services.correction import transcript_correction_service, CorrectionReport
 from backend.services.file_manager import file_manager
@@ -62,7 +63,8 @@ class TaskProcessor:
                 eta_seconds=task.estimated_wait_seconds,
                 queue_position=task.queue_position,
                 queue_total=queue_status.total_queued,
-                preview=preview
+                preview=preview,
+                summary_failed=task.summary_failed,
             )
             await connection_manager.send_progress(task_id, message)
 
@@ -87,7 +89,7 @@ class TaskProcessor:
                 log.info("任務處理器被取消")
                 break
             except Exception as e:
-                log.error(f"任務處理器錯誤: {e}")
+                log.exception(f"任務處理器錯誤: {describe_exception(e)}")
                 await asyncio.sleep(1)
 
     async def stop(self):
@@ -112,21 +114,13 @@ class TaskProcessor:
 
         await self._update_progress(task.task_id, 10.0, "載入 Whisper 模型...", TaskStatus.TRANSCRIBING)
 
-        loop = asyncio.get_event_loop()
-
+        # v4.7.0：ASR 預設走獨立子程序（backend/services/asr_subprocess.py）——
+        # 程序退出保證 CUDA context／分配器殘留完全釋回，Ollama 之後載入
+        # 才看得到乾淨的可用 VRAM（offload 根因之一）
         async def async_progress_update(progress: float, message: str):
             await self._update_progress(task.task_id, progress, message)
 
-        def sync_progress_cb(progress: float, message: str):
-            asyncio.run_coroutine_threadsafe(
-                async_progress_update(progress, message),
-                loop
-            )
-
-        transcript, _duration = await loop.run_in_executor(
-            None,
-            lambda: transcription_service.transcribe(file_path, sync_progress_cb)
-        )
+        transcript, _duration = await transcribe_isolated(file_path, async_progress_update)
 
         if not transcript or not transcript.strip():
             raise RuntimeError("轉錄結果為空")
@@ -167,7 +161,9 @@ class TaskProcessor:
             )
             return corrected, report
         except Exception as exc:  # noqa: BLE001
-            log.warning(f"語意校正失敗，沿用清理後逐字稿: {exc}")
+            # 校正層與摘要層共用本地 LLM——這裡的失敗常是摘要失敗的早期警訊，
+            # 訊息必須完整（timeout 類例外 str() 為空，需帶類別名稱）
+            log.warning(f"語意校正失敗，沿用清理後逐字稿: {describe_exception(exc)}")
             return cleaned, None
 
     async def _process_task(self, task: TaskInfo):
@@ -189,6 +185,18 @@ class TaskProcessor:
 
             # 步驟 1：轉錄（含快取）
             transcript = await self._obtain_transcript(task, file_path)
+
+            # 步驟 1.5：預熱本地 LLM（v4.6.2）
+            # ASR 前已強制卸載 Ollama 模型（VRAM 交接），這裡先以 load-only
+            # 請求把冷載入時間從後續生成呼叫的 timeout 額度中拆出，
+            # 並記錄 CPU offload 狀態供正式機診斷。
+            needs_local_llm = task.processing_mode == ProcessingMode.LOCAL or (
+                settings.ENABLE_TRANSCRIPT_CORRECTION
+                and (settings.CORRECTION_SCOPE or "").lower() != "off"
+            )
+            if needs_local_llm:
+                await self._update_progress(task.task_id, 61.0, "載入本地模型...")
+                await summarization_service.warmup_local_model()
 
             # 步驟 2：語意校正（確定性清理 ＋ LLM 校正）
             transcript, correction_report = await self._apply_semantic_correction(task, transcript)
@@ -220,8 +228,10 @@ class TaskProcessor:
                 )
             except Exception as e:
                 # P0-5：摘要失敗不偽裝成功——保留逐字稿輸出，但以顯著警告標示
-                summary_error = str(e)
-                log.error(f"摘要生成失敗（輸出將明確標示為僅逐字稿）: {e}")
+                # v4.6.2：timeout 類例外 str() 為空，必須帶類別名稱＋完整 traceback
+                summary_error = describe_exception(e)
+                task.summary_failed = True
+                log.exception(f"摘要生成失敗（輸出將明確標示為僅逐字稿）: {summary_error}")
                 await self._update_progress(task.task_id, 70.0, f"⚠️ 會議紀錄生成失敗，輸出僅含逐字稿: {summary_error[:50]}")
 
             # 步驟 4：組合最終結果
@@ -248,15 +258,16 @@ class TaskProcessor:
             log.info(f"任務 {task.task_id} 處理完成，耗時: {processing_time:.1f}秒")
 
         except Exception as e:
-            log.error(f"任務 {task.task_id} 處理失敗: {e}")
-            await task_queue.complete_task(task.task_id, success=False, error_message=str(e))
+            error_text = describe_exception(e)
+            log.exception(f"任務 {task.task_id} 處理失敗: {error_text}")
+            await task_queue.complete_task(task.task_id, success=False, error_message=error_text)
 
             message = ProgressMessage(
                 task_id=task.task_id,
                 status=TaskStatus.FAILED,
                 progress=0.0,
                 stage="失敗",
-                message=str(e)
+                message=error_text
             )
             await connection_manager.send_progress(task.task_id, message)
 
@@ -305,8 +316,9 @@ class TaskProcessor:
         if summary_failed:
             title = "# 逐字稿（會議紀錄生成失敗）"
             failure_note = SUMMARY_FAILED_BANNER
-            if summary_error:
-                failure_note += f"\n> 失敗原因：{summary_error[:200]}"
+            # v4.6.2：失敗原因行無條件輸出——空訊息例外曾讓此行整個消失
+            reason = summary_error or "未知錯誤（無例外訊息）"
+            failure_note += f"\n> 失敗原因：{reason[:200]}"
             sections.append(failure_note)
 
         sections.append(body)

@@ -453,3 +453,437 @@ async def test_cloud_pipeline_refines_when_summary_below_dynamic_floor(monkeypat
     assert "摘要內容過短" in refinement_message
     assert "原始逐字稿（補充細節時以此為準）" in refinement_message
     assert len(summary) > len(thin_summary)
+
+
+# ========================================
+# v4.6.2/v4.7.0：串流生成、瞬時錯誤重試、模型預熱自我修復、雲端串流重試
+# ========================================
+
+
+class _FakeStreamResponse:
+    """模擬 httpx client.stream 的回應（NDJSON lines）。"""
+
+    def __init__(self, lines: list[str], status_code: int = 200):
+        self.status_code = status_code
+        self._lines = lines
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            if isinstance(line, Exception):
+                raise line
+            yield line
+
+    async def aread(self):
+        return b""
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+
+            response = Mock()
+            response.status_code = self.status_code
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}", request=Mock(), response=response
+            )
+
+
+class _FakeStreamContext:
+    def __init__(self, response: _FakeStreamResponse):
+        self._response = response
+
+    async def __aenter__(self):
+        return self._response
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def _stream_client(lines: list, status_code: int = 200) -> Mock:
+    client = Mock()
+    client.stream = Mock(return_value=_FakeStreamContext(_FakeStreamResponse(lines, status_code)))
+    return client
+
+
+def _done_chunk(**overrides) -> str:
+    import json as _json
+
+    chunk = {
+        "done": True,
+        "done_reason": "stop",
+        "load_duration": int(2e9),
+        "eval_count": 100,
+        "eval_duration": int(5e9),
+    }
+    chunk.update(overrides)
+    return _json.dumps(chunk)
+
+
+def _content_chunk(text: str) -> str:
+    import json as _json
+
+    return _json.dumps({"message": {"content": text}, "done": False})
+
+
+@pytest.mark.asyncio
+async def test_stream_ollama_chat_once_accumulates_content():
+    """happy path：串流內容累積＋done chunk 指標回傳。"""
+    service = SummarizationService()
+    client = _stream_client([_content_chunk("會議"), _content_chunk("紀錄"), _done_chunk()])
+
+    content, final = await service._stream_ollama_chat_once(client, {"model": "m"})
+
+    assert content == "會議紀錄"
+    assert final["done_reason"] == "stop"
+    assert final["eval_count"] == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_ollama_chat_once_raises_on_error_chunk():
+    """串流中途 error chunk（模型卸載／runner 崩潰）→ 可重試例外。"""
+    from backend.services.summarization import OllamaStreamRetryable
+
+    service = SummarizationService()
+    client = _stream_client([_content_chunk("部分"), '{"error": "model unloaded"}'])
+
+    with pytest.raises(OllamaStreamRetryable):
+        await service._stream_ollama_chat_once(client, {"model": "m"})
+
+
+@pytest.mark.asyncio
+async def test_stream_ollama_chat_once_raises_when_no_done_chunk():
+    """串流結束但沒有 done chunk（連線中斷）→ 可重試例外。"""
+    from backend.services.summarization import OllamaStreamRetryable
+
+    service = SummarizationService()
+    client = _stream_client([_content_chunk("斷在一半")])
+
+    with pytest.raises(OllamaStreamRetryable):
+        await service._stream_ollama_chat_once(client, {"model": "m"})
+
+
+@pytest.mark.asyncio
+async def test_stream_ollama_chat_once_raises_on_truncated_done_reason():
+    """done_reason=length（輸出被截斷）→ 可重試例外。"""
+    from backend.services.summarization import OllamaStreamRetryable
+
+    service = SummarizationService()
+    client = _stream_client([_content_chunk("截斷"), _done_chunk(done_reason="length")])
+
+    with pytest.raises(OllamaStreamRetryable):
+        await service._stream_ollama_chat_once(client, {"model": "m"})
+
+
+@pytest.mark.asyncio
+async def test_post_ollama_chat_retries_transient_and_stream_failures(monkeypatch):
+    """閒置逾時（ReadTimeout）與串流層失敗都應重試，而非毀掉整份紀錄。"""
+    import httpx
+
+    from backend.services.summarization import OllamaStreamRetryable
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 2)
+    monkeypatch.setattr(settings, "LOCAL_LLM_RETRY_BACKOFF_SECONDS", 0.0)
+
+    service = SummarizationService()
+    once = AsyncMock(
+        side_effect=[httpx.ReadTimeout(""), OllamaStreamRetryable("斷線"), ("OK", {})]
+    )
+    monkeypatch.setattr(service, "_stream_ollama_chat_once", once)
+
+    content, _metrics, send_think = await service._post_ollama_chat(Mock(), {"model": "m"}, False)
+
+    assert content == "OK"
+    assert send_think is False
+    assert once.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_post_ollama_chat_gives_up_after_configured_retries(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 2)
+    monkeypatch.setattr(settings, "LOCAL_LLM_RETRY_BACKOFF_SECONDS", 0.0)
+
+    service = SummarizationService()
+    once = AsyncMock(side_effect=httpx.ReadTimeout(""))
+    monkeypatch.setattr(service, "_stream_ollama_chat_once", once)
+
+    with pytest.raises(httpx.ReadTimeout):
+        await service._post_ollama_chat(Mock(), {"model": "m"}, False)
+
+    assert once.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_post_ollama_chat_does_not_retry_non_transient_errors(monkeypatch):
+    """非瞬時錯誤（如程式邏輯例外）不得重試，避免掩蓋真正 bug。"""
+    monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 2)
+
+    service = SummarizationService()
+    once = AsyncMock(side_effect=ValueError("boom"))
+    monkeypatch.setattr(service, "_stream_ollama_chat_once", once)
+
+    with pytest.raises(ValueError):
+        await service._post_ollama_chat(Mock(), {"model": "m"}, False)
+
+    assert once.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_post_ollama_chat_adds_think_field_and_downgrades_on_400(monkeypatch):
+    """think 相容降級語意須保留：400 時改以不帶 think 欄位重送。"""
+    import httpx
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+
+    service = SummarizationService()
+    bodies: list[dict] = []
+
+    async def fake_once(_client, body):
+        bodies.append(body)
+        if body.get("think") is False:
+            response = Mock()
+            response.status_code = 400
+            raise httpx.HTTPStatusError("400", request=Mock(), response=response)
+        return "OK", {}
+
+    monkeypatch.setattr(service, "_stream_ollama_chat_once", fake_once)
+
+    content, _metrics, send_think = await service._post_ollama_chat(Mock(), {"model": "m"}, True)
+
+    assert content == "OK"
+    assert send_think is False
+    assert bodies[0].get("think") is False
+    assert "think" not in bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_ollama_honors_context_override(monkeypatch):
+    """v4.7.0：num_ctx 覆蓋值須貫穿到 payload（warmup 降級的落點）。"""
+    service = SummarizationService()
+    payloads: list[dict] = []
+
+    async def fake_post(_client, payload, send_think_field):
+        payloads.append(payload)
+        return "會議紀錄本文", {}, send_think_field
+
+    monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=Mock()))
+    monkeypatch.setattr(service, "_get_effective_model", Mock(return_value="gemma4:31b"))
+    monkeypatch.setattr(service, "_post_ollama_chat", fake_post)
+
+    await service._summarize_with_ollama("sys", "user", context_window_tokens=4096)
+    assert payloads[-1]["options"]["num_ctx"] == 4096
+    assert payloads[-1]["stream"] is True
+
+    service._active_context_tokens = 8192
+    await service._summarize_with_ollama("sys", "user")
+    assert payloads[-1]["options"]["num_ctx"] == 8192
+
+
+def test_build_local_context_plan_context_override_shrinks_budgets():
+    """降級 ctx 必須同步縮小 merge 預算，否則輸入會超出 num_ctx 被靜默截斷。"""
+    service = SummarizationService()
+    transcript = "測試逐字稿" * 2000
+
+    default_plan = service._build_local_context_plan(
+        transcript, settings.DEFAULT_SYSTEM_PROMPT, context_window_tokens=16384
+    )
+    degraded_plan = service._build_local_context_plan(
+        transcript, settings.DEFAULT_SYSTEM_PROMPT, context_window_tokens=8192
+    )
+
+    assert degraded_plan.context_window_tokens == 8192
+    assert degraded_plan.notes_merge_budget_tokens < default_plan.notes_merge_budget_tokens
+
+
+def _ps_response(size: int, size_vram: int) -> Mock:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "models": [{"name": "gemma4:31b", "size": size, "size_vram": size_vram}]
+    }
+    return response
+
+
+def _tags_response(disk_size: int) -> Mock:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"models": [{"name": "gemma4:31b", "size": disk_size}]}
+    return response
+
+
+def _warmup_service(monkeypatch, client: Mock) -> SummarizationService:
+    service = SummarizationService()
+    monkeypatch.setattr(service, "check_ollama_health", AsyncMock(return_value=True))
+    monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=client))
+    monkeypatch.setattr(service, "_get_effective_model", Mock(return_value="gemma4:31b"))
+    monkeypatch.setattr(service, "release_local_model", AsyncMock())
+    return service
+
+
+@pytest.mark.asyncio
+async def test_warmup_local_model_sends_load_only_request_with_num_ctx(monkeypatch):
+    """預熱請求帶 model＋keep_alive＋options.num_ctx（不帶 prompt＝load-only）。
+
+    num_ctx 必須與後續 chat 相同——runner 依 ctx 載入，不一致會觸發整顆重載。
+    """
+    generate_response = Mock()
+    generate_response.status_code = 200
+    generate_response.raise_for_status = Mock()
+
+    client = Mock()
+    client.post = AsyncMock(return_value=generate_response)
+    client.get = AsyncMock(side_effect=[_ps_response(100, 100), _tags_response(90)])
+
+    service = _warmup_service(monkeypatch, client)
+    await service.warmup_local_model()
+
+    assert client.post.await_args.args[0] == "/api/generate"
+    payload = client.post.await_args.kwargs["json"]
+    assert set(payload) == {"model", "keep_alive", "options"}
+    assert payload["options"]["num_ctx"] == settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
+    assert "prompt" not in payload
+    assert service._active_context_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_warmup_self_heal_recovers_without_degrade(monkeypatch):
+    """offload → 卸載重載成功 → 不降級，且會清掉前一任務殘留的降級值。"""
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+
+    generate_response = Mock()
+    generate_response.status_code = 200
+    generate_response.raise_for_status = Mock()
+
+    client = Mock()
+    client.post = AsyncMock(return_value=generate_response)
+    client.get = AsyncMock(
+        side_effect=[_ps_response(100, 60), _ps_response(100, 100), _tags_response(90)]
+    )
+
+    service = _warmup_service(monkeypatch, client)
+    service._active_context_tokens = 8192  # 模擬前一任務殘留
+
+    await service.warmup_local_model()
+
+    service.release_local_model.assert_awaited_once()
+    assert service._active_context_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_warmup_self_heal_failure_degrades_context(monkeypatch):
+    """自我修復後仍 offload → 本任務降級 num_ctx，並以降級 ctx 再載一次。"""
+    from loguru import logger
+
+    monkeypatch.setattr("asyncio.sleep", AsyncMock())
+    monkeypatch.setattr(settings, "LOCAL_LLM_DEGRADED_CONTEXT_TOKENS", 8192)
+
+    generate_response = Mock()
+    generate_response.status_code = 200
+    generate_response.raise_for_status = Mock()
+
+    client = Mock()
+    client.post = AsyncMock(return_value=generate_response)
+    client.get = AsyncMock(
+        side_effect=[
+            _ps_response(100, 60),   # 第 1 次載入：offload
+            _ps_response(100, 60),   # 自我修復重載：仍 offload
+            _ps_response(80, 80),    # 降級 ctx 重載：全載
+            _tags_response(70),
+        ]
+    )
+
+    service = _warmup_service(monkeypatch, client)
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        await service.warmup_local_model()
+    finally:
+        logger.remove(sink_id)
+
+    assert service._active_context_tokens == 8192
+    assert any("降級 num_ctx" in record for record in records)
+    # 第 3 次 /api/generate 應帶降級 ctx
+    degraded_payload = client.post.await_args_list[-1].kwargs["json"]
+    assert degraded_payload["options"]["num_ctx"] == 8192
+
+
+def test_kv_quantization_heuristic_warns_on_f16_signature(monkeypatch):
+    """overhead ≈ f16 特徵 → 警告主機 KV 量化可能未生效。"""
+    from loguru import logger
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS", 16384)
+    service = SummarizationService()
+    service._active_context_tokens = None
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        # 19.9GB 磁碟、23.0GB 載入 → overhead 3.1GB ＝ f16@16384 特徵
+        service._check_kv_quantization_heuristic(int(23.0e9), int(19.9e9))
+    finally:
+        logger.remove(sink_id)
+
+    assert any("可能未生效" in record for record in records)
+
+
+def test_kv_quantization_heuristic_accepts_q8_signature(monkeypatch):
+    """overhead 約 f16 一半以下 → 判定量化已生效，不得誤報。"""
+    from loguru import logger
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS", 16384)
+    service = SummarizationService()
+    service._active_context_tokens = None
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        # overhead 1.5GB ≈ q8 特徵
+        service._check_kv_quantization_heuristic(int(21.4e9), int(19.9e9))
+    finally:
+        logger.remove(sink_id)
+
+    assert not any("可能未生效" in record for record in records)
+
+
+@pytest.mark.asyncio
+async def test_warmup_local_model_never_raises(monkeypatch):
+    """預熱只是把載入成本前移；任何失敗都不得中斷任務。"""
+    service = SummarizationService()
+    monkeypatch.setattr(
+        service, "check_ollama_health", AsyncMock(side_effect=RuntimeError("down"))
+    )
+
+    await service.warmup_local_model()  # 不應拋出
+
+
+@pytest.mark.asyncio
+async def test_gemini_chat_retries_transient_stream_failure(monkeypatch):
+    """雲端串流中途逾時應重試——最終生成與補強輪因此自動受保護。"""
+    import httpx
+
+    monkeypatch.setattr(settings, "CLOUD_LLM_MAX_RETRIES", 2)
+    monkeypatch.setattr(settings, "LOCAL_LLM_RETRY_BACKOFF_SECONDS", 0.0)
+
+    service = SummarizationService()
+    once = AsyncMock(side_effect=[httpx.ReadTimeout(""), "會議紀錄本文"])
+    monkeypatch.setattr(service, "_gemini_chat_once", once)
+
+    summary = await service._gemini_chat("system", "user")
+
+    assert summary == "會議紀錄本文"
+    assert once.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_chat_does_not_retry_non_transient_errors(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_LLM_MAX_RETRIES", 2)
+
+    service = SummarizationService()
+    once = AsyncMock(side_effect=RuntimeError("摘要生成失敗：結果為空"))
+    monkeypatch.setattr(service, "_gemini_chat_once", once)
+
+    with pytest.raises(RuntimeError):
+        await service._gemini_chat("system", "user")
+
+    assert once.await_count == 1

@@ -286,6 +286,8 @@ async def get_task_result(task_id: str, format: str = "md", doc: str = "record")
     # 下載檔名統一為「YYYYMMDDhhmmss_會議紀錄」（v4.2.3）；
     # 磁碟檔仍以 task_id 命名，保證唯一性與 docx 快取判斷不受影響
     download_stamp = task.created_at.strftime("%Y%m%d%H%M%S")
+    # v4.6.2：摘要失敗的 fallback 文件改名，避免被誤認為正式會議紀錄
+    record_label = "逐字稿(會議紀錄生成失敗)" if task.summary_failed else "會議紀錄"
 
     # 附件（v4.5.0）：由本文 md 確定性建構附件 md，再轉 docx（沿用 mtime 快取）
     if doc == "attachment":
@@ -328,7 +330,7 @@ async def get_task_result(task_id: str, format: str = "md", doc: str = "record")
         return FileResponse(
             result_path,
             media_type="text/markdown",
-            filename=f"{download_stamp}_會議紀錄.md"
+            filename=f"{download_stamp}_{record_label}.md"
         )
     
     docx_filename = f"{safe_base_name}_{task_id}.docx"
@@ -359,7 +361,7 @@ async def get_task_result(task_id: str, format: str = "md", doc: str = "record")
     return FileResponse(
         docx_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename=f"{download_stamp}_會議紀錄.docx"
+        filename=f"{download_stamp}_{record_label}.docx"
     )
 
 

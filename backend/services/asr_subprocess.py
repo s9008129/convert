@@ -1,0 +1,146 @@
+"""ASR 子程序執行器（v4.7.0）。
+
+根因背景：ASR 在長駐程序內反覆 CUDA load/unload 會累積 context／分配器殘留
+（唯一保證完全釋回 VRAM 的方式是程序退出），蠶食 Ollama 可用 VRAM，
+最終使 20GB 模型載入時被 offload 到 CPU、推理崩跌逾時。
+
+本模組把每次轉錄放進獨立子程序（backend/workers/asr_worker.py）：
+- 進度：worker stdout 的 JSON lines → 逐行轉發 async progress callback
+- 結果：worker 寫入暫存 JSON 檔，父程序讀回
+- 失敗：非零 exit code ＋ stderr 內容組成錯誤訊息
+- 回退：ASR_ISOLATION=inprocess 或 spawn 失敗時走舊的 executor 路徑
+"""
+
+import asyncio
+import json
+import os
+import sys
+import tempfile
+from typing import Awaitable, Callable, Optional, Tuple
+
+from backend.core.config import settings
+from backend.core.errors import describe_exception
+from backend.core.logger import log
+
+AsyncProgressCallback = Callable[[float, str], Awaitable[None]]
+
+
+async def _transcribe_inprocess(
+    file_path: str,
+    progress_callback: Optional[AsyncProgressCallback],
+) -> Tuple[str, float]:
+    """舊行為（v4.6.x）：thread executor 內同步轉錄，callback 跨執行緒橋接。"""
+    from backend.services.transcription import transcription_service
+
+    loop = asyncio.get_event_loop()
+
+    def sync_progress_cb(progress: float, message: str) -> None:
+        if progress_callback:
+            asyncio.run_coroutine_threadsafe(progress_callback(progress, message), loop)
+
+    return await loop.run_in_executor(
+        None,
+        lambda: transcription_service.transcribe(file_path, sync_progress_cb),
+    )
+
+
+async def _pump_progress_lines(
+    stream: asyncio.StreamReader,
+    progress_callback: Optional[AsyncProgressCallback],
+) -> None:
+    """逐行讀 worker stdout；JSON 行轉發進度，其他行（雜訊）記 debug。"""
+    while True:
+        line = await stream.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace").strip()
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            log.debug("ASR worker stdout（非進度行）: {}", text[:200])
+            continue
+        if progress_callback:
+            try:
+                await progress_callback(
+                    float(data.get("progress", 0.0)), str(data.get("message", ""))
+                )
+            except Exception as exc:  # noqa: BLE001 — 進度回報失敗不可中斷轉錄
+                log.debug("轉發 ASR 進度失敗（忽略）: {}", describe_exception(exc))
+
+
+async def _read_stream_text(stream: asyncio.StreamReader) -> str:
+    data = await stream.read()
+    return data.decode("utf-8", errors="replace")
+
+
+async def transcribe_isolated(
+    file_path: str,
+    progress_callback: Optional[AsyncProgressCallback] = None,
+) -> Tuple[str, float]:
+    """執行轉錄，預設以子程序隔離（VRAM 保證歸還）。回傳 (逐字稿, 音檔秒數)。"""
+    if (settings.ASR_ISOLATION or "").lower() != "subprocess":
+        return await _transcribe_inprocess(file_path, progress_callback)
+
+    fd, result_path = tempfile.mkstemp(prefix="asr_result_", suffix=".json")
+    os.close(fd)
+    try:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "backend.workers.asr_worker",
+                file_path,
+                result_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            )
+        except OSError as exc:
+            # spawn 本身失敗（環境問題）→ 本任務退回 in-process，不放棄任務
+            log.warning(
+                f"ASR 子程序啟動失敗（{describe_exception(exc)}），本任務退回 in-process 模式"
+            )
+            return await _transcribe_inprocess(file_path, progress_callback)
+
+        log.info(f"ASR 子程序已啟動（pid={proc.pid}，隔離模式保證 VRAM 歸還）")
+
+        try:
+            # stdout/stderr 必須同時讀，否則子程序寫滿 pipe buffer 會互相卡死
+            _, stderr_text = await asyncio.wait_for(
+                asyncio.gather(
+                    _pump_progress_lines(proc.stdout, progress_callback),
+                    _read_stream_text(proc.stderr),
+                ),
+                timeout=settings.ASR_WORKER_TIMEOUT_SECONDS,
+            )
+            returncode = await proc.wait()
+        except (asyncio.TimeoutError, TimeoutError):
+            proc.kill()
+            await proc.wait()
+            # 逾時＝病態輸入（超長/損壞音檔），重跑 in-process 只會再耗一輪，直接失敗
+            raise RuntimeError(
+                f"ASR 子程序逾時（超過 {settings.ASR_WORKER_TIMEOUT_SECONDS:.0f} 秒），已強制終止"
+            )
+
+        if returncode != 0:
+            tail = stderr_text.strip()[-2000:]
+            raise RuntimeError(f"ASR 子程序失敗（exit={returncode}）：{tail or '無錯誤輸出'}")
+
+        if stderr_text.strip():
+            log.debug("ASR worker stderr:\n{}", stderr_text.strip()[-2000:])
+
+        with open(result_path, encoding="utf-8") as f:
+            payload = json.load(f)
+
+        log.info(
+            f"ASR 子程序完成：backend={payload.get('backend')}, "
+            f"音檔時長={float(payload.get('duration_seconds') or 0.0):.1f}s"
+        )
+        return payload["text"], float(payload.get("duration_seconds") or 0.0)
+    finally:
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass

@@ -195,6 +195,10 @@
                 <h2>處理完成</h2>
                 <p class="result-meta">會議紀錄與逐字稿已就緒，請下載保存</p>
             </div>
+            <!-- v4.6.2：摘要失敗（僅逐字稿）警告，由 app.js 依 summary_failed 顯示 -->
+            <div class="summary-failed-banner" id="summaryFailedBanner" style="display: none;">
+                ⚠️ 會議紀錄生成失敗，本次結果僅包含逐字稿。請重新送出任務或人工撰寫會議紀錄，勿將下載檔案直接作為正式會議紀錄使用。
+            </div>
             <div class="dl-actions">
                 <button class="btn btn-primary" id="downloadDocxBtn">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 12 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>

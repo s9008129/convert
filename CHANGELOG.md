@@ -1,5 +1,122 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.7.0] - 2026-08-19
+
+### 🎯 主題：VRAM offload 徹底根治——串流生成＋ASR 子程序隔離＋自我修復降級（研究驅動）
+
+v4.6.2 讓失敗「可見、可診斷、可重試」；本版根除劣化本身。方案由兩路深度研究驅動：
+(1) 參考專案 D:/dev/local（同一顆 gemma4:31b、同級 4090）的量產實證移植；
+(2) Ollama/CUDA/Windows 最佳實踐網路研究（含官方 issue 佐證）。
+
+### 🔧 根治手段
+
+- **Ollama 呼叫全面串流化**（`stream:true`）：
+  - 原 `stream:false` 讓 600s read timeout 變成「總時長硬上限」（完成前零位元組
+    回傳）——合法長會議被誤殺的直接原因（參考專案已文件化同一教訓）
+  - 新語意：`LOCAL_LLM_STREAM_IDLE_TIMEOUT`（120s，chunk 間閒置＝真卡死，快速偵測）
+    ＋`LOCAL_LLM_REQUEST_TIMEOUT`（放寬至 1800s 總時長上限——寧可等待不截斷）
+  - 串流層可重試分類（移植參考專案）：中途 error chunk／結束無 done／
+    `done_reason≠stop`（如 length 截斷）→ 併入瞬時重試
+  - 每呼叫記錄 `load_duration`（冷啟動 vs 推理分離）與 **tokens/s**；
+    低於 `LOCAL_LLM_MIN_TOKENS_PER_SECOND`（5.0）即警告疑似 offload
+- **ASR 子程序隔離**（`backend/workers/asr_worker.py`＋`backend/services/asr_subprocess.py`）：
+  - 研究確認：長駐程序的 CUDA context／分配器殘留**只有程序退出才保證釋回**
+    （faster-whisper#992 實測每次殘留 ~312MB）——蠶食 Ollama 可用 VRAM 是
+    offload 的長期累積因子
+  - 預設 `ASR_ISOLATION=subprocess`：轉錄在獨立子程序執行，進度以 stdout JSON
+    lines 回傳，結束即歸還全部 VRAM；spawn 失敗自動退回 in-process（回退桿）
+- **Warmup 2.0——驗證＋自我修復＋降級**（主機不可控時的自動保底）：
+  - 載入時帶 `options.num_ctx`（與後續 chat 一致——ctx 不一致會觸發 runner
+    整顆重載，參考專案實證教訓）
+  - 偵測 offload → 卸載→等待→重載（自我修復一次）→ 仍 offload → **本任務
+    降級 `num_ctx=LOCAL_LLM_DEGRADED_CONTEXT_TOKENS`（8192）**並以降級 ctx
+    預載；降級值顯式貫穿分塊規劃與所有生成呼叫
+  - **KV 量化生效 heuristic**：/api/tags 磁碟大小 vs /api/ps 載入大小之差
+    （f16@16K≈3.1GB 特徵 vs q8≈1.5GB）→ 主機 env 未生效直接在 log 點名
+- **主機側雙軌**（因應「setx 設了沒生效、疑似被管制」）：
+  - `scripts/diagnose_ollama_host.ps1`：registry 實際值／服務型態／server.log
+    生效傾印／載入量四路診斷，判讀 setx 失效原因
+  - `scripts/start_ollama_optimized.ps1`：**行內程序級環境變數**啟動
+    （不經 registry，GPO 管制通常擋不到）＋自動 /api/ps 與吞吐驗證
+    （防 Ollama#9683 KV 量化反而變慢的已知案例）
+- **設定調整**：keep_alive 10m→30m（對齊參考專案）；windows-gpu compose
+  `MAX_CONCURRENT_TASKS` 預設 2→1（單卡序列化原則）；`LOCAL_LLM_MODEL`
+  註記 gemma4:26b 一行 fallback（~16GB 全 VRAM、快 5.8 倍、品質略降）
+
+### 🧪 測試與驗證
+
+- 新增 16 項測試：串流解析（happy／error chunk／無 done／length 截斷）、
+  重試分類、num_ctx 覆蓋貫穿、warmup 自我修復（成功不降級／失敗降級／
+  跨任務殘留重設）、KV heuristic 兩向、ASR worker 與父程序 wrapper 全流程
+- 觸及模組 63 項全數通過；全套件 423 passed（僅本機缺 opencc/faster_whisper
+  的既有環境性失敗）
+- 部署手冊新增 v4.7.0 捷徑（含主機腳本操作與 PASS 判準）
+
+## [v4.6.2] - 2026-08-19
+
+### 🎯 主題：地端排程任務「空白會議紀錄」根因修復——冷啟動逾時＋LLM 管線重試
+
+### 🐛 根因修復（地端模式排程任務必出 fallback「僅逐字稿」文件）
+
+- **問題現象**（2026-08-18 使用者回報）：地端模式從佇列取出的任務，下載到的
+  「會議紀錄」實為 fallback 文件——標題「逐字稿（會議紀錄生成失敗）」＋警告
+  banner ＋逐字稿，且**沒有「失敗原因」行**，任務又顯示「完成」，極易誤認為
+  正常紀錄。
+- **根因鏈**（由 fallback 檔案證據＋程式碼追蹤確認）：
+  1. 單卡 VRAM 交接設計：每個任務 ASR 前強制卸載 Ollama 模型
+     （`task_processor.py`），故 ASR 後第一個 LLM 呼叫必為**冷啟動**——
+     重載 ~20GB gemma4:31b（num_ctx=16384 實測 23.0/24GB，貼近上限）。
+  2. 貼近上限＋長駐程序的 VRAM 殘留 → Ollama 將部分層 offload 至 CPU，
+     推理速度崩跌。
+  3. 每次 `/api/chat` 600s 逾時後拋 `httpx.ReadTimeout`——**其 `str()` 為空**，
+     `summary_error = str(e)` 得到空字串 → 文件的「失敗原因」行被 `if` 條件
+     整個略過，診斷資訊全失。
+  4. 本地管線 12+ 次連續呼叫（分塊萃取／合併／最終生成／補強）**全部無重試**
+     → 單一逾時毀掉整份紀錄。33K 字長會議＝約 12 個分塊，暴露面極大。
+  5. 佐證：fallback 檔逐字稿仍含同音錯字——語意校正層（同走 Ollama、失敗被
+     靜默吞掉）也已失敗，早期警訊被隱藏。
+  6. 「排程任務才失敗」是假相關：所有任務都走佇列；真正變因是
+     「新音檔（需 ASR→冷啟動）＋長會議（多分塊）」。
+- **修法**：
+  - `backend/core/errors.py`（新增）：`describe_exception()` 保證任何例外至少
+    帶出類別名稱；task_processor／summarization 全部改用，關鍵失敗點改
+    `log.exception` 記完整 traceback；文件「失敗原因」行改為**無條件輸出**
+  - 模型預熱：ASR 後、校正前以 load-only 請求（`/api/generate` 不帶 prompt）
+    用專屬逾時先載回模型，冷載入不再吃生成呼叫的逾時額度；並查 `/api/ps`
+    記錄 `size` vs `size_vram`——**CPU offload 直接可視化於 log（WARNING）**
+  - 瞬時錯誤重試：每次 Ollama 呼叫對 timeout／連線中斷重試
+    （`LOCAL_LLM_TRANSIENT_RETRIES`，預設 2，線性退避）；HTTP 4xx/5xx 與
+    程式例外不重試。分塊重試後仍失敗維持「整份失敗」——公務紀錄忠實性優先，
+    不產部分缺漏紀錄（使用者決策）
+  - 新 env（雙 compose 佈線）：`LOCAL_LLM_REQUEST_TIMEOUT`、
+    `LOCAL_LLM_WARMUP_TIMEOUT`、`LOCAL_LLM_TRANSIENT_RETRIES`、
+    `LOCAL_LLM_RETRY_BACKOFF_SECONDS`、`CLOUD_LLM_REQUEST_TIMEOUT`、
+    `CLOUD_LLM_MAX_RETRIES`
+- **雲端模式一併補強**（使用者未實測到，但同構風險確認存在）：
+  - `_gemini_chat` 增加串流層瞬時重試（SDK max_retries 不涵蓋串流中途斷線），
+    原本無保護的最終生成與補強輪自動被覆蓋
+  - Gemini client 顯式設定 `timeout`／`max_retries`
+- **失敗呈現**（使用者決策：完成＋顯著警告）：
+  - `TaskInfo`／`ProgressMessage` 新增 `summary_failed`，隨 WebSocket 推送
+  - 前端結果區顯示紅色警告 banner「⚠️ 會議紀錄生成失敗，本次結果僅包含逐字稿」
+  - 下載檔名改為 `{時間戳}_逐字稿(會議紀錄生成失敗).docx/.md`，不再偽裝成
+    「會議紀錄」
+- **同場修復**：
+  - 移除從未生效的 `TASK_TIMEOUT_SECONDS`（整任務逾時對長會議不合理，
+    逾時控制改在每次請求層級）
+  - `check_lmstudio_health` 同步 client 阻塞 event loop → `asyncio.to_thread`
+
+### 🧪 測試與驗證
+
+- `tests/test_errors.py`（新）：空訊息例外還原類別名稱（3 項）
+- `tests/test_task_processor.py`：失敗原因保底行、例外類別入文件、
+  warmup 時序＋逾時後任務仍完成且 `summary_failed=True`（3 項）
+- `tests/test_summarization_service.py`：瞬時重試／放棄／不誤重試、think 400
+  降級保留、warmup load-only payload／offload 警告／永不拋出、Gemini 串流
+  重試（9 項）
+- 本次觸及模組 47 項全數通過；全套件僅本機缺 opencc／faster_whisper 之
+  既有環境性失敗，與本次變更無關
+
 ## [v4.6.1] - 2026-08-11
 
 ### 🎯 主題：DOCX 章節誤判修復——編號條列項目不再整段粗體放大

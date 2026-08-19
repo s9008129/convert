@@ -69,6 +69,7 @@ const elements = {
     downloadAttachmentBtn: document.getElementById('downloadAttachmentBtn'),
     downloadAttachmentLabel: document.getElementById('downloadAttachmentLabel'),
     downloadTranscriptBtn: document.getElementById('downloadTranscriptBtn'),
+    summaryFailedBanner: document.getElementById('summaryFailedBanner'),
     resetBtn: document.getElementById('resetBtn'),
     
     // 錯誤
@@ -818,6 +819,11 @@ async function showResult(message) {
         elements.resultSection.style.display = 'block';
         elements.resultSection.dataset.taskId = state.taskId || '';
     }
+    // v4.6.2：摘要失敗（僅逐字稿）時顯示顯著警告，避免誤認為正式會議紀錄
+    if (elements.summaryFailedBanner) {
+        elements.summaryFailedBanner.style.display =
+            message && message.summary_failed ? 'block' : 'none';
+    }
     if (elements.progressSection) {
         elements.progressSection.style.display = 'none';
     }
@@ -882,6 +888,9 @@ function resetUI() {
     }
     if (elements.downloadAttachmentBtn) {
         elements.downloadAttachmentBtn.style.display = 'none';
+    }
+    if (elements.summaryFailedBanner) {
+        elements.summaryFailedBanner.style.display = 'none';
     }
     if (elements.errorSection) {
         elements.errorSection.style.display = 'none';
