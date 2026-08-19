@@ -53,9 +53,10 @@ foreach ($m in $ps.models) {
     $gb = [math]::Round($m.size / 1GB, 1)
     $vramGb = [math]::Round($m.size_vram / 1GB, 1)
     Write-Host "   $($m.name): 總大小 ${gb}GB / VRAM ${vramGb}GB"
+    # 門檻依 2026-08-19 正式機實測校準：q8 生效 @16K ≈ 22.6GB（gemma4 compute buffer 佔比大）
     if ($m.size_vram -lt $m.size) { Write-Host "   ✗ FAIL：部分卸載至 CPU" -ForegroundColor Red; $pass = $false }
-    elseif ($m.size -gt 22.5GB)   { Write-Host "   △ 完全在 VRAM 但 >22.5GB：KV 量化疑似未生效" -ForegroundColor Yellow; $pass = $false }
-    else                          { Write-Host "   ✓ PASS：~21GB@16K，KV 量化生效" -ForegroundColor Green }
+    elseif ($m.size -gt 23.2GB)   { Write-Host "   △ 完全在 VRAM 但 >23.2GB：KV 量化疑似未生效（f16 特徵）" -ForegroundColor Yellow; $pass = $false }
+    else                          { Write-Host "   ✓ PASS：完全載入 VRAM 且大小符合 q8 特徵（實測 ~22.6GB@16K）" -ForegroundColor Green }
 }
 
 # 吞吐驗證：防 KV 量化在特定模型上反而觸發 CPU 慢速路徑（Ollama 已知案例）

@@ -819,8 +819,8 @@ def test_kv_quantization_heuristic_warns_on_f16_signature(monkeypatch):
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
     try:
-        # 19.9GB 磁碟、23.0GB 載入 → overhead 3.1GB ＝ f16@16384 特徵
-        service._check_kv_quantization_heuristic(int(23.0e9), int(19.9e9))
+        # 19.9GB 磁碟、23.5GB 載入 → overhead 3.6GB ＝ f16@16384 特徵（門檻 3.5GB）
+        service._check_kv_quantization_heuristic(int(23.5e9), int(19.9e9))
     finally:
         logger.remove(sink_id)
 
@@ -838,8 +838,8 @@ def test_kv_quantization_heuristic_accepts_q8_signature(monkeypatch):
     records: list[str] = []
     sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
     try:
-        # overhead 1.5GB ≈ q8 特徵
-        service._check_kv_quantization_heuristic(int(21.4e9), int(19.9e9))
+        # 正式機實測值：22.6GB 載入、19.9GB 磁碟 → overhead 2.7GB ＝ q8 生效特徵
+        service._check_kv_quantization_heuristic(int(22.6e9), int(19.9e9))
     finally:
         logger.remove(sink_id)
 

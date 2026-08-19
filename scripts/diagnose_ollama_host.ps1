@@ -47,6 +47,8 @@ if (Test-Path $serverLog) {
     Select-String -Path $serverLog -Pattern "OLLAMA_FLASH_ATTENTION|OLLAMA_KV_CACHE_TYPE" |
         Select-Object -Last 4 | ForEach-Object { Write-Host "   $($_.Line)" }
     Write-Host "→ 這是『有沒有生效』的最終證據：Ollama 啟動時會印出實際吃到的 OLLAMA_* 值。"
+    Write-Host "→ 注意：由 start_ollama_optimized.ps1 啟動的 serve 不寫這個檔（server.log 是 tray app 的），"
+    Write-Host "  時間戳若是舊的屬正常；腳本啟動的程序請以 [4] 的實際載入量為準。"
 } else {
     Write-Host "找不到 $serverLog（Ollama 可能以其他方式安裝）" -ForegroundColor Yellow
 }
@@ -63,12 +65,14 @@ try {
         $gb = [math]::Round($m.size / 1GB, 1)
         $vramGb = [math]::Round($m.size_vram / 1GB, 1)
         Write-Host "   $($m.name): 總大小 ${gb}GB / VRAM ${vramGb}GB"
-        if ($m.size_vram -lt $m.size) {
+        if ($m.size_vram -eq 0) {
+            Write-Host "   ✗ 100% 在 CPU（size_vram=0）→ Ollama 程序疑已失去 GPU（驅動更新/睡眠後的長駐程序），請重啟 Ollama" -ForegroundColor Red
+        } elseif ($m.size_vram -lt $m.size) {
             Write-Host "   ✗ 部分卸載至 CPU（推理會崩跌）" -ForegroundColor Red
-        } elseif ($m.size -gt 22.5GB) {
-            Write-Host "   △ 完全在 VRAM，但總量 >22.5GB → KV 量化疑似未生效（f16 特徵約 23GB@16K）" -ForegroundColor Yellow
+        } elseif ($m.size -gt 23.2GB) {
+            Write-Host "   △ 完全在 VRAM，但總量 >23.2GB → KV 量化疑似未生效（f16 特徵）" -ForegroundColor Yellow
         } else {
-            Write-Host "   ✓ 完全在 VRAM 且 ~21GB@16K → KV 量化已生效" -ForegroundColor Green
+            Write-Host "   ✓ 完全在 VRAM 且大小符合 q8 特徵（實測 ~22.6GB@16K）→ 量化已生效" -ForegroundColor Green
         }
     }
 } catch {

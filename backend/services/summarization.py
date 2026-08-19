@@ -1863,22 +1863,23 @@ class SummarizationService:
     def _check_kv_quantization_heuristic(self, loaded_size: int, disk_size: int) -> None:
         """KV 量化生效 heuristic（best-effort 近似，v4.7.0）。
 
-        載入大小 − 磁碟大小 ≈ KV cache＋overhead。以本機實測為錨：
-        f16 KV @16384 ≈ 3.1GB（23.0GB − 19.9GB）。overhead 依 num_ctx 線性縮放後，
-        高於 f16 預期的 8 成 → 疑似量化未生效；低於一半 → 判定已生效。
+        載入大小 − 磁碟大小 ≈ KV cache＋compute buffer。正式機實測校準
+        （2026-08-19）：q8 生效時 @16384 overhead ≈ 2.7GB（22.6−19.9），
+        f16 特徵應 ≥ ~3.5GB。門檻依 num_ctx 線性縮放；介於兩者間不下判斷，
+        避免誤報（gemma4 compute buffer 佔比大，估算誤差高）。
         """
         if not loaded_size or not disk_size or loaded_size <= disk_size:
             return
         overhead = loaded_size - disk_size
         ctx = self._effective_context_tokens()
-        f16_expected = 3.1e9 * (ctx / 16384)
-        if overhead >= f16_expected * 0.8:
+        scale = ctx / 16384
+        if overhead >= 3.5e9 * scale:
             log.warning(
                 f"KV cache overhead ≈ {overhead / 1e9:.1f}GB（f16 特徵）——"
                 "OLLAMA_KV_CACHE_TYPE=q8_0 可能未生效；請用 scripts/diagnose_ollama_host.ps1 "
                 "檢查主機環境變數是否真的作用於 Ollama 程序（setx 常因 tray app 未重啟而無效）"
             )
-        elif overhead <= f16_expected * 0.55:
+        elif overhead <= 3.0e9 * scale:
             log.info(f"KV 量化已生效：overhead ≈ {overhead / 1e9:.1f}GB（q8 特徵）")
 
     async def warmup_local_model(self) -> None:
@@ -1912,6 +1913,15 @@ class SummarizationService:
             size, size_vram = sizes
 
             if size and size_vram < size:
+                if size_vram == 0:
+                    # 正式機實測（2026-08-19）：長駐一個月的 Ollama 程序因驅動
+                    # 更新/睡眠喚醒失去 GPU，之後所有載入 100% 走 CPU（GPU 明明
+                    # 有 21.9GB 可用）——這種情況重載無效，必須重啟 Ollama 程序
+                    log.warning(
+                        "本地模型 100% 在 CPU（size_vram=0）——Ollama 程序疑已失去 GPU"
+                        "（常見於驅動更新/睡眠喚醒後的長駐程序），自我修復可能無效；"
+                        "請在主機執行 scripts/start_ollama_optimized.ps1 重啟 Ollama"
+                    )
                 log.warning(
                     f"本地模型部分卸載至 CPU：size={size}, size_vram={size_vram}"
                     f"（{size_vram / size:.0%} 在 VRAM）——嘗試自我修復（卸載後重載）"
