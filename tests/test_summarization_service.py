@@ -562,15 +562,58 @@ async def test_stream_ollama_chat_once_raises_when_no_done_chunk():
 
 
 @pytest.mark.asyncio
-async def test_stream_ollama_chat_once_raises_on_truncated_done_reason():
-    """done_reason=length（輸出被截斷）→ 可重試例外。"""
+async def test_stream_ollama_chat_once_accepts_truncated_done_reason():
+    """v4.7.1：done_reason=length（撞 num_predict 上限）是確定性結果，
+    不得重試——單次呼叫即應回傳已累積的完整內容。"""
+    service = SummarizationService()
+    client = _stream_client([_content_chunk("截"), _content_chunk("斷"), _done_chunk(done_reason="length")])
+
+    content, final = await service._stream_ollama_chat_once(client, {"model": "m"})
+
+    assert content == "截斷"
+    assert final["done_reason"] == "length"
+    # 只建立/呼叫一次串流（沒有因為 length 而重試）
+    client.stream.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_ollama_chat_once_raises_on_other_done_reason():
+    """done_reason 為 length/stop/None 以外的其他值（如連線異常結束）仍應可重試。"""
     from backend.services.summarization import OllamaStreamRetryable
 
     service = SummarizationService()
-    client = _stream_client([_content_chunk("截斷"), _done_chunk(done_reason="length")])
+    client = _stream_client([_content_chunk("異常"), _done_chunk(done_reason="unload")])
 
     with pytest.raises(OllamaStreamRetryable):
         await service._stream_ollama_chat_once(client, {"model": "m"})
+
+
+@pytest.mark.asyncio
+async def test_post_ollama_chat_accepts_truncated_content_without_retry(monkeypatch):
+    """v4.7.1：done_reason=length 不重試，直接接受截斷內容並記錄警告。"""
+    from loguru import logger
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 2)
+
+    service = SummarizationService()
+    once = AsyncMock(
+        return_value=("截斷但完整累積的內容", {"done_reason": "length", "eval_count": 2048})
+    )
+    monkeypatch.setattr(service, "_stream_ollama_chat_once", once)
+
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        content, final_chunk, send_think = await service._post_ollama_chat(
+            Mock(), {"model": "m", "options": {"num_predict": 2048}}, False
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert content == "截斷但完整累積的內容"
+    assert final_chunk["done_reason"] == "length"
+    assert once.await_count == 1  # 不重試
+    assert any("num_predict 上限" in record for record in records)
 
 
 @pytest.mark.asyncio
@@ -677,6 +720,59 @@ async def test_summarize_with_ollama_honors_context_override(monkeypatch):
     service._active_context_tokens = 8192
     await service._summarize_with_ollama("sys", "user")
     assert payloads[-1]["options"]["num_ctx"] == 8192
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_ollama_expands_num_predict_to_context_headroom(monkeypatch):
+    """v4.7.1：context 有餘裕時，num_predict 應自動擴大到超過預設保留值，
+    從源頭降低撞 num_predict 上限（done_reason=length）的機率。"""
+    monkeypatch.setattr(settings, "LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS", 16384)
+
+    service = SummarizationService()
+    payloads: list[dict] = []
+
+    async def fake_post(_client, payload, send_think_field):
+        payloads.append(payload)
+        return "會議紀錄本文", {}, send_think_field
+
+    monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=Mock()))
+    monkeypatch.setattr(service, "_get_effective_model", Mock(return_value="gemma4:31b"))
+    monkeypatch.setattr(service, "_post_ollama_chat", fake_post)
+
+    system_prompt = "sys"
+    user_message = "user"
+    await service._summarize_with_ollama(system_prompt, user_message)
+
+    est_prompt = service._estimate_tokens(system_prompt) + service._estimate_tokens(user_message) + 64
+    expected_num_predict = 16384 - est_prompt - 256
+
+    assert payloads[-1]["options"]["num_predict"] == expected_num_predict
+    assert expected_num_predict > settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_summarize_with_ollama_expand_output_budget_false_keeps_caller_value(monkeypatch):
+    """v4.7.1：expand_output_budget=False（整併呼叫）時，num_predict 必須
+    維持呼叫端指定值，不得自動擴大——否則會破壞整併「必縮小」的收斂保證。"""
+    monkeypatch.setattr(settings, "LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS", 16384)
+
+    service = SummarizationService()
+    payloads: list[dict] = []
+
+    async def fake_post(_client, payload, send_think_field):
+        payloads.append(payload)
+        return "整併後筆記", {}, send_think_field
+
+    monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=Mock()))
+    monkeypatch.setattr(service, "_get_effective_model", Mock(return_value="gemma4:31b"))
+    monkeypatch.setattr(service, "_post_ollama_chat", fake_post)
+
+    caller_num_predict = 512
+    await service._summarize_with_ollama(
+        "sys", "user", num_predict=caller_num_predict, expand_output_budget=False
+    )
+
+    assert payloads[-1]["options"]["num_predict"] == caller_num_predict
 
 
 def test_build_local_context_plan_context_override_shrinks_budgets():

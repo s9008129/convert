@@ -32,10 +32,14 @@ from backend.models.schemas import ProcessingMode
 class OllamaStreamRetryable(RuntimeError):
     """串流層可重試失敗（v4.7.0）。
 
-    三種情況（皆源自參考專案 D:\\dev\\local 的量產經驗）：
+    情況（皆源自參考專案 D:\\dev\\local 的量產經驗）：
     1. 串流中途收到 {"error": ...} chunk（模型卸載／runner 崩潰）
     2. 串流結束卻沒有 done:true（連線中斷）
-    3. done_reason 非 stop（如 length＝輸出被截斷，JSON 不完整）
+    3. done_reason 非 stop 且非 length 的其他異常結束原因
+
+    注意：done_reason=length（撞到 num_predict 上限被截斷）不屬於可重試情境——
+    這是確定性結果，重試必然得到同樣的截斷點，v4.7.1 起改為在呼叫端接受內容
+    並記錄警告（見 _stream_ollama_chat_once 結尾與 _post_ollama_chat）。
     """
 
 
@@ -756,6 +760,10 @@ class SummarizationService:
                     # 輸出上限綁定預算：讓整併輸出「物理上」不可能超過預算太多
                     num_predict=merge_predict_cap,
                     context_window_tokens=context_window_tokens,
+                    # v4.7.1：merge_predict_cap 是整併的收斂機制（每輪輸出必須
+                    # 小於預算，才能保證多輪整併最終收斂）。若自動擴大 num_predict，
+                    # 會讓整併輸出膨脹回接近 context 上限，破壞「整併必縮小」的保證。
+                    expand_output_budget=False,
                 )
                 merged_round.append(self._clean_ollama_output(merged))
 
@@ -809,6 +817,7 @@ class SummarizationService:
         temperature: float = 0.2,
         num_predict: Optional[int] = None,
         context_window_tokens: Optional[int] = None,
+        expand_output_budget: bool = True,
     ) -> str:
         """對選定的本地引擎執行一次生成。"""
         if engine == "ollama":
@@ -819,6 +828,7 @@ class SummarizationService:
                 temperature=temperature,
                 num_predict=num_predict,
                 context_window_tokens=context_window_tokens,
+                expand_output_budget=expand_output_budget,
             )
 
         if engine == "lmstudio":
@@ -1004,8 +1014,12 @@ class SummarizationService:
             raise OllamaStreamRetryable("串流結束但未收到 done chunk（連線中斷）")
 
         done_reason = final_chunk.get("done_reason")
-        if done_reason not in (None, "stop"):
-            raise OllamaStreamRetryable(f"done_reason={done_reason}（輸出被截斷或異常結束）")
+        # v4.7.1：done_reason=length（撞到 num_predict 上限）不可重試——
+        # 這是確定性結果，內容已完整累積於 content_parts，重試 2 次必然停在
+        # 同一個截斷點，徒然浪費時間並讓整份會議紀錄失敗（v4.7.0 迴歸根因）。
+        # 交由呼叫端（_post_ollama_chat）記錄警告後接受這份「內容完整但被截斷」的輸出。
+        if done_reason not in (None, "stop", "length"):
+            raise OllamaStreamRetryable(f"done_reason={done_reason}（輸出異常結束）")
 
         return "".join(content_parts), final_chunk
 
@@ -1017,10 +1031,14 @@ class SummarizationService:
         eval_count = final_chunk.get("eval_count") or 0
         eval_seconds = (final_chunk.get("eval_duration") or 0) / 1e9
         tokens_per_second = eval_count / eval_seconds if eval_seconds > 0 else 0.0
+        # v4.7.1：加入 prompt_eval_count，觀測本次呼叫實際佔用多少 context——
+        # 用來驗證「context plan 是否保守」「num_predict 擴大是否合理」。
+        prompt_eval_count = final_chunk.get("prompt_eval_count") or 0
 
         log.info(
             f"Ollama 生成完成：load={load_seconds:.1f}s, "
-            f"tokens/s={tokens_per_second:.1f}, eval_count={eval_count}"
+            f"tokens/s={tokens_per_second:.1f}, eval_count={eval_count}, "
+            f"prompt_eval_count={prompt_eval_count}"
         )
         if 0 < tokens_per_second < settings.LOCAL_LLM_MIN_TOKENS_PER_SECOND:
             log.warning(
@@ -1057,6 +1075,14 @@ class SummarizationService:
                     else:
                         raise
                 self._log_generation_metrics(final_chunk)
+                if final_chunk.get("done_reason") == "length":
+                    # v4.7.1：不重試，接受已截斷但完整累積的內容——下游驗證/
+                    # 補強迴圈（P1-9）會把關格式，此為 v4.6.x 時代已驗證可用的行為。
+                    log.warning(
+                        "Ollama 輸出達 num_predict 上限被截斷（eval_count={}, num_predict={}）——內容已保留，接受並繼續",
+                        final_chunk.get("eval_count"),
+                        (payload.get("options") or {}).get("num_predict"),
+                    )
                 return content, final_chunk, send_think_field
             except TimeoutError:
                 # asyncio.timeout 總時長超限：重跑同樣 30 分鐘無望，直接失敗並講清楚
@@ -1097,9 +1123,13 @@ class SummarizationService:
         temperature: float = 0.2,
         num_predict: Optional[int] = None,
         context_window_tokens: Optional[int] = None,
+        expand_output_budget: bool = True,
     ) -> str:
         """
         使用 Ollama 本地模式生成摘要
+
+        v4.7.1 改進：
+        - 依 context 餘裕自動擴大 num_predict（治本修復 done_reason=length 誤殺整份紀錄）
 
         v4.7.0 改進：
         - 串流生成（閒置逾時／總時長分離）＋每呼叫 tokens/s 觀測
@@ -1109,6 +1139,16 @@ class SummarizationService:
         - Gemma4 預設參數：top_k 64、top_p 0.95、repeat_penalty 1.08
         """
         client = await self._get_ollama_client()
+
+        # v4.7.1：context plan 已保證輸入在預算內，prompt 用不完的 context
+        # 全數讓給輸出，降低撞到 num_predict 上限被截斷的機率。估算誤差無害——
+        # num_predict 超過實際餘裕時，Ollama 只會在 ctx 滿時以 done_reason=length
+        # 停止，仍會落入上面已修復的「接受內容＋警告」路徑，不會整份失敗。
+        requested_predict = num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        if expand_output_budget:
+            n_ctx = self._effective_context_tokens(context_window_tokens)
+            est_prompt = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+            requested_predict = max(requested_predict, n_ctx - est_prompt - 256)
 
         try:
             # 進度更新：開始生成摘要
@@ -1142,7 +1182,7 @@ class SummarizationService:
                         "top_k": 64,
                         "repeat_penalty": 1.08,
                         "num_ctx": self._effective_context_tokens(context_window_tokens),
-                        "num_predict": num_predict or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        "num_predict": requested_predict,
                         "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
                     }
                 }

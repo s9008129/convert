@@ -1,5 +1,40 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.7.1] - 2026-08-20
+
+### 🎯 主題：修復 v4.7.0 迴歸——done_reason=length 被誤判為可重試錯誤，導致整份紀錄失敗
+
+v4.7.0 為串流層新增「done_reason≠stop 併入瞬時重試」的分類，本意是攔截連線中斷等
+異常結束，但把 `length`（輸出撞到 `num_predict` 上限、被正常截斷）也一併歸類其中。
+`length` 是**確定性結果**——同樣的輸入、同樣的 `num_predict`，重試 2 次必然停在
+同一個截斷點，尤其整併呼叫本就刻意把輸出綁在預算內、撞上限是設計內行為。結果是
+重試 2 次全部失敗、整份會議紀錄改吐逐字稿 fallback 文件。正式機 docker 預設
+`LOCAL_LLM_RESERVED_OUTPUT_TOKENS=2048`，長會議的最終紀錄很容易超過此上限而觸發。
+
+根因由失敗 DOCX 內「失敗原因」行（v4.6.2 診斷鏈的直接產物）定位——v4.6.x
+（`stream:false` 時代）從不檢查 `done_reason`，靜默接受截斷內容，交由下游驗證／
+補強迴圈把關格式，此行為已經過實證可用；v4.7.1 恢復同樣的「接受＋警告」精神。
+
+### 🐛 修復
+
+- `_stream_ollama_chat_once`：`done_reason=length` 不再拋出 `OllamaStreamRetryable`，
+  直接回傳已完整累積的內容；其餘非 `stop`/`length` 的異常結束原因維持可重試。
+- `_post_ollama_chat`：成功路徑偵測到 `done_reason=length` 時記錄
+  WARNING（含 `eval_count`／`num_predict`），不重試、照常接受內容繼續流程。
+- `_log_generation_metrics`：INFO 行新增 `prompt_eval_count`，用以觀測每次呼叫
+  實際佔用多少 context，作為後續調校 `num_predict` 擴大幅度的觀測依據。
+
+### 🔧 治本：依 context 餘裕自動擴大 num_predict
+
+- `_summarize_with_ollama` 新增 `expand_output_budget`（預設 `True`）：context
+  規劃已保證輸入在預算內，故將 prompt 用不完的 context 全數讓給輸出上限
+  （`num_ctx - 已用估算 - 安全邊界`），從源頭降低撞上限機率；估算誤差無害——
+  即使仍然撞到上限，也已落入上述「接受＋警告」的安全路徑。
+- 整併呼叫（`_merge_notes_until_fit` 內 `_generate_with_local_engine`）明確傳入
+  `expand_output_budget=False`：`merge_predict_cap` 是整併收斂機制的核心（每輪
+  輸出必須小於預算，才能保證多輪整併最終收斂成一份），自動擴大會破壞此保證。
+- 其餘呼叫點（分塊萃取、最終生成、補強、`generate_local`）維持預設值，自動受益。
+
 ## [v4.7.0] - 2026-08-19
 
 ### 🎯 主題：VRAM offload 徹底根治——串流生成＋ASR 子程序隔離＋自我修復降級（研究驅動）
