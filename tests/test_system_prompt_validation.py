@@ -153,8 +153,11 @@ class TestPromptContract:
 
     @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
     def test_prompt_token_budget_is_local_model_friendly(self, source_name: str, prompt: str):
+        # v4.7.2：新增「條列編號階層規則」段落（修復地端公文編號階層不符標準）
+        # 將估算 tokens 從 ~1196 推升至 ~1431；相對 8192 context 仍屬小幅佔用，
+        # 上限同步放寬至 1600 以保留後續調整空間。
         estimated_tokens = estimate_prompt_tokens(prompt)
-        assert estimated_tokens < 1200, \
+        assert estimated_tokens < 1600, \
             f"[{source_name}] Prompt 過長（估算 {estimated_tokens} tokens），不利於 8192 context"
         assert estimated_tokens > 350, \
             f"[{source_name}] Prompt 過短（估算 {estimated_tokens} tokens），可能缺少必要約束"
@@ -209,6 +212,78 @@ class TestPromptConsistency:
         with config_path.open("r", encoding="utf-8") as fh:
             config = yaml.safe_load(fh)
         assert config["llm"]["ollama"]["num_ctx"] == 8192, "config.yaml 應與後端的有效 context 預設對齊"
+
+
+class TestNumberingHierarchyRule:
+    """v4.7.2：驗證「條列編號階層規則」已寫入共用系統提示詞。
+
+    背景：地端模式（弱模型）產出的公文段落編號階層不符合標準（一、(一)、1、(1)…），
+    雲端模式（Gemini）沒有這個問題，根因是共用提示詞從未明講階層規則。修復重點是
+    把規則寫得足夠明確，讓弱模型也能照做——本測試只做字串斷言，不呼叫真實 LLM。
+    """
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_contains_hierarchy_rule_section(self, source_name: str, prompt: str):
+        assert "條列編號階層規則" in prompt, f"[{source_name}] 缺少條列編號階層規則段落"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_declares_full_numbering_sequence(self, source_name: str, prompt: str):
+        # 完整階層序列（文書處理手冊四層＋業界通用延伸之甲乙丙兩層）皆須出現。
+        required_tokens = ["一、二、三", "（一）（二）（三）", "1、2、3", "（1）（2）（3）", "甲、乙、丙", "（甲）（乙）（丙）"]
+        for token in required_tokens:
+            assert token in prompt, f"[{source_name}] 缺少階層序列片段：{token}"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_forbids_ad_hoc_bullet_symbols(self, source_name: str, prompt: str):
+        assert "「-」" in prompt and "「•」" in prompt, \
+            f"[{source_name}] 應明確禁止「-」「•」等非公文條列符號"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_requires_independent_numbering_per_field(self, source_name: str, prompt: str):
+        # 對齊實測證據：雲端版每個欄位各自從「一、」起算，地端版誤將整份文件
+        # 共用一組編號或直接跳用阿拉伯數字——規則必須明講「各自獨立起算」。
+        assert "各自獨立自「一、」起算" in prompt, \
+            f"[{source_name}] 應明講各欄位條列各自獨立從「一、」起算"
+
+    @pytest.mark.parametrize("source_name,prompt", SystemPromptSource.get_main_prompts())
+    def test_prompt_allows_flexible_depth_without_skipping(self, source_name: str, prompt: str):
+        assert "不必湊滿所有層級" in prompt, f"[{source_name}] 應允許依需要選用層級，不強制用滿"
+        assert "不可跳層" in prompt, f"[{source_name}] 應禁止跳過中間層級"
+
+
+class TestDomainTemplateHierarchyRule:
+    """v4.7.2：三個領域模板（科務會議／ISMS月會／採購評選）提示詞不得再武斷宣稱
+    「固定三層」，須改為「通常已足夠、如需更深可依序延伸」，避免真的遇到需要
+    第四層以上內容時模型無所適從或亂編符號。"""
+
+    def test_section_meeting_prompt_allows_extension_beyond_three_levels(self):
+        from backend.core.prompt_templates.section_meeting import (
+            SECTION_MEETING_SYSTEM_PROMPT,
+            SECTION_MEETING_GENERATION_EXTRA,
+        )
+
+        assert "固定為" not in SECTION_MEETING_SYSTEM_PROMPT
+        assert "固定" not in SECTION_MEETING_GENERATION_EXTRA
+        assert "（1）" in SECTION_MEETING_SYSTEM_PROMPT
+        assert "甲、" in SECTION_MEETING_SYSTEM_PROMPT
+
+    def test_isms_meeting_prompt_allows_extension_beyond_three_levels(self):
+        from backend.core.prompt_templates.isms_meeting import ISMS_MEETING_SYSTEM_PROMPT
+
+        assert "固定為" not in ISMS_MEETING_SYSTEM_PROMPT
+        assert "（1）" in ISMS_MEETING_SYSTEM_PROMPT
+        assert "甲、" in ISMS_MEETING_SYSTEM_PROMPT
+
+    def test_procurement_prompt_declares_extension_below_parenthesis_level(self):
+        from backend.core.prompt_templates.procurement import (
+            PROCUREMENT_SYSTEM_PROMPT,
+            PROCUREMENT_GENERATION_EXTRA,
+        )
+
+        # 採購模板頂層為「壹、貳、參」，次層為「一、」，三層為「（一）（二）」；
+        # 需補上再往下一層（1、2、3）的延伸規則，供詢答逐項或簡報子點使用。
+        assert "1、2、3" in PROCUREMENT_SYSTEM_PROMPT or "1、2、3" in PROCUREMENT_GENERATION_EXTRA
+        assert "不可跳層" in PROCUREMENT_SYSTEM_PROMPT or "不可跳層" in PROCUREMENT_GENERATION_EXTRA
 
 
 class TestMockTranscriptFixtures:

@@ -635,7 +635,8 @@ class SummarizationService:
 額外要求：
 - 全文必須使用繁體中文（台灣用語）
 - 只能輸出最終 Markdown
-- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence{self._template_generation_extra(template)}"""
+- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence
+- 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{self._template_generation_extra(template)}"""
 
     def _build_cloud_summary_message(
         self,
