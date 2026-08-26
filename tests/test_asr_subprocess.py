@@ -147,6 +147,30 @@ async def test_transcribe_isolated_forwards_progress_and_returns_result(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_transcribe_isolated_detailed_preserves_worker_metadata(monkeypatch):
+    monkeypatch.setattr(settings, "ASR_ISOLATION", "subprocess")
+
+    proc = _FakeProc([])
+    payload = {
+        "text": "子程序逐字稿",
+        "duration_seconds": 66.0,
+        "language": "zh",
+        "backend": "mlx_whisper",
+        "chunks": [{"start": 0.0, "end": 2.5, "text": "子程序逐字稿"}],
+    }
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn_factory(proc, payload))
+
+    result = await asr_subprocess.transcribe_isolated_detailed("fake.mp3")
+
+    assert isinstance(result, DetailedTranscriptionResult)
+    assert result.text == "子程序逐字稿"
+    assert result.duration_seconds == 66.0
+    assert result.language == "zh"
+    assert result.backend == "mlx_whisper"
+    assert result.chunks[0].end == 2.5
+
+
+@pytest.mark.asyncio
 async def test_transcribe_isolated_raises_with_stderr_on_failure(monkeypatch):
     monkeypatch.setattr(settings, "ASR_ISOLATION", "subprocess")
 

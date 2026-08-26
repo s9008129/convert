@@ -109,6 +109,7 @@ async def test_check_ollama_health_uses_resolved_model(monkeypatch):
     )
 
     monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma4:31b")
+    monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "ollama")
     monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=fake_client))
 
     healthy = await service.check_ollama_health()
@@ -127,6 +128,7 @@ async def test_check_ollama_health_reports_clear_model_error(monkeypatch):
     )
 
     monkeypatch.setattr(settings, "LOCAL_LLM_MODEL", "gemma4:31b")
+    monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "ollama")
     monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=fake_client))
 
     healthy = await service.check_ollama_health()
@@ -144,6 +146,7 @@ async def test_generate_local_surfaces_model_resolution_error(monkeypatch):
     service = SummarizationService()
     service._ollama_model_error = "設定的 Ollama 模型不存在。"
 
+    monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "ollama")
     monkeypatch.setattr(service, "check_ollama_health", AsyncMock(return_value=False))
     monkeypatch.setattr(service, "check_lmstudio_health", AsyncMock(return_value=False))
 
@@ -809,6 +812,7 @@ def _tags_response(disk_size: int) -> Mock:
 
 def _warmup_service(monkeypatch, client: Mock) -> SummarizationService:
     service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "ollama")
     monkeypatch.setattr(service, "check_ollama_health", AsyncMock(return_value=True))
     monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=client))
     monkeypatch.setattr(service, "_get_effective_model", Mock(return_value="gemma4:31b"))

@@ -426,6 +426,7 @@ class TestCacheManagement:
         from backend.core.config import settings
 
         monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+        monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
         monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
 
         effective_sig = file_manager.get_asr_cache_signature()

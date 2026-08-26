@@ -1,0 +1,31 @@
+{
+  "models": [
+    {
+      "type": "llm",
+      "key": "model-alpha",
+      "display_name": "Model Alpha",
+      "max_context_length": 32768,
+      "loaded_instances": [
+        {
+          "id": "model-alpha-instance-1",
+          "config": {
+            "context_length": 16384
+          }
+        }
+      ]
+    },
+    {
+      "type": "embedding",
+      "key": "embedding-alpha",
+      "max_context_length": 2048,
+      "loaded_instances": [
+        {
+          "id": "embedding-alpha-instance-1",
+          "config": {
+            "context_length": 2048
+          }
+        }
+      ]
+    }
+  ]
+}

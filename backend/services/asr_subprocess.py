@@ -30,6 +30,15 @@ async def _transcribe_inprocess(
     progress_callback: Optional[AsyncProgressCallback],
 ) -> Tuple[str, float]:
     """舊行為（v4.6.x）：thread executor 內同步轉錄，callback 跨執行緒橋接。"""
+    result = await _transcribe_inprocess_detailed(file_path, progress_callback)
+    return result.text, result.duration_seconds
+
+
+async def _transcribe_inprocess_detailed(
+    file_path: str,
+    progress_callback: Optional[AsyncProgressCallback],
+):
+    """在 in-process fallback 也保留完整的 normalized ASR result。"""
     from backend.services.transcription import transcription_service
 
     loop = asyncio.get_event_loop()
@@ -40,7 +49,7 @@ async def _transcribe_inprocess(
 
     return await loop.run_in_executor(
         None,
-        lambda: transcription_service.transcribe(file_path, sync_progress_cb),
+        lambda: transcription_service.transcribe_detailed(file_path, sync_progress_cb),
     )
 
 
@@ -75,13 +84,46 @@ async def _read_stream_text(stream: asyncio.StreamReader) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-async def transcribe_isolated(
+def _payload_to_detailed(payload: dict):
+    """把 worker JSON 還原成與 in-process 相同的 DetailedTranscriptionResult。"""
+    from backend.services.transcription import DetailedTranscriptionResult, TranscriptionChunk
+
+    if not isinstance(payload, dict) or "text" not in payload:
+        raise RuntimeError("ASR worker 結果缺少 text")
+
+    raw_chunks = payload.get("chunks") or []
+    chunks = []
+    if isinstance(raw_chunks, list):
+        for raw_chunk in raw_chunks:
+            if not isinstance(raw_chunk, dict):
+                continue
+            chunks.append(
+                TranscriptionChunk(
+                    start=float(raw_chunk.get("start") or 0.0),
+                    end=float(raw_chunk.get("end") or 0.0),
+                    text=str(raw_chunk.get("text") or "").strip(),
+                )
+            )
+    chunks = [chunk for chunk in chunks if chunk.text]
+    return DetailedTranscriptionResult(
+        text=str(payload.get("text") or ""),
+        duration_seconds=float(payload.get("duration_seconds") or 0.0),
+        language=str(payload.get("language") or "auto"),
+        chunks=chunks,
+        backend=str(payload.get("backend") or "unknown"),
+    )
+
+
+async def _transcribe_isolated_raw(
     file_path: str,
     progress_callback: Optional[AsyncProgressCallback] = None,
-) -> Tuple[str, float]:
-    """執行轉錄，預設以子程序隔離（VRAM 保證歸還）。回傳 (逐字稿, 音檔秒數)。"""
+    *,
+    detailed_fallback: bool = False,
+):
+    """執行隔離轉錄；依 caller 需求保留 tuple 或完整 result。"""
+    inprocess = _transcribe_inprocess_detailed if detailed_fallback else _transcribe_inprocess
     if (settings.ASR_ISOLATION or "").lower() != "subprocess":
-        return await _transcribe_inprocess(file_path, progress_callback)
+        return await inprocess(file_path, progress_callback)
 
     fd, result_path = tempfile.mkstemp(prefix="asr_result_", suffix=".json")
     os.close(fd)
@@ -102,7 +144,7 @@ async def transcribe_isolated(
             log.warning(
                 f"ASR 子程序啟動失敗（{describe_exception(exc)}），本任務退回 in-process 模式"
             )
-            return await _transcribe_inprocess(file_path, progress_callback)
+            return await inprocess(file_path, progress_callback)
 
         log.info(f"ASR 子程序已啟動（pid={proc.pid}，隔離模式保證 VRAM 歸還）")
 
@@ -138,9 +180,43 @@ async def transcribe_isolated(
             f"ASR 子程序完成：backend={payload.get('backend')}, "
             f"音檔時長={float(payload.get('duration_seconds') or 0.0):.1f}s"
         )
+        if detailed_fallback:
+            return _payload_to_detailed(payload)
         return payload["text"], float(payload.get("duration_seconds") or 0.0)
     finally:
         try:
             os.remove(result_path)
         except OSError:
             pass
+
+
+async def transcribe_isolated(
+    file_path: str,
+    progress_callback: Optional[AsyncProgressCallback] = None,
+) -> Tuple[str, float]:
+    """相容舊 caller 的 tuple 介面。"""
+    return await _transcribe_isolated_raw(file_path, progress_callback)
+
+
+async def transcribe_isolated_detailed(
+    file_path: str,
+    progress_callback: Optional[AsyncProgressCallback] = None,
+):
+    """執行隔離轉錄並回傳統一 DetailedTranscriptionResult。"""
+    result = await _transcribe_isolated_raw(
+        file_path,
+        progress_callback,
+        detailed_fallback=True,
+    )
+    from backend.services.transcription import DetailedTranscriptionResult
+
+    if isinstance(result, DetailedTranscriptionResult):
+        return result
+    if isinstance(result, (tuple, list)) and len(result) >= 2:
+        return DetailedTranscriptionResult(
+            text=str(result[0]),
+            duration_seconds=float(result[1]),
+            language="auto",
+            backend="unknown",
+        )
+    raise RuntimeError("ASR isolated result 格式無法解析")

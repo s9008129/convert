@@ -4,48 +4,30 @@
 若模型或環境有問題，可快速從這裡看出基本功能是否正常。
 """
 
-import sys
+import os
+from pathlib import Path
 
 import pytest
 
 mlx_whisper = pytest.importorskip("mlx_whisper", reason="mlx_whisper 僅限 Apple Silicon 環境（Windows/Linux 自動跳過）")
 
-print("="*60)
-print("🧪 MLX-Whisper 直接測試")
-print("="*60)
 
-test_file = "/Users/hsiaojohnny/dev/convert/tests/test_audio/test1_5sec.wav"
-model_name = "mlx-community/whisper-medium"
+@pytest.mark.skipif(
+    os.getenv("RUN_MLX_LIVE_TESTS") != "1",
+    reason="live MLX model test is opt-in; use the offline adapter test for normal CI",
+)
+def test_mlx_whisper_direct_transcription():
+    """Opt-in smoke test for a locally available MLX model and audio fixture."""
+    test_file = Path(__file__).parent / "test_audio" / "test1_5sec.wav"
+    if not test_file.exists():
+        pytest.skip(f"optional audio fixture is not available: {test_file}")
 
-print(f"\n📁 測試音檔: {test_file}")
-print(f"🤖 模型: {model_name}")
-print("\n🚀 開始轉錄...\n")
-
-try:
     result = mlx_whisper.transcribe(
-        test_file,
-        path_or_hf_repo=model_name,
+        str(test_file),
+        path_or_hf_repo="mlx-community/whisper-medium",
         language="zh",
-        word_timestamps=False
+        word_timestamps=False,
     )
-    
-    print("✅ 轉錄成功!")
-    print(f"📝 Segments: {len(result.get('segments', []))}")
-    
-    transcript = " ".join([seg['text'].strip() for seg in result.get('segments', [])])
-    print(f"📄 轉錄文字: '{transcript}'")
-    
-    if len(result.get('segments', [])) == 0:
-        print("\n⚠️  注意: 沒有偵測到語音段落（這對純音調音訊是正常的）")
-    else:
-        print(f"\n🎉 MLX-Whisper 正常運作!")
-        
-except Exception as e:
-    print(f"\n❌ 轉錄失敗: {e}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
 
-print("\n" + "="*60)
-print("✅ MLX-Whisper 模型測試完成")
-print("="*60)
+    assert isinstance(result, dict)
+    assert "segments" in result

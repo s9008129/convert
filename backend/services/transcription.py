@@ -2,6 +2,7 @@
 ASR 轉錄服務
 
 - 支援官方 Transformers Whisper 模型（Breeze-ASR-26）
+- 在 Apple Silicon 的 auto 路徑支援 mlx-whisper / Metal
 - 保留 faster-whisper / CTranslate2 回滾路徑
 - 支援 GPU/CPU 自動偵測與釋放
 """
@@ -16,8 +17,15 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from backend.core.asr_model_resolver import infer_asr_backend, resolve_model_revision, resolve_transformers_model_source
+from backend.core.asr_model_resolver import (
+    infer_asr_backend,
+    resolve_asr_model,
+    resolve_mlx_model_source,
+    resolve_model_revision,
+    resolve_transformers_model_source,
+)
 from backend.core.config import settings
+from backend.core.errors import ASR_BACKEND_UNAVAILABLE, StableServiceError
 from backend.core.logger import log
 from backend.services.device_detector import DeviceType, device_detector
 
@@ -54,6 +62,7 @@ class TranscriptionService:
         self._compute_type: str = "int8"
         self._fw_version: Optional[str] = None
         self._backend: str = "unknown"
+        self._mlx_model_source: Optional[str] = None
 
     def _build_vad_params(
         self,
@@ -86,6 +95,14 @@ class TranscriptionService:
 
     def _detect_runtime(self, force_cpu: bool = False) -> tuple[str, str]:
         backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        if backend == "mlx_whisper":
+            # DeviceType.MPS 僅作既有內部 state marker；對外 metadata 會明確回報
+            # mlx-metal，避免把 MLX 與 PyTorch MPS 混為一談。
+            device_detector.current_device = DeviceType.MPS
+            device_detector.current_compute_type = "float16"
+            device_detector.gpu_present = True
+            device_detector.gpu_name = device_detector.gpu_name or "Apple Silicon"
+            return "mps", "float16"
         if force_cpu:
             return "cpu", "float32" if backend == "transformers" else "int8"
 
@@ -129,11 +146,43 @@ class TranscriptionService:
         self._device = DeviceType(device) if device != "cpu" else DeviceType.CPU
         self._compute_type = compute_type
 
+        if self._backend == "mlx_whisper":
+            self._load_mlx_whisper_model()
+            return
+
         if self._backend == "transformers":
             self._load_transformers_pipeline(device=device, compute_type=compute_type)
             return
 
         self._load_faster_whisper_model(device=device, compute_type=compute_type)
+
+    def _load_mlx_whisper_model(self) -> None:
+        """確認 MLX runtime 並解析 shared HF snapshot；實際權重由 transcribe 載入。"""
+        try:
+            import mlx_whisper
+        except ImportError as exc:
+            raise StableServiceError(
+                ASR_BACKEND_UNAVAILABLE,
+                "Darwin ARM64 的 MLX ASR 需要 mlx-whisper，請依 pyproject.toml 安裝平台依賴",
+            ) from exc
+
+        model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        self._mlx_model_source = resolve_mlx_model_source(
+            model_name,
+            revision=resolve_model_revision(model_name, settings.WHISPER_MODEL_REVISION),
+            local_files_only=(
+                settings.ASR_LOCAL_FILES_ONLY
+                or os.getenv("HF_HUB_OFFLINE", "").strip() == "1"
+            ),
+        )
+        # 保留 module reference 讓既有 _unload_model 的生命週期邊界一致；
+        # mlx-whisper 會在 subprocess 退出時釋放其 MLX/Metal 狀態。
+        self._model = mlx_whisper
+        log.info(
+            "載入 MLX ASR 模型: {}@{}, accelerator=mlx-metal",
+            model_name,
+            resolve_model_revision(model_name, settings.WHISPER_MODEL_REVISION) or "unpinned",
+        )
 
     def _load_faster_whisper_model(self, device: str, compute_type: str) -> None:
         from faster_whisper import WhisperModel
@@ -195,6 +244,7 @@ class TranscriptionService:
         log.info("釋放 ASR 模型與快取...")
         del self._model
         self._model = None
+        self._mlx_model_source = None
         gc.collect()
 
         if self._device == DeviceType.CUDA:
@@ -237,6 +287,77 @@ class TranscriptionService:
                 )
             )
         return [chunk for chunk in chunks if chunk.text]
+
+    def _transcribe_with_mlx_whisper(self, audio_path: str) -> DetailedTranscriptionResult:
+        """以既有 normalized result boundary 包裝 mlx-whisper 輸出。"""
+        if self._model is None or not self._mlx_model_source:
+            raise StableServiceError(ASR_BACKEND_UNAVAILABLE, "MLX ASR runtime 尚未初始化")
+
+        language = settings.WHISPER_LANGUAGE
+        transcribe_kwargs = {
+            "path_or_hf_repo": self._mlx_model_source,
+            "verbose": False,
+            "word_timestamps": settings.ASR_RETURN_TIMESTAMPS,
+            "condition_on_previous_text": settings.ASR_CONDITION_ON_PREVIOUS_TEXT,
+            "compression_ratio_threshold": settings.ASR_COMPRESSION_RATIO_THRESHOLD,
+            "no_speech_threshold": settings.ASR_NO_SPEECH_THRESHOLD,
+        }
+        # mlx-whisper 0.4.x exposes beam_size but its decoder deliberately
+        # rejects every non-None value. Omit it to select the supported greedy
+        # decoder; the configured beam size remains in the cache key so the
+        # change cannot reuse an incompatible transcript silently.
+        if settings.ASR_BEAM_SIZE not in (None, 1):
+            log.debug(
+                "MLX ASR 不支援 beam search，忽略 ASR_BEAM_SIZE={} 並使用 greedy decoder",
+                settings.ASR_BEAM_SIZE,
+            )
+        if language and language.lower() != "auto":
+            transcribe_kwargs["language"] = language
+        initial_prompt = self._compose_initial_prompt()
+        if initial_prompt:
+            transcribe_kwargs["initial_prompt"] = initial_prompt
+
+        log.info(
+            "開始 MLX/Metal 轉錄: backend=mlx_whisper, model={}, accelerator=mlx-metal",
+            resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND),
+        )
+        raw_result = self._model.transcribe(audio_path, **transcribe_kwargs)
+        if not isinstance(raw_result, dict):
+            raise RuntimeError("MLX ASR 回傳格式無法解析")
+
+        chunks: list[TranscriptionChunk] = []
+        raw_segments = raw_result.get("segments") or raw_result.get("chunks") or []
+        for raw_segment in raw_segments:
+            if not isinstance(raw_segment, dict):
+                continue
+            timestamp = raw_segment.get("timestamp") or raw_segment.get("timestamps")
+            if isinstance(timestamp, (list, tuple)) and len(timestamp) == 2:
+                start, end = timestamp
+            else:
+                start = raw_segment.get("start", 0.0)
+                end = raw_segment.get("end", 0.0)
+            text = str(raw_segment.get("text") or "").strip()
+            if not text:
+                continue
+            chunks.append(
+                TranscriptionChunk(
+                    start=float(start or 0.0),
+                    end=float(end or 0.0),
+                    text=text,
+                )
+            )
+
+        text = str(raw_result.get("text") or "").strip()
+        if not text and chunks:
+            text = " ".join(chunk.text for chunk in chunks).strip()
+        duration = float(raw_result.get("duration") or self._probe_duration(audio_path) or 0.0)
+        return DetailedTranscriptionResult(
+            text=text,
+            duration_seconds=duration,
+            language=str(raw_result.get("language") or language or "auto"),
+            chunks=chunks,
+            backend="mlx_whisper",
+        )
 
     @staticmethod
     def _load_audio_array(audio_path: str) -> np.ndarray:
@@ -457,7 +578,11 @@ class TranscriptionService:
             result = (
                 self._transcribe_with_transformers(abs_audio_path)
                 if self._backend == "transformers"
-                else self._transcribe_with_faster_whisper(abs_audio_path)
+                else (
+                    self._transcribe_with_mlx_whisper(abs_audio_path)
+                    if self._backend == "mlx_whisper"
+                    else self._transcribe_with_faster_whisper(abs_audio_path)
+                )
             )
 
             if progress_callback:
@@ -466,7 +591,7 @@ class TranscriptionService:
 
         except Exception as exc:
             log.error("轉錄失敗: {}", exc)
-            if self._device != DeviceType.CPU and max_retries > 0:
+            if self._backend != "mlx_whisper" and self._device != DeviceType.CPU and max_retries > 0:
                 log.info("嘗試降級到 CPU 重新轉錄...")
                 device_detector.fallback_to_cpu()
                 self._unload_model()
@@ -494,12 +619,33 @@ class TranscriptionService:
         return result.text, result.duration_seconds
 
     def get_device_info(self) -> dict:
+        backend = self._backend
+        if backend == "unknown":
+            backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        device = self._device.value if self._device else "not_loaded"
+        accelerator = device
+        if backend == "mlx_whisper":
+            device = "mlx-metal"
+            accelerator = "mlx-metal"
+        elif device == "cuda":
+            accelerator = "cuda"
+        elif device == "mps":
+            accelerator = "mps"
+        elif device == "cpu":
+            accelerator = "cpu"
         return {
-            "device": self._device.value if self._device else "not_loaded",
+            "device": device,
             "compute_type": self._compute_type,
-            "backend": self._backend,
-            "model": settings.WHISPER_MODEL,
-            "revision": resolve_model_revision(settings.WHISPER_MODEL, settings.WHISPER_MODEL_REVISION),
+            "backend": backend,
+            "accelerator": accelerator,
+            "asr_backend": backend,
+            "model": model_name,
+            "revision": resolve_model_revision(model_name, settings.WHISPER_MODEL_REVISION),
+            "asr_model": {
+                "identifier": model_name,
+                "revision": resolve_model_revision(model_name, settings.WHISPER_MODEL_REVISION),
+            },
         }
 
 

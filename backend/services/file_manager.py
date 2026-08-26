@@ -14,7 +14,12 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from fastapi import UploadFile
 
-from backend.core.asr_model_resolver import build_asr_cache_signature, infer_asr_backend, resolve_model_revision
+from backend.core.asr_model_resolver import (
+    build_asr_cache_signature,
+    infer_asr_backend,
+    resolve_asr_model,
+    resolve_model_revision,
+)
 from backend.core.config import settings
 from backend.core.logger import log
 
@@ -131,13 +136,18 @@ class FileManagerService:
 
     def get_asr_cache_signature(self) -> str:
         backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         return build_asr_cache_signature(
-            model_name=settings.WHISPER_MODEL,
+            model_name=model_name,
             backend=backend,
             revision=resolve_model_revision(
-                settings.WHISPER_MODEL,
+                model_name,
                 settings.WHISPER_MODEL_REVISION,
             ),
+            language=settings.WHISPER_LANGUAGE,
+            initial_prompt=settings.ASR_INITIAL_PROMPT,
+            beam_size=settings.ASR_BEAM_SIZE,
+            vad_enabled=settings.ASR_VAD_ENABLED,
         )
 
     def _build_cache_path(self, file_hash: str, cache_signature: Optional[str] = None) -> str:

@@ -1,58 +1,46 @@
-#!/bin/bash
-# ============================================================
-# 政府智慧會議紀錄生成系統 - macOS 原生服務停止腳本
-# v3.5.0 - 原生模式
-# ============================================================
-# 使用者導覽（給非技術同仁）：
-# - 環境檢查：先回到專案目錄，確保操作的是目前專案服務。
-# - 啟停流程：優先依 .server.pid 停止，再用進程名稱作為備援。
-# - 清理步驟：停止後會刪除 .server.pid，避免下次讀到舊資訊。
-# - 安全注意：僅在一般停止無效時才使用強制終止。
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 顏色定義
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# 取得腳本所在目錄
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PID_FILE="$PROJECT_ROOT/.server.pid"
 
-# 進入專案目錄
 cd "$PROJECT_ROOT"
 
-echo ""
-echo -e "${BLUE}[INFO]${NC} 正在停止 政府智慧會議紀錄生成系統 服務..."
-
-# 步驟 1：優先依 PID 檔案停止正確的服務程序
-if [ -f ".server.pid" ]; then
-    PID=$(cat .server.pid)
-    if ps -p $PID > /dev/null 2>&1; then
-        kill $PID
-        sleep 2
-        
-        # 確認是否停止
-        if ps -p $PID > /dev/null 2>&1; then
-            echo -e "${YELLOW}[⚠️]${NC} 服務未完全停止，強制終止..."
-            # 安全提醒：kill -9 屬於最後手段，只在必要時使用。
-            kill -9 $PID
-        fi
-        
-        rm .server.pid
-        echo -e "${GREEN}[✓]${NC} 服務已停止"
-    else
-        echo -e "${YELLOW}[⚠️]${NC} 服務 PID 不存在，可能已經停止"
-        rm .server.pid
-    fi
-else
-    echo -e "${YELLOW}[⚠️]${NC} 找不到 .server.pid 檔案"
-    # 備援步驟：若沒有 PID 檔案，改用名稱嘗試停止
-    echo -e "${BLUE}[INFO]${NC} 嘗試使用進程名稱停止服務..."
-    pkill -f "uvicorn backend.main:app"
-    sleep 2
-    echo -e "${GREEN}[✓]${NC} 服務已停止"
+if [ ! -f "$PID_FILE" ]; then
+    printf '[INFO] 找不到服務 PID 檔案，沒有可停止的服務。\n'
+    exit 0
 fi
 
-echo ""
+PID="$(<"$PID_FILE")"
+if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
+    printf '[ERROR] PID 檔案格式無效，未執行終止操作。\n' >&2
+    exit 1
+fi
+
+if ! kill -0 "$PID" 2>/dev/null; then
+    rm -f "$PID_FILE"
+    printf '[INFO] 服務程序已不存在，已清理 PID 檔案。\n'
+    exit 0
+fi
+
+COMMAND="$(ps -p "$PID" -o command= 2>/dev/null || true)"
+if [[ "$COMMAND" != *"backend.main:app"* ]]; then
+    printf '[ERROR] PID %s 不是本專案服務程序，未執行終止操作。\n' "$PID" >&2
+    exit 1
+fi
+
+kill "$PID"
+for _ in $(seq 1 10); do
+    if ! kill -0 "$PID" 2>/dev/null; then
+        rm -f "$PID_FILE"
+        printf '[OK] 服務已停止。\n'
+        exit 0
+    fi
+    sleep 1
+done
+
+printf '[WARN] 服務未在 10 秒內停止，執行最後的精確 PID 終止。\n'
+kill -KILL "$PID" 2>/dev/null || true
+rm -f "$PID_FILE"
+printf '[OK] 服務已停止。\n'

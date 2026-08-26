@@ -10,6 +10,7 @@ v3.5.0 改進：
 
 import asyncio
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,11 +20,21 @@ import httpx
 from openai import OpenAI, AsyncOpenAI, APIConnectionError, APITimeoutError
 
 from backend.core.config import settings
-from backend.core.errors import describe_exception
+from backend.core.errors import (
+    LMSTUDIO_MODEL_NOT_LOADED,
+    LMSTUDIO_MULTIPLE_LOADED_LLMS,
+    LMSTUDIO_NO_LOADED_LLM,
+    LMSTUDIO_UNREACHABLE,
+    StableServiceError,
+    describe_exception,
+)
 from backend.core.logger import log
 from backend.core.platform_config import (
     get_global_config,
     get_config_value,
+    get_lmstudio_openai_base_url,
+    normalize_lmstudio_base_url,
+    resolve_local_llm_provider,
 )
 from backend.core.templates import MeetingTemplate, get_template
 from backend.models.schemas import ProcessingMode
@@ -55,10 +66,28 @@ class LocalContextPlan:
     estimated_chunk_count: int
 
 
+@dataclass(frozen=True)
+class LMStudioModelSelection:
+    """一次摘要工作固定使用的 LM Studio loaded instance 選擇。"""
+
+    provider: str
+    model_identifier: str
+    loaded_instance_id: str
+    context_length: Optional[int]
+    inventory_timestamp: datetime
+
+
+@dataclass(frozen=True)
+class _LoadedLMStudioInstance:
+    model_key: str
+    instance_id: str
+    context_length: Optional[int]
+
+
 class SummarizationService:
     """
     LLM 摘要生成服務
-    支援本地模式（Ollama + Gemma4）、LM Studio（gpt-oss-20b）和雲端模式（Gemini API）
+    支援本地模式（Ollama/LM Studio）和雲端模式（Gemini API）
     """
 
     LOCAL_EXTRACTION_PROMPT = """你是會議逐字稿資訊萃取助理。你的任務只有一個：盡量完整抽取事實，不要直接寫成最終會議記錄。
@@ -119,7 +148,10 @@ class SummarizationService:
     def __init__(self):
         """準備各種 LLM 客戶端與健康檢查快取，減少重複連線成本。"""
         self._ollama_client: Optional[httpx.AsyncClient] = None
-        self._lmstudio_client: Optional[OpenAI] = None
+        self._lmstudio_client: Optional[AsyncOpenAI] = None
+        self._lmstudio_client_base_url: Optional[str] = None
+        self._lmstudio_http_client: Optional[httpx.AsyncClient] = None
+        self._lmstudio_http_base_url: Optional[str] = None
         self._gemini_client: Optional[OpenAI] = None
         self._gemini_async_client: Optional[AsyncOpenAI] = None
 
@@ -137,6 +169,15 @@ class SummarizationService:
         # v4.7.0: warmup 自我修復失敗時的本任務降級 num_ctx
         # （None＝使用 settings 預設；每次 warmup 開頭重設，防跨任務殘留）
         self._active_context_tokens: Optional[int] = None
+        self._active_lmstudio_selection: Optional[LMStudioModelSelection] = None
+        self._lmstudio_health: dict = {
+            "provider": "auto",
+            "server_reachable": False,
+            "selection_status": "not_checked",
+            "loaded_llm_count": 0,
+            "selected_model": None,
+            "context_length": None,
+        }
 
     async def _get_ollama_client(self) -> httpx.AsyncClient:
         """取得 Ollama HTTP 客戶端"""
@@ -147,19 +188,65 @@ class SummarizationService:
             )
         return self._ollama_client
 
-    def _get_lmstudio_client(self) -> OpenAI:
-        """取得 LM Studio 客戶端（OpenAI 相容介面）"""
-        if not self._lmstudio_client:
-            # 從平台配置獲取 LM Studio 設定
-            config = get_global_config()
-            base_url = get_config_value(config, 'llm.lmstudio.base_url', settings.LMSTUDIO_BASE_URL)
-            api_key = get_config_value(config, 'llm.lmstudio.api_key', 'not-needed')
-            
-            self._lmstudio_client = OpenAI(
+    def _get_lmstudio_root_url(self) -> str:
+        """取得 normalized LM Studio root；不把 OpenAI `/v1` 當 native API root。"""
+        return normalize_lmstudio_base_url(settings.LMSTUDIO_BASE_URL)
+
+    def _get_lmstudio_api_key(self) -> str:
+        return str(os.getenv("LM_API_TOKEN") or "lm-studio")
+
+    def _get_lmstudio_model_override(self) -> Optional[str]:
+        """只讀取 explicit override；不以任何固定模型名稱作 fallback。"""
+        if settings.LMSTUDIO_MODEL is None:
+            return None
+        normalized = settings.LMSTUDIO_MODEL.strip()
+        return normalized or None
+
+    def _set_lmstudio_health(
+        self,
+        *,
+        server_reachable: bool,
+        selection_status: str,
+        loaded_instances: list[_LoadedLMStudioInstance],
+        selected: Optional[LMStudioModelSelection] = None,
+    ) -> None:
+        self._lmstudio_health = {
+            "provider": resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER),
+            "server_reachable": server_reachable,
+            "selection_status": selection_status,
+            "loaded_llm_count": len(loaded_instances),
+            "selected_model": selected.model_identifier if selected else None,
+            "context_length": selected.context_length if selected else None,
+        }
+
+    async def _get_lmstudio_http_client(self) -> httpx.AsyncClient:
+        """取得查詢 native `/api/v1/models` 的 async client。"""
+        base_url = self._get_lmstudio_root_url()
+        if self._lmstudio_http_client is None or self._lmstudio_http_base_url != base_url:
+            if self._lmstudio_http_client is not None:
+                await self._lmstudio_http_client.aclose()
+            self._lmstudio_http_client = httpx.AsyncClient(
                 base_url=base_url,
-                api_key=api_key
+                headers={"Authorization": f"Bearer {self._get_lmstudio_api_key()}"},
+                # Inventory is a health/readiness probe, not a generation
+                # request; keep a dead server from blocking health for 30m.
+                timeout=max(1.0, min(float(settings.LOCAL_LLM_REQUEST_TIMEOUT), 10.0)),
             )
-            log.info(f"LM Studio 客戶端初始化完成 (base_url={base_url})")
+            self._lmstudio_http_base_url = base_url
+        return self._lmstudio_http_client
+
+    def _get_lmstudio_client(self) -> AsyncOpenAI:
+        """取得 LM Studio OpenAI-compatible async client。"""
+        base_url = get_lmstudio_openai_base_url(self._get_lmstudio_root_url())
+        if self._lmstudio_client is None or self._lmstudio_client_base_url != base_url:
+            self._lmstudio_client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=self._get_lmstudio_api_key(),
+                timeout=settings.LOCAL_LLM_REQUEST_TIMEOUT,
+                max_retries=0,
+            )
+            self._lmstudio_client_base_url = base_url
+            log.info("LM Studio async 客戶端初始化完成 (base_url={})", base_url)
         return self._lmstudio_client
 
     def _get_gemini_api_key(self) -> str:
@@ -712,6 +799,7 @@ class SummarizationService:
         notes_merge_budget_tokens: int,
         progress_callback: Optional[callable] = None,
         context_window_tokens: Optional[int] = None,
+        lmstudio_selection: Optional[LMStudioModelSelection] = None,
     ) -> str:
         """反覆整併 chunk 筆記，直到可被最終摘要步驟安全承接。"""
         current_notes = [self._clean_ollama_output(note) for note in extracted_notes if note and note.strip()]
@@ -761,6 +849,7 @@ class SummarizationService:
                     # 輸出上限綁定預算：讓整併輸出「物理上」不可能超過預算太多
                     num_predict=merge_predict_cap,
                     context_window_tokens=context_window_tokens,
+                    lmstudio_selection=lmstudio_selection,
                     # v4.7.1：merge_predict_cap 是整併的收斂機制（每輪輸出必須
                     # 小於預算，才能保證多輪整併最終收斂）。若自動擴大 num_predict，
                     # 會讓整併輸出膨脹回接近 context 上限，破壞「整併必縮小」的保證。
@@ -794,20 +883,242 @@ class SummarizationService:
         )
         return truncated or text[: budget_tokens * 2]
 
+    @staticmethod
+    def _parse_lmstudio_loaded_instances(payload: object) -> list[_LoadedLMStudioInstance]:
+        """解析 LM Studio native models response，只保留 loaded LLM instances。"""
+        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+            raise StableServiceError(
+                LMSTUDIO_UNREACHABLE,
+                "LM Studio /api/v1/models 回應缺少 models 陣列",
+            )
+
+        loaded: list[_LoadedLMStudioInstance] = []
+        for model in payload["models"]:
+            if not isinstance(model, dict) or model.get("type") not in {"llm", "embedding"}:
+                # 無法區分 model type 時停止，避免把未知類型誤當成可用 LLM。
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    "LM Studio /api/v1/models 含無法辨識的 model type",
+                )
+            if model.get("type") == "embedding":
+                # embedding 永久排除，不參與 LLM 選擇。
+                continue
+
+            model_key = str(model.get("key") or "").strip()
+            if not model_key:
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    "LM Studio /api/v1/models 的 LLM 缺少 key，無法安全選模",
+                )
+
+            raw_instances = model.get("loaded_instances")
+            if raw_instances is None:
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    f"LM Studio model {model_key!r} 缺少 loaded_instances，無法安全選模",
+                )
+            if not isinstance(raw_instances, list):
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    f"LM Studio model {model_key!r} 的 loaded_instances 不是陣列",
+                )
+
+            for instance in raw_instances:
+                if not isinstance(instance, dict):
+                    raise StableServiceError(
+                        LMSTUDIO_UNREACHABLE,
+                        f"LM Studio model {model_key!r} 的 loaded instance 格式無法解析",
+                    )
+                instance_id = str(instance.get("id") or "").strip()
+                if not instance_id:
+                    raise StableServiceError(
+                        LMSTUDIO_UNREACHABLE,
+                        f"LM Studio model {model_key!r} 的 loaded instance 缺少 id",
+                    )
+
+                config = instance.get("config")
+                if not isinstance(config, dict):
+                    config = {}
+                context_length = (
+                    config.get("context_length")
+                    or instance.get("context_length")
+                    or model.get("max_context_length")
+                )
+                try:
+                    context_length = int(context_length) if context_length is not None else None
+                except (TypeError, ValueError):
+                    context_length = None
+                if context_length is not None and context_length <= 0:
+                    context_length = None
+
+                loaded.append(
+                    _LoadedLMStudioInstance(
+                        model_key=model_key,
+                        instance_id=instance_id,
+                        context_length=context_length,
+                    )
+                )
+        return loaded
+
+    @staticmethod
+    def _make_lmstudio_selection(
+        instance: _LoadedLMStudioInstance,
+        inventory_timestamp: Optional[datetime] = None,
+    ) -> LMStudioModelSelection:
+        return LMStudioModelSelection(
+            provider="lmstudio",
+            # OpenAI-compatible LM Studio requests use the model key; the
+            # loaded instance id remains available for deterministic diagnostics.
+            model_identifier=instance.model_key,
+            loaded_instance_id=instance.instance_id,
+            context_length=instance.context_length,
+            inventory_timestamp=inventory_timestamp or datetime.now(),
+        )
+
+    @staticmethod
+    def _format_lmstudio_candidates(instances: list[_LoadedLMStudioInstance]) -> str:
+        return ", ".join(
+            f"{instance.model_key} (instance={instance.instance_id})"
+            for instance in instances
+        )
+
+    def _selection_status_for_instances(
+        self,
+        instances: list[_LoadedLMStudioInstance],
+        override: Optional[str],
+    ) -> tuple[str, Optional[_LoadedLMStudioInstance]]:
+        if override:
+            matches = [
+                instance
+                for instance in instances
+                if override in {instance.model_key, instance.instance_id}
+            ]
+            return ("ready", matches[0]) if len(matches) == 1 else (LMSTUDIO_MODEL_NOT_LOADED, None)
+        if not instances:
+            return LMSTUDIO_NO_LOADED_LLM, None
+        if len(instances) != 1:
+            return LMSTUDIO_MULTIPLE_LOADED_LLMS, None
+        return "ready", instances[0]
+
+    async def _fetch_lmstudio_loaded_instances(self) -> list[_LoadedLMStudioInstance]:
+        """以有限重試讀取 LM Studio inventory；不呼叫 load/unload/JIT API。"""
+        retries = max(int(settings.LOCAL_LLM_TRANSIENT_RETRIES), 0)
+        for attempt in range(retries + 1):
+            try:
+                client = await self._get_lmstudio_http_client()
+                response = await client.get("/api/v1/models")
+                status_code = getattr(response, "status_code", None)
+                if status_code != 200:
+                    if status_code is not None and status_code >= 500 and attempt < retries:
+                        await asyncio.sleep((attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS)
+                        continue
+                    raise StableServiceError(
+                        LMSTUDIO_UNREACHABLE,
+                        f"LM Studio /api/v1/models 回應 HTTP {status_code}",
+                    )
+                instances = self._parse_lmstudio_loaded_instances(response.json())
+                return instances
+            except StableServiceError:
+                raise
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                if attempt < retries:
+                    await asyncio.sleep((attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS)
+                    continue
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    f"無法連線至 LM Studio：{describe_exception(exc)}",
+                ) from exc
+            except Exception as exc:  # noqa: BLE001 — malformed/transport boundary 統一失敗
+                raise StableServiceError(
+                    LMSTUDIO_UNREACHABLE,
+                    f"LM Studio models API 失敗：{describe_exception(exc)}",
+                ) from exc
+
+        raise StableServiceError(LMSTUDIO_UNREACHABLE, "LM Studio models API 重試邏輯異常")
+
+    async def _resolve_lmstudio_selection(self) -> LMStudioModelSelection:
+        """在摘要工作開始時選模，並回傳 immutable selection。"""
+        try:
+            instances = await self._fetch_lmstudio_loaded_instances()
+        except StableServiceError as exc:
+            self._set_lmstudio_health(
+                server_reachable=False,
+                selection_status=exc.code,
+                loaded_instances=[],
+            )
+            raise
+
+        override = self._get_lmstudio_model_override()
+        status, instance = self._selection_status_for_instances(instances, override)
+        if status != "ready" or instance is None:
+            self._set_lmstudio_health(
+                server_reachable=True,
+                selection_status=status,
+                loaded_instances=instances,
+            )
+            if status == LMSTUDIO_NO_LOADED_LLM:
+                raise StableServiceError(
+                    status,
+                    "LM Studio 目前沒有已載入的 LLM（embedding 不列入）；請載入恰一個 LLM",
+                )
+            if status == LMSTUDIO_MULTIPLE_LOADED_LLMS:
+                raise StableServiceError(
+                    status,
+                    "LM Studio 有多個已載入 LLM，未任意選擇："
+                    f"{self._format_lmstudio_candidates(instances)}；請設定 LMSTUDIO_MODEL 或只保留一個",
+                )
+            raise StableServiceError(
+                LMSTUDIO_MODEL_NOT_LOADED,
+                f"LMSTUDIO_MODEL override {override!r} 未唯一匹配已載入 LLM；"
+                f"候選：{self._format_lmstudio_candidates(instances) or '無'}",
+            )
+
+        selection = self._make_lmstudio_selection(instance)
+        self._active_lmstudio_selection = selection
+        self._set_lmstudio_health(
+            server_reachable=True,
+            selection_status="ready",
+            loaded_instances=instances,
+            selected=selection,
+        )
+        return selection
+
     async def _select_local_engine(self) -> str:
-        """選擇可用的本地 LLM 引擎。"""
+        """選擇可用的本地 LLM 引擎，Mac auto 只走 LM Studio。"""
+        self._active_lmstudio_selection = None
+        provider = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+        if provider == "lmstudio":
+            selection = await self._resolve_lmstudio_selection()
+            log.info(
+                "使用 LM Studio 本地模式 (model={}, instance={})",
+                selection.model_identifier,
+                selection.loaded_instance_id,
+            )
+            return "lmstudio"
+
+        if provider == "ollama":
+            if await self.check_ollama_health():
+                log.info("使用 Ollama 本地模式")
+                return "ollama"
+            if self._ollama_model_error:
+                raise RuntimeError(self._ollama_model_error)
+            raise RuntimeError("Ollama 服務不可用，請確認 Ollama 是否正在運行")
+
+        # 非 Mac 的 auto 保留既有 Ollama 優先順序；LM Studio 只在 Ollama
+        # 不可用時嘗試，且其 selection ambiguity 直接回報，不任意 fallback。
         if await self.check_ollama_health():
             log.info("使用 Ollama 本地模式")
             return "ollama"
-
-        if await self.check_lmstudio_health():
-            log.info("使用 LM Studio 本地模式")
-            return "lmstudio"
-
         if self._ollama_model_error:
             raise RuntimeError(self._ollama_model_error)
 
-        raise RuntimeError("本地 LLM 不可用：請確認 Ollama 或 LM Studio 已啟動")
+        selection = await self._resolve_lmstudio_selection()
+        log.info(
+            "使用 LM Studio 本地模式 (model={}, instance={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+        )
+        return "lmstudio"
 
     async def _generate_with_local_engine(
         self,
@@ -819,6 +1130,7 @@ class SummarizationService:
         num_predict: Optional[int] = None,
         context_window_tokens: Optional[int] = None,
         expand_output_budget: bool = True,
+        lmstudio_selection: Optional[LMStudioModelSelection] = None,
     ) -> str:
         """對選定的本地引擎執行一次生成。"""
         if engine == "ollama":
@@ -839,6 +1151,8 @@ class SummarizationService:
                 progress_callback=progress_callback,
                 temperature=temperature,
                 max_tokens=num_predict,
+                context_window_tokens=context_window_tokens,
+                selection=lmstudio_selection,
             )
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
@@ -852,8 +1166,13 @@ class SummarizationService:
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
         engine = await self._select_local_engine()
+        # LM Studio 選模只在工作開始時做一次；整個摘要工作沿用 immutable
+        # selection，避免中途 inventory 變化導致不同階段偷偷換模型。
+        lmstudio_selection = self._active_lmstudio_selection
         # v4.7.0：任務級 num_ctx——warmup 自我修復失敗時降級，一次讀取、全程顯式傳遞
         context_tokens = self._effective_context_tokens()
+        if lmstudio_selection and lmstudio_selection.context_length:
+            context_tokens = min(context_tokens, lmstudio_selection.context_length)
         plan = self._build_local_context_plan(
             transcript, system_prompt, template=template,
             context_window_tokens=context_tokens,
@@ -887,6 +1206,7 @@ class SummarizationService:
                 temperature=0.1,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                 context_window_tokens=context_tokens,
+                lmstudio_selection=lmstudio_selection,
             )
             extracted_notes.append(self._clean_ollama_output(notes))
 
@@ -896,6 +1216,7 @@ class SummarizationService:
             plan.notes_merge_budget_tokens,
             progress_callback,
             context_window_tokens=context_tokens,
+            lmstudio_selection=lmstudio_selection,
         )
 
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
@@ -906,6 +1227,7 @@ class SummarizationService:
             temperature=0.2,
             num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
             context_window_tokens=context_tokens,
+            lmstudio_selection=lmstudio_selection,
         )
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
@@ -923,6 +1245,7 @@ class SummarizationService:
                 temperature=0.15,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                 context_window_tokens=context_tokens,
+                lmstudio_selection=lmstudio_selection,
             )
             summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
             issues = self._validate_summary_quality(summary, merged_notes, template=template)
@@ -954,12 +1277,14 @@ class SummarizationService:
     ) -> str:
         """以本地引擎執行單次生成（供逐字稿語意校正等模組共用，P1-3）。"""
         engine = await self._select_local_engine()
+        lmstudio_selection = self._active_lmstudio_selection
         return await self._generate_with_local_engine(
             engine,
             system_prompt,
             user_message,
             temperature=temperature,
             num_predict=num_predict,
+            lmstudio_selection=lmstudio_selection,
         )
 
     async def _stream_ollama_chat_once(
@@ -1308,49 +1633,129 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        selection: Optional[LMStudioModelSelection] = None,
     ) -> str:
         """
-        使用 LM Studio（OpenAI 相容）生成摘要
-        v3.5.0: 從平台配置讀取模型和參數
+        使用已選定的 LM Studio loaded instance 生成摘要。
+
+        selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
+        會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+        load，也不在生成失敗時改選其他 instance。
         """
-        client = self._get_lmstudio_client()
+        selection = selection or self._active_lmstudio_selection
+        if selection is None:
+            selection = await self._resolve_lmstudio_selection()
+
         config = get_global_config()
-        model = get_config_value(config, 'llm.lmstudio.model', settings.LMSTUDIO_MODEL)
         temperature = get_config_value(config, 'llm.lmstudio.temperature', temperature)
-        max_tokens = get_config_value(
+        configured_max_tokens = get_config_value(
             config,
             'llm.lmstudio.max_tokens',
-            max_tokens or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+            max_tokens if max_tokens is not None else settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+        )
+        try:
+            requested_max_tokens = max(1, int(configured_max_tokens))
+        except (TypeError, ValueError):
+            requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+
+        context_budget = self._effective_context_tokens(context_window_tokens)
+        if selection.context_length:
+            context_budget = min(context_budget, selection.context_length)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = max(1, context_budget - prompt_tokens - 64)
+        requested_max_tokens = min(requested_max_tokens, available_output_tokens)
+        client = self._get_lmstudio_client()
+        retries = max(int(settings.LOCAL_LLM_TRANSIENT_RETRIES), 0)
+        transient_errors = (
+            APIConnectionError,
+            APITimeoutError,
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.RemoteProtocolError,
         )
 
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+        )
+
+        for attempt in range(retries + 1):
+            try:
+                response = await client.chat.completions.create(
+                    model=selection.model_identifier,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=temperature,
+                    max_tokens=requested_max_tokens,
+                )
+                break
+            except transient_errors as exc:
+                if attempt >= retries:
+                    raise StableServiceError(
+                        LMSTUDIO_UNREACHABLE,
+                        f"LM Studio chat 請求失敗：{describe_exception(exc)}",
+                    ) from exc
+                wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                log.warning(
+                    "LM Studio 請求瞬時失敗（第 %s/%s 次）：%s，%.0f 秒後重試",
+                    attempt + 1,
+                    retries + 1,
+                    describe_exception(exc),
+                    wait_seconds,
+                )
+                await asyncio.sleep(wait_seconds)
+            except Exception as exc:  # noqa: BLE001 — map stable provider boundary errors
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code == 404:
+                    raise StableServiceError(
+                        LMSTUDIO_MODEL_NOT_LOADED,
+                        f"LM Studio loaded instance {selection.loaded_instance_id!r} 已不可用",
+                    ) from exc
+                if isinstance(status_code, int) and status_code >= 500:
+                    if attempt < retries:
+                        wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                        log.warning(
+                            "LM Studio server error HTTP {}（第 {}/{} 次），{:.0f} 秒後重試",
+                            status_code,
+                            attempt + 1,
+                            retries + 1,
+                            wait_seconds,
+                        )
+                        await asyncio.sleep(wait_seconds)
+                        continue
+                    raise StableServiceError(
+                        LMSTUDIO_UNREACHABLE,
+                        f"LM Studio chat 回應 HTTP {status_code}",
+                    ) from exc
+                log.exception("LM Studio 摘要生成失敗: %s", describe_exception(exc))
+                raise
+        else:
+            raise StableServiceError(LMSTUDIO_UNREACHABLE, "LM Studio chat 重試邏輯異常")
+
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
         try:
-            self._emit_progress(progress_callback, 65.0, f"載入 LM Studio 模型 ({model})...")
-            log.info(f"使用 LM Studio 生成摘要 (model={model}, temperature={temperature})")
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            content = response.choices[0].message.content or ""
+        except (AttributeError, IndexError, TypeError) as exc:
+            raise RuntimeError("LM Studio 摘要生成失敗：回應格式無法解析") from exc
+        summary = self._clean_ollama_output(str(content))
 
-            self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        if not summary or not summary.strip():
+            log.warning("LM Studio 摘要生成結果為空")
+            raise RuntimeError("摘要生成失敗：結果為空")
 
-            summary = self._clean_ollama_output(response.choices[0].message.content or "")
-
-            # 檢查摘要是否為空
-            if not summary or not summary.strip():
-                log.warning("LM Studio 摘要生成結果為空")
-                raise RuntimeError("摘要生成失敗：結果為空")
-
-            log.info(f"LM Studio 摘要生成成功，模型: {model}")
-            return summary.strip()
-
-        except Exception as e:
-            log.exception(f"LM Studio 摘要生成失敗: {describe_exception(e)}")
-            raise RuntimeError(f"LM Studio 服務不可用: {describe_exception(e)}")
+        log.info("LM Studio 摘要生成成功，模型: {}", selection.model_identifier)
+        return summary.strip()
 
     def _estimate_cloud_min_summary_chars(self, transcript: str) -> int:
         """依逐字稿規模估算雲端紀錄的動態長度下限（v4.3.3 豐富度閘門）。
@@ -1581,6 +1986,12 @@ class SummarizationService:
         檢查 Ollama 服務是否可用
         v4.1.0: 增強檢查 - 同時驗證配置的模型是否存在
         """
+        # Apple Silicon auto 的 provider contract 是 LM Studio；不要因為
+        # health endpoint 同時展示兩個 legacy 欄位而對 Ollama 發出探測。
+        if resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER) == "lmstudio":
+            self._ollama_model_error = None
+            return False
+
         try:
             client = await self._get_ollama_client()
             response = await client.get("/api/tags")
@@ -1767,8 +2178,16 @@ class SummarizationService:
 
     def _get_effective_model(self) -> str:
         """
-        取得有效的模型名稱（若有解析結果則使用解析結果）
+        取得有效的模型名稱（Ollama 解析結果或 LM Studio 工作選擇）。
         """
+        if resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER) == "lmstudio":
+            selection = self._active_lmstudio_selection
+            if selection:
+                return selection.model_identifier
+            selected_model = self._lmstudio_health.get("selected_model")
+            if selected_model:
+                return selected_model
+            return self._get_lmstudio_model_override() or "LM Studio（依已載入模型）"
         return getattr(self, '_resolved_model', None) or settings.LOCAL_LLM_MODEL
 
     def get_effective_local_model(self) -> str:
@@ -1776,14 +2195,51 @@ class SummarizationService:
         return self._get_effective_model()
 
     async def check_lmstudio_health(self) -> bool:
-        """檢查 LM Studio 服務是否可用"""
-        try:
-            client = self._get_lmstudio_client()
-            # 同步 client 直接呼叫會阻塞 event loop（v4.6.2 修正）
-            await asyncio.to_thread(client.models.list)
-            return True
-        except Exception:
+        """檢查 LM Studio server 與 loaded-LLM selection 狀態。"""
+        provider = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+        if provider == "ollama":
+            self._lmstudio_health = {
+                "provider": provider,
+                "server_reachable": False,
+                "selection_status": "not_selected",
+                "loaded_llm_count": 0,
+                "selected_model": None,
+                "context_length": None,
+            }
             return False
+
+        try:
+            instances = await self._fetch_lmstudio_loaded_instances()
+        except StableServiceError as exc:
+            self._set_lmstudio_health(
+                server_reachable=False,
+                selection_status=exc.code,
+                loaded_instances=[],
+            )
+            return False
+
+        status, instance = self._selection_status_for_instances(
+            instances,
+            self._get_lmstudio_model_override(),
+        )
+        selected = self._make_lmstudio_selection(instance) if status == "ready" and instance else None
+        self._set_lmstudio_health(
+            server_reachable=True,
+            selection_status=status,
+            loaded_instances=instances,
+            selected=selected,
+        )
+        # Reachability and readiness are intentionally separate: a reachable
+        # server with zero/multiple loaded LLMs is still useful health data.
+        return True
+
+    def get_local_llm_health(self) -> dict:
+        """回傳 additive local-LLM health snapshot，不暴露本機路徑。"""
+        snapshot = dict(self._lmstudio_health)
+        # Settings can be monkeypatched/reloaded after service construction;
+        # expose the current effective provider rather than a stale `auto`.
+        snapshot["provider"] = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+        return snapshot
 
     def check_gemini_available(self) -> bool:
         """檢查 Gemini API 是否已配置"""
@@ -1940,6 +2396,9 @@ class SummarizationService:
         # 防跨任務殘留：每個任務的 warmup 都從預設 ctx 重新出發
         self._active_context_tokens = None
 
+        if resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER) != "ollama":
+            return
+
         try:
             if not await self.check_ollama_health():
                 return
@@ -2015,6 +2474,9 @@ class SummarizationService:
         多階段流程間常駐（P0-7），但下一個任務的 ASR 開跑前應主動釋放，
         否則 ASR 會因可用 VRAM 不足而降級 CPU。
         """
+        if resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER) != "ollama":
+            return
+
         try:
             client = await self._get_ollama_client()
             await client.post(
@@ -2042,6 +2504,14 @@ class SummarizationService:
         if self._ollama_client:
             await self._ollama_client.aclose()
             self._ollama_client = None
+        if self._lmstudio_http_client:
+            await self._lmstudio_http_client.aclose()
+            self._lmstudio_http_client = None
+            self._lmstudio_http_base_url = None
+        if self._lmstudio_client:
+            await self._lmstudio_client.close()
+            self._lmstudio_client = None
+            self._lmstudio_client_base_url = None
 
 
 # 全域摘要服務實例

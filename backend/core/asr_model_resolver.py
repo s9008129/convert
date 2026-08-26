@@ -11,9 +11,18 @@ from typing import Iterable, Optional
 
 from huggingface_hub import snapshot_download
 
+from backend.core.errors import (
+    ASR_MODEL_UNAVAILABLE,
+    StableServiceError,
+    describe_exception,
+)
+from backend.core.platform_config import is_darwin_arm64, resolve_platform_asr_backend
+
 
 DEFAULT_BREEZE_ASR_26_MODEL = "MediaTek-Research/Breeze-ASR-26"
 DEFAULT_BREEZE_ASR_26_REVISION = "949c87bca9dbe90e160cf739460cc765e80805f3"
+DEFAULT_BREEZE_ASR_26_MLX_MODEL = "doggy8088/Breeze-ASR-26-MLX"
+DEFAULT_BREEZE_ASR_26_MLX_REVISION = "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
 
 DEFAULT_TRANSFORMERS_ALLOW_PATTERNS = (
     "config.json",
@@ -61,9 +70,18 @@ def is_faster_whisper_model(model_name: str) -> bool:
 
 
 def infer_asr_backend(model_name: str, backend_preference: str = "auto") -> str:
-    normalized_preference = (backend_preference or "auto").strip().lower()
-    if normalized_preference in {"transformers", "faster_whisper"}:
+    model_name = (model_name or "").strip()
+    normalized_preference = (backend_preference or "auto").strip().lower().replace("-", "_")
+    if normalized_preference in {"transformers", "faster_whisper", "mlx_whisper"}:
         return normalized_preference
+    if normalized_preference not in {"", "auto"}:
+        # 與 platform_config 共用同一份可接受值檢查，避免未知值靜默改走其他 backend。
+        resolve_platform_asr_backend(normalized_preference)
+
+    # Apple Silicon 的 auto 是明確的 MLX/Metal 平台契約；只有明確 backend
+    # 才能保留 transformers/faster_whisper 路徑。
+    if normalized_preference in {"", "auto"} and is_darwin_arm64():
+        return "mlx_whisper"
     if is_faster_whisper_model(model_name):
         return "faster_whisper"
     if "/" not in model_name and not is_local_model_path(model_name):
@@ -71,21 +89,85 @@ def infer_asr_backend(model_name: str, backend_preference: str = "auto") -> str:
     return "transformers"
 
 
+def resolve_asr_model(model_name: str, backend_preference: str = "auto") -> str:
+    """解析平台預設模型；明確 model/backend 設定永遠優先。"""
+    normalized_model = (model_name or "").strip()
+    normalized_preference = (backend_preference or "auto").strip().lower().replace("-", "_")
+    if (
+        normalized_preference in {"", "auto"}
+        and is_darwin_arm64()
+        and normalized_model.lower() == DEFAULT_BREEZE_ASR_26_MODEL.lower()
+    ):
+        return DEFAULT_BREEZE_ASR_26_MLX_MODEL
+    return normalized_model
+
+
 def build_asr_cache_signature(
     model_name: str,
     backend: str,
     revision: Optional[str] = None,
+    *,
+    language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
+    beam_size: Optional[int] = None,
+    vad_enabled: Optional[bool] = None,
 ) -> str:
-    raw_signature = f"{backend}::{model_name}::{revision or 'unpinned'}"
+    # 除 backend/model/revision 外，納入會改變文字輸出的主要 ASR 選項，
+    # 避免切換語言提示或解碼參數時誤用舊逐字稿。
+    raw_signature = "::".join(
+        str(value) if value is not None else "unset"
+        for value in (
+            backend,
+            model_name,
+            revision or "unpinned",
+            language or "auto",
+            initial_prompt or "",
+            beam_size if beam_size is not None else "default",
+            vad_enabled if vad_enabled is not None else "default",
+        )
+    )
     return hashlib.sha256(raw_signature.encode("utf-8")).hexdigest()[:16]
 
 
 def resolve_model_revision(model_name: str, revision: Optional[str] = None) -> Optional[str]:
     if revision:
         return revision
+    if model_name.strip().lower() == DEFAULT_BREEZE_ASR_26_MLX_MODEL.lower():
+        return DEFAULT_BREEZE_ASR_26_MLX_REVISION
     if model_name.strip().lower() == DEFAULT_BREEZE_ASR_26_MODEL.lower():
         return DEFAULT_BREEZE_ASR_26_REVISION
     return None
+
+
+def resolve_mlx_model_source(
+    model_name: str,
+    revision: Optional[str] = None,
+    *,
+    local_files_only: bool = False,
+    cache_dir: Optional[str] = None,
+) -> str:
+    """從本機路徑或 shared Hugging Face cache 解析 MLX 模型。"""
+    normalized_model = (model_name or "").strip()
+    if not normalized_model:
+        raise StableServiceError(ASR_MODEL_UNAVAILABLE, "MLX ASR 模型名稱不可為空")
+    if is_local_model_path(normalized_model):
+        return str(Path(normalized_model).resolve())
+
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    resolved_revision = resolve_model_revision(normalized_model, revision)
+    try:
+        return snapshot_download(
+            repo_id=normalized_model,
+            revision=resolved_revision,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 — 統一成穩定的 ASR model boundary 錯誤
+        revision_label = resolved_revision or "unpinned"
+        raise StableServiceError(
+            ASR_MODEL_UNAVAILABLE,
+            f"無法解析 MLX ASR 模型 {normalized_model}@{revision_label}：{describe_exception(exc)}",
+        ) from exc
 
 
 def resolve_transformers_model_source(
@@ -97,16 +179,26 @@ def resolve_transformers_model_source(
     allow_patterns: Optional[Iterable[str] | str] = None,
     deny_patterns: Optional[Iterable[str] | str] = None,
 ) -> str:
-    if is_local_model_path(model_name):
-        return str(Path(model_name).resolve())
+    normalized_model = (model_name or "").strip()
+    if not normalized_model:
+        raise StableServiceError(ASR_MODEL_UNAVAILABLE, "Transformers ASR 模型名稱不可為空")
+    if is_local_model_path(normalized_model):
+        return str(Path(normalized_model).resolve())
 
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
-    resolved_revision = resolve_model_revision(model_name, revision)
-    return snapshot_download(
-        repo_id=model_name,
-        revision=resolved_revision,
-        allow_patterns=_split_patterns(allow_patterns, DEFAULT_TRANSFORMERS_ALLOW_PATTERNS),
-        ignore_patterns=_split_patterns(deny_patterns, DEFAULT_TRANSFORMERS_DENY_PATTERNS),
-        local_files_only=local_files_only,
-        cache_dir=cache_dir,
-    )
+    resolved_revision = resolve_model_revision(normalized_model, revision)
+    try:
+        return snapshot_download(
+            repo_id=normalized_model,
+            revision=resolved_revision,
+            allow_patterns=_split_patterns(allow_patterns, DEFAULT_TRANSFORMERS_ALLOW_PATTERNS),
+            ignore_patterns=_split_patterns(deny_patterns, DEFAULT_TRANSFORMERS_DENY_PATTERNS),
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 — 統一成穩定的 ASR model boundary 錯誤
+        revision_label = resolved_revision or "unpinned"
+        raise StableServiceError(
+            ASR_MODEL_UNAVAILABLE,
+            f"無法解析 Transformers ASR 模型 {normalized_model}@{revision_label}：{describe_exception(exc)}",
+        ) from exc

@@ -15,7 +15,7 @@
 
 常見錯誤情境：
     - Python 版本太舊或不在預期環境
-    - 關鍵套件未安裝（例如 faster-whisper、aiofiles）
+    - 關鍵套件未安裝（依 effective ASR backend 可能是 MLX-Whisper、Transformers 或 faster-whisper）
     - 系統缺少 FFmpeg
     - 必要目錄建立失敗或設定檔缺失
 
@@ -63,21 +63,37 @@ def print_header():
 def check_python_version() -> Tuple[bool, str]:
     """檢查 Python 版本"""
     version = sys.version_info
-    if version < (3, 10):
-        return False, f"Python {version.major}.{version.minor} 不支援，需要 3.10+"
+    if version < (3, 11):
+        return False, f"Python {version.major}.{version.minor} 不支援，需要 3.11+"
     return True, f"Python {version.major}.{version.minor}.{version.micro}"
 
 
 def check_python_path() -> Tuple[bool, str]:
-    """檢查 Python 執行路徑"""
-    path = sys.executable
-    if "meetingscribe" in path:
-        return True, "conda meetingscribe 環境 ✓"
-    elif "venv" in path:
-        return False, f"使用 venv 環境（應使用 conda meetingscribe）"
-    else:
-        # 允許其他正確配置的環境
-        return True, f"環境: {os.path.basename(os.path.dirname(os.path.dirname(path)))}"
+    """檢查 Python 執行路徑；uv/.venv 與其他隔離環境均可使用。"""
+    path = Path(sys.executable)
+    if sys.prefix != sys.base_prefix:
+        return True, f"隔離環境: {path}"
+    return True, f"Python: {path}（建議使用 uv sync --frozen 建立 .venv）"
+
+
+def effective_asr_backend(
+    system_name: str | None = None,
+    machine_name: str | None = None,
+    configured_backend: str | None = None,
+    model_name: str | None = None,
+) -> str:
+    """依平台與設定推導 verify_env 應檢查的 ASR backend。"""
+    system = (system_name or platform.system()).strip().lower()
+    machine = (machine_name or platform.machine()).strip().lower()
+    configured = (configured_backend or os.getenv("ASR_BACKEND", "auto")).strip().lower()
+    model = (model_name or os.getenv("WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")).strip().lower()
+    if configured and configured != "auto":
+        return configured
+    if system == "darwin" and machine in {"arm64", "aarch64"}:
+        return "mlx_whisper"
+    if "faster-whisper" in model or "/" not in model:
+        return "faster_whisper"
+    return "transformers"
 
 
 def check_ffmpeg() -> Tuple[bool, str]:
@@ -192,19 +208,33 @@ def check_module(module_name: str, display_name: str, import_test: str = None) -
 
 
 def check_critical_modules() -> List[Tuple[bool, str]]:
-    """檢查所有關鍵模組"""
+    """檢查 web/audio 與目前 effective ASR backend 的關鍵模組。"""
     modules = [
         ("av", "PyAV (音訊處理)", None),
-        ("faster_whisper", "Faster-Whisper", "from faster_whisper import WhisperModel"),
         ("fastapi", "FastAPI (Web 框架)", None),
         ("uvicorn", "Uvicorn (ASGI 伺服器)", None),
         ("loguru", "Loguru (日誌系統)", None),
         ("pydantic", "Pydantic (資料驗證)", None),
         ("httpx", "HTTPX (HTTP 客戶端)", None),
+        ("openai", "OpenAI-compatible client", None),
+        ("huggingface_hub", "Hugging Face model cache", None),
         ("yaml", "PyYAML (配置解析)", None),
         ("aiofiles", "Aiofiles (非同步檔案)", None),
         ("docx", "python-docx (DOCX 文件生成)", "from docx import Document"),
     ]
+
+    backend = effective_asr_backend()
+    if backend == "mlx_whisper":
+        modules.append(("mlx_whisper", "MLX-Whisper (Metal ASR)", None))
+    elif backend == "transformers":
+        modules.extend([
+            ("torch", "PyTorch (Transformers ASR)", None),
+            ("transformers", "Transformers ASR", None),
+        ])
+    elif backend == "faster_whisper":
+        modules.append(("faster_whisper", "Faster-Whisper", "from faster_whisper import WhisperModel"))
+    else:
+        modules.append((backend, f"ASR backend: {backend}", None))
     
     results = []
     for module, name, test in modules:
@@ -214,10 +244,10 @@ def check_critical_modules() -> List[Tuple[bool, str]]:
 
 
 def check_optional_modules() -> List[Tuple[bool, str]]:
-    """檢查可選模組（macOS MPS 加速）"""
+    """檢查未被目前 backend 使用的 supporting modules。"""
     modules = [
-        ("mlx_whisper", "MLX-Whisper (MPS 加速)", None),
-        ("mlx", "MLX (Apple ML 框架)", None),
+        ("mlx_whisper", "MLX-Whisper（未選用時為 supporting）", None),
+        ("mlx", "MLX（未選用時為 supporting）", None),
     ]
     
     results = []
@@ -320,7 +350,7 @@ def run_all_checks() -> bool:
             critical_failed = True
     
     # 4. 可選模組
-    print(f"\n{Colors.BLUE}{Colors.BOLD}【可選模組】{Colors.RESET}（macOS MPS 加速）")
+    print(f"\n{Colors.BLUE}{Colors.BOLD}【Supporting 模組】{Colors.RESET}（不作 global gate）")
     
     optional_ok = True
     for ok, msg in check_optional_modules():
@@ -330,7 +360,7 @@ def run_all_checks() -> bool:
             optional_ok = False
     
     if not optional_ok:
-        print(f"  {Colors.YELLOW}提示：安裝 mlx-whisper 可獲得 3-5 倍加速{Colors.RESET}")
+        print(f"  {Colors.YELLOW}提示：未使用的 supporting backend 缺失不會阻擋目前 effective ASR 路徑{Colors.RESET}")
 
     # 5. Windows CUDA / Torch
     print(f"\n{Colors.BLUE}{Colors.BOLD}【Windows CUDA / Torch】{Colors.RESET}")
@@ -362,10 +392,9 @@ def run_all_checks() -> bool:
     if critical_failed:
         print(f"{Colors.RED}{Colors.BOLD}❌ 環境驗證失敗 - 存在關鍵問題，無法啟動服務{Colors.RESET}")
         print(f"\n{Colors.YELLOW}建議修復步驟：{Colors.RESET}")
-        print("  1. 確認使用 conda meetingscribe 環境")
-        print("  2. conda activate meetingscribe")
-        print("  3. conda install -c conda-forge av ffmpeg -y")
-        print("  4. pip install faster-whisper mlx-whisper")
+        print("  1. 在專案根目錄執行：uv sync --frozen")
+        print("  2. 確認系統已安裝 ffmpeg")
+        print("  3. 依上方 effective ASR backend 補齊對應依賴")
         if platform.system() == "Windows" and has_nvidia_gpu():
             print(f"  5. {get_windows_cuda_fix_command()}")
         return False

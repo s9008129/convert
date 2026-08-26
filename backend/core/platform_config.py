@@ -14,6 +14,81 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 
+SUPPORTED_LOCAL_LLM_PROVIDERS = frozenset({"auto", "lmstudio", "ollama"})
+SUPPORTED_ASR_BACKENDS = frozenset({"auto", "transformers", "faster_whisper", "mlx_whisper"})
+
+
+def is_darwin_arm64() -> bool:
+    """回傳目前程序是否在 Apple Silicon macOS 上執行。"""
+    return platform.system().lower() == "darwin" and platform.machine().lower() in {
+        "arm64",
+        "aarch64",
+    }
+
+
+def get_platform_defaults() -> Dict[str, Optional[str]]:
+    """回傳只描述平台差異的 runtime 預設，不讀取外部服務狀態。"""
+    if is_darwin_arm64():
+        return {
+            "asr_backend": "mlx_whisper",
+            "local_llm_provider": "lmstudio",
+            "accelerator": "mlx-metal",
+        }
+    return {
+        "asr_backend": "auto",
+        "local_llm_provider": "auto",
+        "accelerator": None,
+    }
+
+
+def resolve_local_llm_provider(provider: str = "auto") -> str:
+    """解析 provider 設定；Mac auto 固定為 LM Studio，明確值保持不變。"""
+    normalized = (provider or "auto").strip().lower()
+    if normalized not in SUPPORTED_LOCAL_LLM_PROVIDERS:
+        raise ValueError(
+            f"LOCAL_LLM_PROVIDER 必須是 auto、lmstudio 或 ollama（收到 {provider!r}）"
+        )
+    if normalized == "auto" and is_darwin_arm64():
+        return "lmstudio"
+    return normalized
+
+
+def resolve_platform_asr_backend(backend: str = "auto") -> str:
+    """解析平台預設 ASR backend；非 Mac 的 auto 留給模型型 resolver。"""
+    normalized = (backend or "auto").strip().lower().replace("-", "_")
+    if normalized not in SUPPORTED_ASR_BACKENDS:
+        raise ValueError(
+            "ASR_BACKEND 必須是 auto、transformers、faster_whisper 或 mlx_whisper "
+            f"（收到 {backend!r}）"
+        )
+    if normalized == "auto" and is_darwin_arm64():
+        return "mlx_whisper"
+    return normalized
+
+
+def get_default_lmstudio_base_url() -> str:
+    """取得 LM Studio root URL；native Apple Silicon 不使用 container hostname。"""
+    if is_darwin_arm64() and not is_docker():
+        return "http://127.0.0.1:1234"
+    return "http://host.docker.internal:1234"
+
+
+def normalize_lmstudio_base_url(base_url: str | None) -> str:
+    """把 LM Studio URL 正規化為 root，兼容舊設定中的 `/v1` suffix。"""
+    value = (base_url or "").strip()
+    if not value:
+        return get_default_lmstudio_base_url()
+    value = value.rstrip("/")
+    if value.lower().endswith("/v1"):
+        value = value[:-3].rstrip("/")
+    return value
+
+
+def get_lmstudio_openai_base_url(base_url: str | None) -> str:
+    """將 normalized LM Studio root 轉成 OpenAI-compatible `/v1` URL。"""
+    return f"{normalize_lmstudio_base_url(base_url)}/v1"
+
+
 def get_platform() -> str:
     """
     檢測當前平台
@@ -212,33 +287,27 @@ def reload_config():
 
 # 便捷函數
 def get_llm_provider() -> str:
-    """獲取 LLM 提供者（ollama/lmstudio/gemini）"""
+    """獲取 legacy tooling 使用的本地 LLM provider。"""
     config = get_global_config()
-    return get_env_or_config('LLM_PROVIDER', config, 'llm.provider', 'ollama')
+    configured = get_env_or_config('LOCAL_LLM_PROVIDER', config, 'llm.provider', 'auto')
+    return resolve_local_llm_provider(str(configured))
 
 
 def get_whisper_backend() -> str:
-    """獲取 Whisper 後端（mlx/faster-whisper）"""
+    """獲取 legacy tooling 使用的 effective ASR backend。"""
     config = get_global_config()
-    platform_name = config.get('_platform', 'linux')
-    
-    # macOS 預設使用 mlx
-    if platform_name == 'macos':
-        return get_config_value(config, 'whisper.backend', 'mlx')
-    else:
-        return get_config_value(config, 'whisper.backend', 'faster-whisper')
+    configured = get_env_or_config('ASR_BACKEND', config, 'whisper.backend', 'auto')
+    normalized = str(configured).strip().lower().replace('-', '_')
+    return resolve_platform_asr_backend(normalized)
 
 
 def get_device() -> str:
-    """獲取運算裝置（mps/cuda/cpu）"""
+    """獲取運算裝置（mlx-metal/cuda/cpu/auto）。"""
     config = get_global_config()
-    platform_name = config.get('_platform', 'linux')
-    
-    # macOS 預設使用 MPS
-    if platform_name == 'macos':
-        return get_env_or_config('WHISPER_DEVICE', config, 'whisper.mlx.device', 'mps')
-    else:
-        return get_env_or_config('WHISPER_DEVICE', config, 'whisper.faster_whisper.device', 'auto')
+    configured = str(get_env_or_config('WHISPER_DEVICE', config, 'whisper.device', 'auto')).strip().lower()
+    if get_whisper_backend() == 'mlx_whisper' and configured in {'', 'auto', 'mps', 'mlx', 'mlx-metal'}:
+        return 'mlx-metal'
+    return configured or 'auto'
 
 
 if __name__ == "__main__":

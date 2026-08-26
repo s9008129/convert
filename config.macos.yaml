@@ -1,181 +1,62 @@
-# 政府智慧會議紀錄生成系統 macOS 配置檔
-# 版本: v3.5.0
-# 平台: macOS (Apple Silicon)
-# 部署模式: Native Service (非 Docker)
+# macOS Apple Silicon native reference configuration.
+# The backend runtime settings are read from environment variables/.env;
+# this file documents the platform contract for legacy tooling only.
 
-# ========================================
-# 系統資訊
-# ========================================
 platform: macos
 deployment_mode: native
-version: 3.5.0
 
-# ========================================
-# LLM 設定
-# ========================================
 llm:
-  # 本地模式：使用 LM Studio
-  local:
-    provider: lmstudio
-    base_url: http://localhost:1234/v1
-    model: gemma-3-27b-it-qat
-    api_key: lm-studio  # LM Studio 不需要真實 API key
-    timeout: 300
-    max_tokens: 8192
-    temperature: 0.7
-  
-  # 雲端模式：使用 Gemini API
+  provider: lmstudio
+  lmstudio:
+    # Native LM Studio API root; the backend adds /v1 only for chat calls.
+    base_url: http://127.0.0.1:1234
+    api_key: lm-studio
+    timeout: 1800
+    max_tokens: 3072
+    temperature: 0.2
   cloud:
     provider: gemini
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     model: gemini-3.5-flash-lite
-    # API key 從環境變數 GEMINI_API_KEY 讀取
-    timeout: 60
+    timeout: 600
     max_tokens: 8192
 
-# ========================================
-# Whisper 設定
-# ========================================
 whisper:
-  # macOS 使用 MLX-Whisper（針對 Apple Silicon 優化）
-  backend: mlx-whisper
-  
-  # MLX-Whisper 設定
-  mlx:
-    model: mlx-community/whisper-large-v3-turbo
-    device: mps  # Apple Metal Performance Shaders
-    fp16: true
-    language: zh
-  
-  # 通用設定（用於 Faster-Whisper 降級）
-  device: mps
+  # auto resolves to mlx_whisper on Darwin ARM64. Explicit transformers or
+  # faster_whisper remains available as a deliberate compatibility override.
+  backend: auto
+  language: auto
   compute_type: float16
   beam_size: 5
-  language: zh
-  
-  # 降級選項
-  fallback:
-    backend: faster-whisper
-    device: cpu
-    compute_type: int8
 
-# ========================================
-# GPU 設定
-# ========================================
 gpu:
   enabled: true
-  device: mps  # Apple MPS
+  accelerator: mlx-metal
   auto_detect: true
-  fallback_to_cpu: true
 
-# ========================================
-# 檔案管理
-# ========================================
 data:
-  base_dir: /Users/hsiaojohnny/dev/convert/data
-  uploads_dir: ${data.base_dir}/uploads
-  outputs_dir: ${data.base_dir}/outputs
-  cache_dir: ${data.base_dir}/cache
-  
-  # 自動清理設定
-  cleanup:
-    enabled: true
-    schedule: "0 3 * * *"  # 每日凌晨 3:00
-    retention_days: 7
-    min_free_space_gb: 10
+  base_dir: ./data
+  uploads_dir: ./data/uploads
+  outputs_dir: ./data/outputs
+  cache_dir: ./data/cache
 
-# ========================================
-# 服務設定
-# ========================================
 service:
   host: 0.0.0.0
   port: 9527
-  reload: false  # 生產環境關閉
+  reload: false
   workers: 1
-  log_level: INFO
 
-# ========================================
-# 任務處理
-# ========================================
 queue:
   max_concurrent_tasks: 1
-  max_queue_size: 20
-  task_timeout_seconds: 3600
+  max_queue_size: 50
   estimated_minutes_per_task: 4
 
-# ========================================
-# 上傳限制
-# ========================================
 upload:
   max_file_size_mb: 200
   enable_batch_upload: false
-  allowed_extensions:
-    - .mp3
-    - .mp4
-    - .wav
-    - .m4a
-    - .mkv
-    - .webm
-    - .ogg
-    - .flac
-    - .avi
-    - .mov
 
-# ========================================
-# 安全設定
-# ========================================
-security:
-  cors_origins:
-    - http://localhost:9527
-    - http://127.0.0.1:9527
-  max_request_size_mb: 250
-  rate_limit:
-    enabled: false
-    requests_per_minute: 60
-
-# ========================================
-# 日誌設定
-# ========================================
-logging:
-  level: INFO
-  format: "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d - %(message)s"
-  file: logs/meetingscribe.log
-  max_size_mb: 100
-  backup_count: 5
-
-# ========================================
-# 效能調校
-# ========================================
-performance:
-  # Apple Silicon 特定優化
-  use_metal: true
-  use_mps: true
-  use_mlx: true
-  
-  # 記憶體管理
-  max_memory_gb: 16
-  clear_cache_after_task: true
-  
-  # 並行處理
-  max_workers: 4
-  chunk_size: 1024
-
-# ========================================
-# 功能開關
-# ========================================
 features:
   websocket: true
   realtime_progress: true
   auto_cleanup: true
-  gpu_monitoring: true
   task_queue: true
-  batch_processing: false
-
-# ========================================
-# 開發/除錯
-# ========================================
-debug:
-  enabled: false
-  verbose_logging: false
-  save_intermediate_files: false
-  profile_performance: false

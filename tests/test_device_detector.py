@@ -27,6 +27,7 @@ def test_detect_best_device_falls_back_to_cpu_when_transformers_torch_has_no_cud
         "_check_torch_cuda_runtime",
         staticmethod(lambda: (False, {"error": "torch.cuda.is_available()=False", "cuda_version": None})),
     )
+    monkeypatch.setattr(detector, "_check_mps", lambda: False)
 
     device, compute_type = detector.detect_best_device()
 

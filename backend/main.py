@@ -12,12 +12,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.core.asr_model_resolver import infer_asr_backend, resolve_asr_model, resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
+from backend.core.platform_config import resolve_local_llm_provider
 from backend.core.version import __version__
 from backend.middleware import TimeoutMiddleware
 from backend.api import router, websocket_endpoint
-from backend.services import task_processor, device_detector, file_manager
+from backend.services import task_processor, device_detector, file_manager, summarization_service
 
 
 @asynccontextmanager
@@ -29,7 +31,16 @@ async def lifespan(app: FastAPI):
     
     # 初始化裝置偵測
     device_type, compute_type = device_detector.detect_best_device()
-    log.info(f"裝置偵測完成: {device_type.value}, 精度: {compute_type}")
+    effective_asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    effective_asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    effective_asr_revision = resolve_model_revision(
+        effective_asr_model,
+        settings.WHISPER_MODEL_REVISION,
+    )
+    effective_accelerator = (
+        "mlx-metal" if effective_asr_backend == "mlx_whisper" else device_type.value
+    )
+    log.info(f"裝置偵測完成: {effective_accelerator}, 精度: {compute_type}")
     
     # 啟動任務處理器
     processor_task = asyncio.create_task(task_processor.start())
@@ -52,7 +63,8 @@ async def lifespan(app: FastAPI):
     log.info("-" * 50)
     log.info("實際生效設定（來源：環境變數 / .env，非 config.yaml）：")
     log.info(
-        f"  ASR: backend={settings.ASR_BACKEND}, model={settings.WHISPER_MODEL}, "
+        f"  ASR: backend={effective_asr_backend}, model={effective_asr_model}, "
+        f"revision={effective_asr_revision or 'unpinned'}, "
         f"language={settings.WHISPER_LANGUAGE}, beam={settings.ASR_BEAM_SIZE}"
     )
     log.info(
@@ -65,8 +77,15 @@ async def lifespan(app: FastAPI):
         f"cond_prev={settings.ASR_CONDITION_ON_PREVIOUS_TEXT}, "
         f"chunk={settings.ASR_CHUNK_LENGTH_SECONDS}s+stride{settings.ASR_CHUNK_STRIDE_SECONDS}s"
     )
+    effective_local_provider = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+    effective_local_model = (
+        summarization_service.get_effective_local_model()
+        if effective_local_provider == "lmstudio"
+        else settings.LOCAL_LLM_MODEL
+    )
     log.info(
-        f"  LLM: model={settings.LOCAL_LLM_MODEL}, num_ctx={settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS}, "
+        f"  LLM: provider={effective_local_provider}, model={effective_local_model}, "
+        f"num_ctx={settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS}, "
         f"keep_alive={settings.LOCAL_LLM_KEEP_ALIVE}, cloud={settings.GEMINI_MODEL}"
     )
     log.info(

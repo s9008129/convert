@@ -20,7 +20,7 @@ from backend.core.config import settings
 from backend.core.errors import describe_exception
 from backend.core.logger import log
 from backend.models.schemas import TaskInfo, TaskStatus, ProcessingMode, ProgressMessage
-from backend.services.asr_subprocess import transcribe_isolated
+from backend.services.asr_subprocess import transcribe_isolated_detailed
 from backend.services.summarization import summarization_service
 from backend.services.correction import transcript_correction_service, CorrectionReport
 from backend.services.file_manager import file_manager
@@ -120,7 +120,8 @@ class TaskProcessor:
         async def async_progress_update(progress: float, message: str):
             await self._update_progress(task.task_id, progress, message)
 
-        transcript, _duration = await transcribe_isolated(file_path, async_progress_update)
+        transcription_result = await transcribe_isolated_detailed(file_path, async_progress_update)
+        transcript = transcription_result.text
 
         if not transcript or not transcript.strip():
             raise RuntimeError("轉錄結果為空")
@@ -294,11 +295,21 @@ class TaskProcessor:
 
         summary_failed = not summary
         body = summary if summary else transcript
+        local_provider = summarization_service.get_local_llm_health().get("provider", "local")
+        local_provider_label = {
+            "lmstudio": "LM Studio",
+            "ollama": "Ollama",
+        }.get(local_provider, local_provider)
+        mode_label = (
+            f"本地 ({local_provider_label})"
+            if task.processing_mode == ProcessingMode.LOCAL
+            else "雲端 (Gemini)"
+        )
 
         log.info(
             f"任務 {task.task_id} 處理資訊: 檔案={task.original_filename}, "
             f"處理時間={task.created_at.strftime('%Y-%m-%d %H:%M:%S')}, "
-            f"模式={'本地 (Ollama)' if task.processing_mode == ProcessingMode.LOCAL else '雲端 (Gemini)'}, "
+            f"模式={mode_label}, "
             f"會議模板={task.template_id}, "
             f"裝置={device_info.get('current_device', 'unknown')}"
         )

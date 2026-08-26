@@ -68,6 +68,14 @@ def mock_services():
         mock_summary.check_lmstudio_health = AsyncMock(return_value=False)
         mock_summary.check_gemini_available.return_value = False
         mock_summary.get_effective_local_model.return_value = "gemma4:31b"
+        mock_summary.get_local_llm_health.return_value = {
+            "provider": "lmstudio",
+            "server_reachable": True,
+            "selection_status": "LMSTUDIO_NO_LOADED_LLM",
+            "loaded_llm_count": 0,
+            "selected_model": None,
+            "context_length": None,
+        }
         
         # Setup task_queue mock
         mock_queue.get_queue_status.return_value = QueueStatus(
@@ -170,6 +178,12 @@ class TestHealthCheckEndpoint:
         data = response.json()
         assert data["gemini_available"] is True
 
+    def test_health_check_includes_additive_lmstudio_selection_status(self, test_client, mock_services):
+        response = test_client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["device_info"]["llm"]["selection_status"] == "LMSTUDIO_NO_LOADED_LLM"
+
 
 # =============================================================================
 # Config Endpoint Tests
@@ -202,8 +216,8 @@ class TestConfigEndpoint:
         data = response.json()
         assert "gemini_available" in data
 
-    def test_config_exposes_effective_breeze_revision(self, test_client, mock_services, monkeypatch):
-        """Test config returns the effective pinned revision for Breeze-ASR-26."""
+    def test_config_exposes_effective_mlx_revision_on_mac_auto(self, test_client, mock_services, monkeypatch):
+        """Mac auto config exposes the effective MLX model and pinned revision."""
         from backend.core.config import settings
 
         monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
@@ -212,7 +226,10 @@ class TestConfigEndpoint:
         response = test_client.get("/api/config")
 
         assert response.status_code == 200
-        assert response.json()["whisper_model_revision"] == "949c87bca9dbe90e160cf739460cc765e80805f3"
+        data = response.json()
+        assert data["effective_asr_backend"] == "mlx_whisper"
+        assert data["effective_whisper_model"] == "doggy8088/Breeze-ASR-26-MLX"
+        assert data["whisper_model_revision"] == "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
 
 
 # =============================================================================

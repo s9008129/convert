@@ -8,7 +8,7 @@
 import subprocess
 from enum import Enum
 from typing import Tuple, Optional, Dict
-from backend.core.asr_model_resolver import infer_asr_backend
+from backend.core.asr_model_resolver import infer_asr_backend, resolve_asr_model, resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
 
@@ -48,6 +48,17 @@ class DeviceDetector:
         Returns:
             (裝置類型, 計算精度)
         """
+        # MLX/Metal 是 Apple Silicon 的獨立 ASR runtime；使用 MPS enum 作為
+        # 舊內部 state marker，但不再把它對外宣稱成 PyTorch MPS。
+        if infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND) == "mlx_whisper":
+            self.current_device = DeviceType.MPS
+            self.current_compute_type = "float16"
+            self.gpu_present = True
+            self.gpu_name = self.gpu_name or "Apple Silicon"
+            self.gpu_memory_mb = None
+            log.info("✅ 偵測到 Apple Silicon，使用 MLX/Metal ASR 加速")
+            return DeviceType.MPS, "float16"
+
         # 優先嘗試 CUDA
         cuda_available, gpu_info = self._check_cuda()
         if cuda_available:
@@ -184,16 +195,34 @@ class DeviceDetector:
         處理中 VRAM 被占滿時 current_device 可能暫時是 CPU，
         但 GPU 未偵測的顯示是錯的。gpu_busy 標示這種「存在但忙碌」狀態。
         """
-        gpu_available = self.gpu_present or self.current_device == DeviceType.CUDA
+        asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        is_mlx = asr_backend == "mlx_whisper"
+        current_device = "mlx-metal" if is_mlx and self.current_device == DeviceType.MPS else (
+            self.current_device.value if self.current_device else "unknown"
+        )
+        accelerator = "mlx-metal" if is_mlx else current_device
+        gpu_available = self.gpu_present or self.current_device == DeviceType.CUDA or is_mlx
+        gpu_busy = (
+            gpu_available and self.current_device == DeviceType.CPU
+            if is_mlx
+            else gpu_available and self.current_device != DeviceType.CUDA
+        )
         return {
-            "current_device": self.current_device.value if self.current_device else "unknown",
+            "current_device": current_device,
             "compute_type": self.current_compute_type,
             "fallback_count": self.fallback_count,
-            "gpu_name": self.gpu_name,
+            "gpu_name": self.gpu_name or ("Apple Silicon" if is_mlx else None),
             "gpu_memory_mb": self.gpu_memory_mb,
             "gpu_available": gpu_available,
-            "gpu_busy": gpu_available and self.current_device != DeviceType.CUDA,
-            "mps_available": self.current_device == DeviceType.MPS,
+            "gpu_busy": gpu_busy,
+            "mps_available": self.current_device == DeviceType.MPS and not is_mlx,
+            "accelerator": accelerator,
+            "asr_backend": asr_backend,
+            "asr_model": {
+                "identifier": asr_model,
+                "revision": resolve_model_revision(asr_model, settings.WHISPER_MODEL_REVISION),
+            },
             "cuda_runtime_available": self.cuda_runtime_available,
             "cuda_runtime_error": self.cuda_runtime_error,
             "torch_cuda_version": self.torch_cuda_version,

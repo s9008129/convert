@@ -171,26 +171,34 @@ async function checkHealth() {
             elements.systemStatus.textContent = data.status === 'healthy' ? '系統正常' : '系統異常';
         }
         
-        // 更新 GPU 狀態（v3.5.0: 支援 MPS 偵測）
+        // 更新 accelerator 狀態（CUDA / MLX- Metal / CPU）
         if (elements.gpuStatus) {
-            let gpuText = 'GPU 未偵測';
+            const accelerator = data.device_info?.accelerator || 'unknown';
+            const gpuName = data.gpu_name || data.device_info?.gpu_name;
+            let gpuText = '加速器未偵測';
             let statusClass = 'status-warning';
-            
-            if (data.gpu_available && data.gpu_name) {
-                gpuText = `GPU: ${data.gpu_name}`;
+
+            if (accelerator === 'mlx-metal') {
+                gpuText = 'Apple Silicon（MLX/Metal）';
                 statusClass = 'status-ok';
-
-                // GPU 存在但 VRAM 正被模型占用（v4.3.2：不再誤報為「未偵測」）
-                if (data.device_info && data.device_info.gpu_busy) {
-                    gpuText += '（使用中）';
-                }
-
-                // 特別處理 MPS
-                if (data.gpu_name.includes('MPS') || data.gpu_name.includes('Metal')) {
-                    gpuText = `${data.gpu_name}`;
-                }
+            } else if (accelerator === 'cuda' && data.gpu_available) {
+                gpuText = `CUDA${gpuName ? `：${gpuName}` : ''}`;
+                statusClass = 'status-ok';
+            } else if (accelerator === 'mps' && data.gpu_available) {
+                gpuText = `Apple GPU${gpuName ? `：${gpuName}` : ''}`;
+                statusClass = 'status-ok';
+            } else if (accelerator === 'cpu') {
+                gpuText = 'CPU（未使用硬體加速）';
+            } else if (data.gpu_available && gpuName) {
+                gpuText = `GPU：${gpuName}`;
+                statusClass = 'status-ok';
             }
-            
+
+            // GPU 存在但目前工作負載正在使用中（v4.3.2）。
+            if (data.device_info?.gpu_busy) {
+                gpuText += '（使用中）';
+            }
+
             elements.gpuStatus.className = statusClass;
             elements.gpuStatus.textContent = gpuText;
         }
@@ -204,14 +212,10 @@ async function checkHealth() {
         state.health = data;
         updateModelInfo();
         
-        // 更新本地模式可用性
+        // LM readiness 是摘要層狀態，不是 upload/ASR 的 global gate；
+        // 即使 server 不可達，本地模式仍可產生逐字稿與 fallback 文件。
         if (elements.modeLocal) {
-            const localAvailable = data.ollama_available || data.lmstudio_available;
-            if (!localAvailable) {
-                elements.modeLocal.classList.add('disabled');
-            } else {
-                elements.modeLocal.classList.remove('disabled');
-            }
+            elements.modeLocal.classList.remove('disabled');
         }
         
         // 更新雲端模式可用性（機敏模板選取中時，雲端卡維持鎖定）
@@ -231,6 +235,30 @@ async function checkHealth() {
     }
 }
 
+function getLocalLlmStatus(health) {
+    const llm = health?.device_info?.llm || {};
+    const status = llm.selection_status;
+    if (status === 'LMSTUDIO_UNREACHABLE') {
+        return { text: 'LM Studio 無法連線；仍可產生逐字稿', color: '#936F38' };
+    }
+    if (status === 'LMSTUDIO_NO_LOADED_LLM') {
+        return { text: 'LM Studio 已連線；請載入一個 LLM（逐字稿仍可產生）', color: '#936F38' };
+    }
+    if (status === 'LMSTUDIO_MULTIPLE_LOADED_LLMS') {
+        return { text: 'LM Studio 有多個 LLM；請設定 exact override', color: '#936F38' };
+    }
+    if (status === 'LMSTUDIO_MODEL_NOT_LOADED') {
+        return { text: 'LMSTUDIO_MODEL 未匹配 loaded LLM', color: '#936F38' };
+    }
+    if (status === 'ready') {
+        return { text: 'LM Studio 已就緒', color: '#216E1F' };
+    }
+    if (health.ollama_available) {
+        return { text: '本地 LLM 已就緒', color: '#216E1F' };
+    }
+    return { text: '本地 LLM 尚未就緒；仍可產生逐字稿', color: '#936F38' };
+}
+
 // 模式卡的模型資訊（v4.3.1）：模型名稱以後端 /api/config 為唯一來源，
 // 換模型（環境變數／自動解析）後前端自動同步，不得在此寫死
 function updateModelInfo() {
@@ -238,10 +266,9 @@ function updateModelInfo() {
 
     if (elements.localModelInfo) {
         const name = state.config?.local_llm_model || '本地 LLM';
-        const localAvailable = health.ollama_available || health.lmstudio_available;
-        elements.localModelInfo.textContent =
-            `使用模型：${name}（${localAvailable ? '已就緒' : '未偵測'}）`;
-        elements.localModelInfo.style.color = localAvailable ? '#216E1F' : '#936F38';
+        const status = getLocalLlmStatus(health);
+        elements.localModelInfo.textContent = `使用模型：${name}（${status.text}）`;
+        elements.localModelInfo.style.color = status.color;
     }
 
     if (elements.cloudModelInfo) {

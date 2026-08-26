@@ -13,6 +13,10 @@ from pydantic import Field
 
 from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
 from backend.core.asr_model_resolver import DEFAULT_BREEZE_ASR_26_REVISION
+from backend.core.platform_config import (
+    get_default_lmstudio_base_url,
+    normalize_lmstudio_base_url,
+)
 
 
 class Settings(BaseSettings):
@@ -50,13 +54,21 @@ class Settings(BaseSettings):
         default="gemma4:31b",
         description="本地 LLM 模型名稱（預設 gemma4 家族；VRAM 吃緊時可一行改 gemma4:26b——~16GB 全 VRAM、快 5.8 倍、品質略降，參考專案實測）"
     )
+
+    LOCAL_LLM_PROVIDER: str = Field(
+        default="auto",
+        description="本地 LLM provider（auto/lmstudio/ollama）；Apple Silicon auto 使用 LM Studio"
+    )
     
     # LM Studio 設定（OpenAI 相容 API）
     LMSTUDIO_BASE_URL: str = Field(
-        default="http://host.docker.internal:1234/v1",
-        description="LM Studio 服務端點（OpenAI 相容）"
+        default_factory=get_default_lmstudio_base_url,
+        description="LM Studio root 服務端點；可接受舊設定的 /v1 suffix"
     )
-    LMSTUDIO_MODEL: str = Field(default="gpt-oss-20b", description="LM Studio 模型名稱")
+    LMSTUDIO_MODEL: Optional[str] = Field(
+        default=None,
+        description="LM Studio optional explicit model/instance override；未設定時依 loaded instance 決定"
+    )
     
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API 金鑰")
     
@@ -74,6 +86,32 @@ class Settings(BaseSettings):
             if not re.match(r'^[A-Za-z0-9_-]+$', v):
                 raise ValueError("GEMINI_API_KEY 格式無效（包含不允許的字符）")
         return v
+
+    @field_validator("LOCAL_LLM_PROVIDER")
+    @classmethod
+    def validate_local_llm_provider(cls, value: str) -> str:
+        normalized = (value or "auto").strip().lower()
+        if normalized not in {"auto", "lmstudio", "ollama"}:
+            raise ValueError(
+                "LOCAL_LLM_PROVIDER 必須是 auto、lmstudio 或 ollama"
+            )
+        return normalized
+
+    @field_validator("LMSTUDIO_MODEL", mode="before")
+    @classmethod
+    def normalize_lmstudio_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("LMSTUDIO_MODEL 必須是字串或空值")
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("LMSTUDIO_BASE_URL", mode="before")
+    @classmethod
+    def normalize_lmstudio_url(cls, value: Optional[str]) -> str:
+        return normalize_lmstudio_base_url(value)
+
     GEMINI_BASE_URL: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai/",
         description="Gemini API 端點"
@@ -192,7 +230,7 @@ class Settings(BaseSettings):
     # ========================================
     ASR_BACKEND: str = Field(
         default="auto",
-        description="ASR 後端 (auto/transformers/faster_whisper)"
+        description="ASR 後端 (auto/transformers/faster_whisper/mlx_whisper)"
     )
     WHISPER_MODEL: str = Field(
         default="MediaTek-Research/Breeze-ASR-26",

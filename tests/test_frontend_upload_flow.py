@@ -87,3 +87,52 @@ vm.runInContext(`
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_frontend_renders_actionable_lmstudio_selection_state():
+    """LM Studio 的 zero-loaded 狀態應提示處理方式，不把本地模式鎖死。"""
+    node_script = """
+const fs = require('fs');
+const vm = require('vm');
+
+function makeElement() {
+  return {
+    style: {},
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    addEventListener() {}, click() {}, parentElement: { style: {} },
+    dataset: {}, textContent: '', value: '', disabled: false
+  };
+}
+
+const context = {
+  console,
+  document: {
+    addEventListener() {},
+    getElementById() { return makeElement(); },
+    querySelectorAll() { return []; }
+  },
+  window: { location: { protocol: 'http:', host: 'localhost:9527' } },
+  WebSocket: function () {},
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setInterval() { return 1; }, clearInterval() {}, alert() {}
+};
+
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(__APP_JS__, 'utf8'), context);
+vm.runInContext(`
+  const status = getLocalLlmStatus({device_info: {llm: {
+    selection_status: 'LMSTUDIO_NO_LOADED_LLM'
+  }}});
+  if (!status.text.includes('請載入一個 LLM')) throw new Error(status.text);
+`, context);
+"""
+    node_script = node_script.replace("__APP_JS__", repr(str(APP_JS)))
+
+    result = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout

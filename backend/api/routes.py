@@ -13,7 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-from backend.core.asr_model_resolver import resolve_model_revision
+from backend.core.asr_model_resolver import infer_asr_backend, resolve_asr_model, resolve_model_revision
 from backend.core.config import settings
 from backend.core.logger import log
 from backend.core.templates import GENERAL_TEMPLATE_ID, get_template, template_public_info
@@ -38,15 +38,13 @@ async def health_check(quick: bool = False):
     
     v3.5.4 改進：
     - 支援 quick 模式（使用快取，避免 GPU 滿載時阻塞）
-    - 支援 MPS 偵測
+    - 支援 CUDA 與 MLX/Metal 狀態
     
     Query Parameters:
         quick: bool - 是否使用快速模式（預設 False）
                      - True: 使用快取資訊，不重新偵測裝置
                      - False: 完整健康檢查（重新偵測裝置）
     """
-    from backend.core.platform_config import get_platform, get_device
-    
     # 根據 quick 參數決定是否重新偵測裝置
     if not quick:
         # 完整模式：重新偵測裝置
@@ -54,14 +52,10 @@ async def health_check(quick: bool = False):
     
     device_info = device_detector.get_device_info()
     
-    # v3.5.4: 偵測平台和裝置
-    platform_name = get_platform()
-    device_name = get_device()
-    
-    # 根據平台更新 GPU 名稱
-    if device_name == 'mps' and platform_name == 'macos' and not device_info.get("gpu_name"):
-        device_info['gpu_name'] = 'Apple MPS (Metal Performance Shaders)'
-        device_info['gpu_available'] = True
+    # MLX/Metal 會以 additive metadata 回報；不要將其重寫成 PyTorch MPS。
+    if device_info.get("accelerator") == "mlx-metal":
+        device_info.setdefault("gpu_name", "Apple Silicon (MLX/Metal)")
+        device_info["gpu_available"] = True
     
     async def _resolve_status(result):
         """同時支援同步/非同步檢查結果"""
@@ -73,6 +67,9 @@ async def health_check(quick: bool = False):
     ollama_available = await _resolve_status(summarization_service.check_ollama_health())
     lmstudio_available = await _resolve_status(summarization_service.check_lmstudio_health())
     gemini_available = bool(summarization_service.check_gemini_available())
+    llm_health = summarization_service.get_local_llm_health()
+    if isinstance(llm_health, dict):
+        device_info["llm"] = llm_health
     
     # 取得排隊狀態
     queue_status = task_queue.get_queue_status()
@@ -426,6 +423,13 @@ async def get_config():
     """
     取得系統配置（公開部分）
     """
+    effective_asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    llm_health = summarization_service.get_local_llm_health()
+    effective_provider = (
+        llm_health.get("provider", settings.LOCAL_LLM_PROVIDER)
+        if isinstance(llm_health, dict)
+        else settings.LOCAL_LLM_PROVIDER
+    )
     return {
         "max_file_size_mb": settings.MAX_FILE_SIZE_MB,
         "enable_batch_upload": settings.ENABLE_BATCH_UPLOAD,
@@ -434,12 +438,16 @@ async def get_config():
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
         "asr_backend": settings.ASR_BACKEND,
+        "effective_asr_backend": infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND),
         "whisper_model": settings.WHISPER_MODEL,
+        "effective_whisper_model": effective_asr_model,
         "whisper_model_revision": resolve_model_revision(
-            settings.WHISPER_MODEL,
+            effective_asr_model,
             settings.WHISPER_MODEL_REVISION,
         ),
         "gemini_available": summarization_service.check_gemini_available(),
+        "local_llm_provider": settings.LOCAL_LLM_PROVIDER,
+        "effective_local_llm_provider": effective_provider,
         "lmstudio_model": settings.LMSTUDIO_MODEL,
         # v4.3.1：前端模式卡顯示實際使用的模型名稱（唯一來源：後端設定/解析結果，
         # 換模型後前端自動同步，不得在前端寫死）

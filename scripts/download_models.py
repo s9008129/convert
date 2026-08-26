@@ -11,11 +11,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.core.asr_model_resolver import infer_asr_backend, resolve_model_revision, resolve_transformers_model_source
-
-
-if not os.environ.get("HF_HOME"):
-    os.environ["HF_HOME"] = os.path.join(os.path.dirname(__file__), "..", "models")
+from backend.core.asr_model_resolver import (
+    infer_asr_backend,
+    resolve_asr_model,
+    resolve_mlx_model_source,
+    resolve_model_revision,
+    resolve_transformers_model_source,
+)
 
 
 def download_breeze_asr() -> bool:
@@ -27,11 +29,12 @@ def download_breeze_asr() -> bool:
     print()
 
     backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
     resolved_revision = resolve_model_revision(
-        settings.WHISPER_MODEL,
+        model_name,
         settings.WHISPER_MODEL_REVISION,
     )
-    print(f"📦 準備預載模型: {settings.WHISPER_MODEL}")
+    print(f"📦 準備預載模型: {model_name}")
     print(f"   後端: {backend}")
     print(f"   Revision: {resolved_revision or '未固定'}")
     print(f"   快取目錄: {os.environ.get('HF_HOME', '~/.cache/huggingface')}")
@@ -40,7 +43,7 @@ def download_breeze_asr() -> bool:
     try:
         if backend == "transformers":
             local_path = resolve_transformers_model_source(
-                settings.WHISPER_MODEL,
+                model_name,
                 revision=resolved_revision,
                 local_files_only=False,
                 allow_patterns=settings.asr_safe_allow_patterns_list,
@@ -49,10 +52,19 @@ def download_breeze_asr() -> bool:
             print(f"✅ 官方 Transformers 模型已下載到: {local_path}")
             return True
 
+        if backend == "mlx_whisper":
+            local_path = resolve_mlx_model_source(
+                model_name,
+                revision=resolved_revision,
+                local_files_only=False,
+            )
+            print(f"✅ MLX 模型已下載／命中 shared Hugging Face cache: {local_path}")
+            return True
+
         from faster_whisper import WhisperModel
 
         WhisperModel(
-            settings.WHISPER_MODEL,
+            model_name,
             device="cpu",
             compute_type="int8",
         )

@@ -26,7 +26,7 @@ def test_detect_runtime_falls_back_cpu_when_transformers_vram_insufficient(monke
     service = TranscriptionService()
 
     monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
-    monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
+    monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
     monkeypatch.setattr(settings, "ASR_TRANSFORMERS_MIN_VRAM_MB", 6000)
     monkeypatch.setattr(
         "backend.services.transcription.device_detector.detect_best_device",
@@ -87,6 +87,65 @@ def test_load_transformers_pipeline_uses_safe_resolution(monkeypatch):
     assert "model-*.safetensors" in kwargs["allow_patterns"]
     assert "training_args.bin" in kwargs["deny_patterns"]
     fake_pipeline.assert_called_once()
+
+
+def test_load_mlx_model_uses_pinned_shared_snapshot(monkeypatch):
+    service = TranscriptionService()
+    fake_mlx = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx)
+    monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+    monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
+    monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+    monkeypatch.setattr(settings, "ASR_LOCAL_FILES_ONLY", True)
+
+    with patch(
+        "backend.services.transcription.resolve_mlx_model_source",
+        return_value="/shared/hf/snapshot",
+    ) as mock_resolve:
+        service._backend = "mlx_whisper"
+        service._load_mlx_whisper_model()
+
+    assert service._model is fake_mlx
+    assert service._mlx_model_source == "/shared/hf/snapshot"
+    assert mock_resolve.call_args.args[0] == "doggy8088/Breeze-ASR-26-MLX"
+    assert mock_resolve.call_args.kwargs["revision"] == "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
+    assert mock_resolve.call_args.kwargs["local_files_only"] is True
+
+
+def test_transcribe_with_mlx_whisper_normalizes_segments(monkeypatch):
+    service = TranscriptionService()
+    fake_mlx = SimpleNamespace(
+        transcribe=MagicMock(
+            return_value={
+                "text": "這是 MLX 逐字稿",
+                "language": "zh",
+                "duration": 4.5,
+                "segments": [
+                    {"text": "這是 MLX", "start": 0.0, "end": 2.0},
+                    {"text": "逐字稿", "timestamp": [2.0, 4.5]},
+                ],
+            }
+        )
+    )
+    service._model = fake_mlx
+    service._mlx_model_source = "/shared/hf/snapshot"
+    service._backend = "mlx_whisper"
+    monkeypatch.setattr(settings, "WHISPER_MODEL", "doggy8088/Breeze-ASR-26-MLX")
+    monkeypatch.setattr(settings, "ASR_BACKEND", "mlx_whisper")
+    monkeypatch.setattr(settings, "WHISPER_LANGUAGE", "auto")
+    monkeypatch.setattr(settings, "ASR_RETURN_TIMESTAMPS", True)
+    monkeypatch.setattr(settings, "ASR_INITIAL_PROMPT", "繁體中文")
+    monkeypatch.setattr(settings, "ASR_ENABLE_HOTWORDS", False)
+
+    result = service._transcribe_with_mlx_whisper("dummy.wav")
+
+    assert result.backend == "mlx_whisper"
+    assert result.text == "這是 MLX 逐字稿"
+    assert result.duration_seconds == 4.5
+    assert [(chunk.start, chunk.end) for chunk in result.chunks] == [(0.0, 2.0), (2.0, 4.5)]
+    assert fake_mlx.transcribe.call_args.kwargs["path_or_hf_repo"] == "/shared/hf/snapshot"
+    assert fake_mlx.transcribe.call_args.kwargs["initial_prompt"] == "繁體中文"
+    assert "beam_size" not in fake_mlx.transcribe.call_args.kwargs
 
 
 def test_transcribe_with_transformers_normalizes_chunks(monkeypatch):
