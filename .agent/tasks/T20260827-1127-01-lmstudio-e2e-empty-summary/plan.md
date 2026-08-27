@@ -1,376 +1,476 @@
-# LM Studio E2E 空摘要根因修復 — Escalation Replan
+# 最新音檔空摘要、Stale Runtime 與模型代理 E2E 修復計畫 — Escalation Replan
 
 ## META
 
 - `TASK_ID: T20260827-1127-01-lmstudio-e2e-empty-summary`
-- `PLAN_REVISION: 2`
-- `PLAN_STATUS: READY_FOR_REVIEW`
+- `PLAN_REVISION: 3`
+- `PLAN_STATUS: READY_FOR_IMPLEMENTATION`
 - `DEBUG_STATUS: READY_FOR_IMPLEMENTATION`
 - `FIX_TYPE: MIXED`
 - `TASK_MODE: ESCALATION_REPLAN`
 - `TASK_CLASS: CRITICAL`
-- `REVIEW_REQUIRED: YES`
+- `REVIEW_REQUIRED: NO`
+- `REVIEW_WAIVER: 使用者於 2026-08-27 明確指示本次計畫不做 Review，批准 Revision 3 後直接進入 Handoff`
 - `INDEPENDENT_ACCEPTANCE_REQUIRED: YES`
 - `E2E_REQUIRED: YES`
-- `ACCEPTANCE_MODE: FAIL_FIRST_REGRESSION + CONTRACT_INTEGRATION + OWNED_PROCESS_FRESH_CACHE_TRUE_E2E + DOCX_FULL_PAGE_QA`
-- `NEXT_STAGE: 02_PLAN_REVIEW`
+- `ACCEPTANCE_MODE: FAIL_FIRST_ACCEPTANCE_HARNESS + OWNED_PROCESS_BROWSER_UI_TRUE_E2E + SIDECAR_RUNTIME_MONITORING + DOCX_SEMANTIC_AND_FULL_PAGE_QA + OWNED_LOCAL_9527_ROLLOUT_SMOKE`
+- `NEXT_STAGE: 03_HANDOFF`
 - `BRANCH: main`
-- `ANCHOR_HEAD: 96e6e7416a0791b674b0ef5f17f8ba34355ef5c5`
-- `WORKING_TREE_AT_REPLAN_TIME: CLEAN; main ahead of origin/main by 8 commits`
-- `ENVIRONMENT: Apple Silicon; MLX ASR; LM Studio; one loaded qwen3.6-35b-a3b-mlx instance`
+- `ANCHOR_HEAD: ad37146ff599f960b930889cf07b28f3cee8e0fb`
+- `WORKING_TREE_AT_REPLAN_TIME: CLEAN; main ahead of origin/main by 18 commits`
+- `ENVIRONMENT: Apple Silicon; MLX ASR; LM Studio 127.0.0.1:1234; one loaded qwen3.6-35b-a3b-mlx LLM instance with context_length 183296; no listener on 9527 at planning time`
 - `CREATED_AT: 2026-08-27T11:27:42+08:00`
-- `REVISED_AT: 2026-08-27T14:27:37+08:00`
-- `SUPERSEDES: PLAN_REVISION 1`
-- `STALE_ARTIFACTS: review/attempt-01 approval and current handoff.md apply only to revision 1 and MUST NOT authorize implementation`
+- `REVISED_AT: 2026-08-27T18:51:28+08:00`
+- `SUPERSEDES: PLAN_REVISION 2`
+- `PREDECESSOR_IMPLEMENTATION: Revision 2 Stage 04 completed at ad37146; focused baseline 33 passed; recorded full suite 517 passed / 2 skipped / 0 failed; primary outcome still unproven by independent true E2E`
+- `STALE_ARTIFACTS: review/attempt-02 and the Revision 2 handoff authorize only Revision 2; Revision 3 has an explicit owner Review waiver and MUST use a newly compiled handoff`
 
 ## OWNER_CHECK
 
 ### Plain-language owner view
 
-- **主要目標：** 使用者上傳原始會議音檔後，系統必須完成 MLX 語音辨識、使用啟動時唯一選定的 LM Studio LLM 生成正式會議紀錄，並提供可下載、可閱讀且內容完整的 DOCX。
-- **必要項目：** CORE generation 必須取得非空正文；merge 不得讓 reasoning 吃完輸出預算；決議、待辦與尾端內容不得被無聲截斷；所有恢復流程必須有明確上限。
-- **輔助項目：** 降低 chunk overlap 造成的呼叫放大，讓 health/startup log 可證明 E2E 跑的是哪一版程式及哪個端口。
-- **最佳努力項目：** LLM 同音／專有名詞校正與 overlap enrichment；失敗時保留原文字並繼續，不能阻擋摘要主流程。
-- **可阻擋全流程的條件：** 無法選出唯一 loaded LLM、context 預算不可能成立、CORE generation 的 bounded recovery 耗盡、或 merge 無法在不丟資料的前提下收斂。這些情況若繼續輸出會產生空白或不完整會議紀錄，因此必須 fail loudly。
-- **最大殘餘風險：** reasoning 模型可能隨機回傳空 content；以最多三次的 response-aware recovery、禁止 hard truncation、production-shaped tests 與 owned-process true E2E 控制。
+- **主要目標：** 讓模型真正代理人類操作系統，使用使用者最新提供的 `/Users/hsiaojohnny/Downloads/盤點工具討論.m4a` 完成一次受控、可監看的全新 UI 上傳，最後取得可正式使用的「會議紀錄」DOCX，而不是只看失敗 DOCX 的表面結果。
+- **真正必要的工作：** 證明執行中的 backend 就是待驗收 Git revision；證明 UI 上傳的位元組就是指定音檔；把 `summary_failed=true`、fallback 檔名與 fallback DOCX 一律判為 E2E FAIL；逐階段監看 ASR、校正、摘要、merge 與最終輸出；做內容與全頁視覺驗收。
+- **本輪先不做的事：** 在 current HEAD 尚未用這支音檔、fresh process、fresh DATA_DIR 失敗以前，不再修改摘要 prompt、token budget、retry、chunk/merge 或模型選擇演算法。最新人工失敗命中了舊 process，不能當成 current HEAD 的失敗證據。
+- **最佳努力項目：** 同音字校正、paragraphization、overlap enrichment 本來就可以局部降級；其失敗不得把正式摘要錯判為失敗，亦不得被拿來掩蓋正式摘要真的失敗。
+- **可以阻擋驗收的條件與理由：** revision/dirty state 不可證明、唯一模型 inventory 不成立、DATA_DIR 不可寫、UI 未真正上傳指定音檔、`summary_failed=true`、fallback DOCX、監控證據不足以判定執行邊界、內容失真或版面不可用。這些都會使「已修復」判定失去正確性。
+- **最大殘餘風險：** current HEAD 可能仍會在這支 86.95 分鐘音檔上產生 reasoning-only empty content；只有新的 Browser UI E2E 能判定。若發生，保存精確 telemetry 並重新規劃產品修復，不允許低階實作者臨場擴張範圍。
 
 ## GOAL_CONTRACT
 
 ### PRIMARY_OUTCOME
 
-使用 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a`，經 fresh-cache MLX ASR 與唯一已載入的 LM Studio LLM，產生非空、結構完整、保留尾端決議／待辦且可下載的「會議紀錄」DOCX。
+使用 `/Users/hsiaojohnny/Downloads/盤點工具討論.m4a`，由 Stage 05 的新鮮模型代理透過真實網頁 UI 選擇本地處理與 general 會議模板、實際上傳檔案，經 owned current-revision backend、fresh isolated writable DATA_DIR、MLX ASR 與啟動時唯一選定的 LM Studio instance，產出非 fallback、內容忠實、結構完整、可下載且版面可讀的正式「會議紀錄」DOCX；通過後自動把本機 9527 切換到同一核准 revision。
 
-### CORE_ACCEPTANCE_SIGNAL
+### SUCCESS_EVIDENCE
 
-- E2E backend 由驗收流程自行啟動、擁有及終止，health revision 必須等於待驗收 Git HEAD。
-- DOCX 標題為「會議紀錄」，不含摘要失敗警告、traceback 或 fallback title。
-- 現有 formatter/parser 定義的必要章節存在且具有實質內容。
-- 尾端決議／待辦抽查資訊仍存在，沒有 merge hard truncation。
-- 清理後逐字稿可獨立下載，明顯病態連續重複已被保守清除。
-- 全流程沿用啟動時唯一選出的 immutable LM Studio model/instance。
+- `REQ-CORE-01`：E2E 啟動並只管理自己的 backend child；Git HEAD、clean worktree、health `build_revision` 三者完全一致，任何 mismatch 在 UI ready／API upload 前立即停止。
+- `REQ-CORE-02`：Browser 實際開啟 owned backend 首頁、選擇 local + general、以 file input 上傳指定音檔並觀看 WebSocket 進度；API 僅作 sidecar 監控，不可取代 UI journey。
+- `REQ-CORE-03`：來源音檔與 isolated DATA_DIR 中實際上傳檔案的 SHA-256 都是 `5ffba7448c6846e56b358113c7ed4525507480ece9b031c5281435f59c6683d0`，且本次只有一個新 task。
+- `REQ-CORE-04`：task 終態為 `completed` 且 `summary_failed=false`；UI 不顯示 `summaryFailedBanner`；下載檔名為正式 `會議紀錄`，不含 `逐字稿(會議紀錄生成失敗)`。
+- `REQ-CORE-05`：DOCX/OOXML 不含 fallback title、warning、traceback 或空摘要錯誤；general 模板必要段落 `一、報告事項`、`二、討論事項`、`決議`、`三、主席裁示事項` 均有實質內容。
+- `REQ-CORE-06`：在先讀逐字稿、尚未讀 DOCX 前，從逐字稿開頭／中段／尾段各建立 3 個語意錨點；正式 DOCX 必須覆蓋具代表性的 9 個錨點，尤其包含明確決議／待辦，且不得虛構逐字稿未支持的人名、日期、數字或決議。
+- `REQ-CORE-07`：Documents render-and-verify 檢查 DOCX 全部頁面；不得有 clipping、overlap、亂碼、缺字、非預期空白頁或不可讀版面。
+- `REQ-CORE-08`：Stage 05 PASS 後，先重新確認 9527 listener/PID/cwd/command ownership，再以同一核准 SHA 與 `DATA_DIR=/Users/hsiaojohnny/dev/convert/data` 啟動本機服務；health revision 完全一致並通過 Browser UI smoke。
+- `REQ-SUP-01`：保存可稽核但不洩漏完整敏感內容的 evidence：revision、hash、model/instance snapshots、task verdict、redacted metrics、semantic anchor 判定與頁面 QA 結果；完整 transcript、DOCX、backend log 與 uploaded bytes 留在 gitignored runtime data。
 
 ### MUST_NOT_BREAK
 
-- 不硬編碼、載入、卸載或切換 LM Studio 模型。
-- 保留零／一／多模型與 optional exact override 的既有選模契約。
-- 保留 Ollama、Gemini、task state 與「摘要失敗仍保存逐字稿」的降級路徑。
-- 不新增第三方依賴、database/schema/backfill 或跨 repository 耦合。
-- health response 僅允許新增向後相容的 nullable `build_revision`；其他 HTTP contract 不變。
-- correction、overlap、paragraphization、diagnostics 與 build metadata 缺失不得升級成全域 veto。
+- 不硬編碼、載入、卸載、切換或替換 LM Studio 模型；維持 zero/one/multiple/optional exact override 選模契約與啟動後 immutable selection。
+- 不改變 `TaskStatus.COMPLETED + summary_failed=true` 作為「來源逐字稿已安全保存但摘要降級」的產品語意；只修正 E2E acceptance 不得把它判為正式會議紀錄成功。
+- 保留 Ollama、Gemini、ASR、transcript fallback、下載路徑與既有 HTTP schema；本 revision 不新增 HTTP 欄位、不變更 public API。
+- 不新增第三方依賴、database/schema/backfill、模型 lifecycle、跨 repository 耦合或 production readiness generation probe。
+- 不在 Git 中新增原始音檔、完整逐字稿、完整 DOCX、完整 backend log、模型 reasoning/prompt 或其他敏感 payload。
+- 不終止 ownership 不明的 process；只停止本輪明確啟動且 PID/command 可證明的 process。
+- 保留使用者既有 `data/uploads`、`data/outputs`、`data/logs`、cache 與歷史 E2E evidence；append-only，不覆寫舊 attempt。
 
 ### NON_GOALS
 
-- 不重構整套摘要架構或引入新的 orchestration framework。
-- 不重新校準 ASR decoder，不保證所有同音字或專有名詞都能自動修正。
-- 不新增模型 allowlist、模型專屬 prompt 分支或 LM Studio lifecycle 管理。
-- 不把昂貴 generation probe 加入一般 startup/global readiness。
-- 不以更換目前 loaded model 作為本次根因修復。
-
-## ACCEPTANCE_FAILURE_TRIGGER
-
-Revision 1 已完成實作並由 commit `96e6e7416a0791b674b0ef5f17f8ba34355ef5c5` 宣稱 focused/full tests 通過，但後續人工與 fresh-process true E2E 仍失敗。新證據推翻「一次 reasoning retry 足以恢復」與「merge 將 provider `max_tokens` 壓到 visible target 仍可成功」兩個 load-bearing 前提，因此依 semantic-contract 規則進入同一 `TASK_ID` 的 escalation replan，而不是 bounded implementation fix。
+- 不在真實 current-revision E2E 失敗前調整 summarization service、prompt、token/retry/merge/chunk/cleanup 演算法。
+- 不把 fallback 產品路徑刪除或把摘要失敗改為整個 task `failed`。
+- 不要求所有同音字、說話者、自然口語或專有名詞自動修正完美。
+- 不重新跑舊的 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a` 作為本次主要驗收；本次唯一 primary input 是 `盤點工具討論.m4a`。
+- 不部署遠端 production、不 push、不建立 PR、不管理 LM Studio inventory。
 
 ## EXPECTED_VS_OBSERVED
 
 ### Expected
 
-原始音檔經 fresh ASR、cleanup、BEST_EFFORT correction、19 個合法 extraction chunks、hierarchical merge 與 final generation 後，應輸出正式會議紀錄，並保留來源後段的重要資訊。
+最新手動上傳應命中包含 Revision 2 修復的 current backend，在 fresh/current runtime 完成 MLX ASR、bounded correction、extraction/merge/final generation，輸出正式會議紀錄；驗收器必須能區分正式摘要與 transcript fallback。
 
-### Observed — user manual E2E
+### Observed — latest user manual upload
 
-- 使用者產物：`/Users/hsiaojohnny/Downloads/20260827133508_逐字稿(會議紀錄生成失敗).docx`。
-- Page 1 顯示「逐字稿（會議紀錄生成失敗）」與 `RuntimeError: 摘要生成失敗：結果為空`。
-- 文件共 26 頁；全頁 render 顯示版面沒有 clipping、overlap 或缺字，但語意產物只是 fallback transcript。
-- 逐字稿仍可見「個人專案管理」、「應該是右邊」、單字與「請看影片」等病態連續重複，證明該次請求沒有執行目前 cleanup 實作。
-- `logs/e2e_app.log` 對應服務於 09:26 啟動，早於 12:28 的修復 commit；13:35 人工上傳命中了 stale pre-fix process。runtime stack line numbers亦與目前程式不一致。
+- 使用者來源音檔：`/Users/hsiaojohnny/Downloads/盤點工具討論.m4a`；44,773,357 bytes；AAC mono 48 kHz；duration 5,216.917333 秒；SHA-256 `5ffba7448c6846e56b358113c7ed4525507480ece9b031c5281435f59c6683d0`。
+- 系統實際 upload：`data/uploads/29767e54d905.m4a`，SHA-256 完全相同，排除「人工提供檔與系統實際處理檔不同」。
+- task ID：`c218e432`；16:31:13 接受，16:44:51 ASR 成功並快取逐字稿，17:00:46 開始 formal summary，17:01:18 首個 extraction 產生空結果後失敗。
+- 失敗 DOCX：`/Users/hsiaojohnny/Downloads/20260827163113_逐字稿(會議紀錄生成失敗).docx`；SHA-256 `69e4072c731a3cfd482b9ca382b6203b7466e8bb8734971cfe9251f113f00d63`，與 `data/outputs/盤點工具討論_c218e432.docx` 完全相同。
+- DOCX exact error：`RuntimeError: 摘要生成失敗：結果為空`。Documents skill 已 render 並逐頁檢查全部 17 頁：版面本身乾淨，但內容只有 fallback transcript，沒有隱藏的正式會議紀錄。
+- 該 runtime 於 09:26 啟動；使用者 16:31 上傳。它早於 12:28 的 `96e6e74`、15:17 的 `b8a446d`、16:11 的 `a692dff`、16:14 的 `5be217c` 與 16:23 的 `ad37146`。traceback 指向舊 `_summarize_with_lmstudio` line 1755，該舊版遇到空 content 直接 raise；current code 的 bounded state machine 位於後續約 line 1975 起。
+- 舊 runtime 在 correction 對 69 段做大量 LM Studio 呼叫但 0 段修正；formal context plan 為 `context_window=8192, estimated_tokens=21482, chunk_budget=3112, merge_budget=900, needs_chunking=True`，首個 extraction `max_tokens=2066` 回傳空 content。
 
-### Observed — isolated current-code E2E
+### Observed — current repository and acceptance tooling
 
-- Fresh process 於 12:30 啟動，使用 commit `96e6e74` 之後的程式與隔離 `DATA_DIR=/Users/hsiaojohnny/dev/e2e-t20260827/data`。
-- Task `8fd56c54`：extraction 最後一段初次回應為 `length + reasoning + empty content`；提高到 `max_tokens=6522` 後第二次回應為 `stop + reasoning_chars=828 + content_chars=0`，現行 exactly-one retry 隨即失敗為 `LMSTUDIO_NO_FINAL_CONTENT`。
-- Task `90fdb193`：19 個 extraction chunks 均完成；merge 呼叫卻使用 `max_tokens=900` 且 `allow_reasoning_retry=False`，回應 `finish_reason=length, completion_tokens=899, reasoning_chars=2778, content_chars=0`，再次失敗為 `LMSTUDIO_NO_FINAL_CONTENT`。
-- Fresh transcript 為 36,925 characters、estimated 32,264 tokens；19 個 chunks 範圍 2,519–3,111，皆符合 3,112 budget，證明 Revision 1 的核心 chunk invariant 已修復，不應重做。
-- Fresh cleanup 將 38,190 characters 降為 37,009，collapsed 7 pathological loops；Revision 2 應保留並鎖定此修復。
-- 完整 suite 為 `495 passed, 3 skipped`，但沒有覆蓋上述 production-shaped merge/retry 行為，不能視為 E2E 成功證據。
+- Revision 2 focused baseline 以隔離 writable DATA_DIR 實跑：`33 passed, 2 warnings`；Stage 04 報告記錄完整 suite `517 passed / 2 skipped / 0 failed`。這些證明已實作契約，但不是最新音檔的真實 E2E 成功證據。
+- `backend/services/task_processor.py` 在 summary exception 時設定 `summary_failed=true`，仍呼叫 `complete_task(..., success=True)`，因此 task 合法終態是 `completed`；這是 transcript fallback 的既有安全契約。
+- `scripts/e2e/run_owned_e2e.py` 目前 full verdict 只要求 `task_completed`、`transcript_downloaded`、`docx_downloaded`，沒有拒絕 `summary_failed=true`、fallback filename 或 fallback OOXML，故可對這次失敗產物 false-PASS。
+- runner 記錄 revision mismatch，卻仍可進入完整 upload；昂貴 E2E 沒有在 freshness 失效時 fail closed。
+- `scripts/macos/start-mac-native.sh` 沒有注入 `MEETINGSCRIBE_BUILD_REVISION`，也沒有解析 health revision；重啟後 health 可能為 null，無法證明 9527 跑的是哪個 Git SHA。
+- current shell 繼承 `DATA_DIR=/app/data` 時，focused pytest collection 曾因 `/app` 唯讀失敗；改用 `/private/tmp` isolated DATA_DIR 後 33 tests 通過。最新人工失敗使用 repo data，故 `/app` 不是該次根因，但 launcher/E2E 必須顯式驗證 writable DATA_DIR。
+- planning time 9527 沒有 listener；LM Studio 目前只有一個 loaded LLM model/instance `qwen3.6-35b-a3b-mlx`，context length 183,296。
+
+## SYMPTOM_SIGNATURE
+
+- **表面錯誤：** DOCX 顯示「逐字稿（會議紀錄生成失敗）」及 `摘要生成失敗：結果為空`。
+- **直接機制：** 09:26 啟動的 stale pre-fix process 在 LM Studio completed response 沒有 final content 時走舊版直接 raise 路徑。
+- **驗收缺陷：** task fallback 仍是 `completed` 且兩個檔案可下載；現有 runner 把「完成＋下載成功」錯當成正式摘要成功。
+- **影響：** 使用者無法取得正式會議紀錄，且重複修復因 runtime provenance 與 E2E success predicate 不完整而無法判定真正修復是否生效。
+- **決定性：** stale runtime 對本次產物是確定證據；current HEAD 對同一音檔是否成功仍為 `[UNKNOWN]`，必須由新的 owned Browser E2E 決定。
+
+## SOURCE_OF_TRUTH
+
+| Claim | Source of truth | Status |
+|---|---|---|
+| 使用者要驗收的音檔 | 使用者明確提供的 Downloads path + SHA-256 | `[VERIFIED]` |
+| 最新 DOCX 是系統該次輸出 | user DOCX 與 data output SHA-256 完全相同 | `[VERIFIED]` |
+| 該次失敗命中 stale process | process/log timestamps、commit timestamps、traceback line/body | `[CONFIRMED]` |
+| fallback task 仍是 completed | current task processor、schema、routes、frontend | `[VERIFIED]` |
+| current runner 會 false-PASS fallback | runner required checks 與 `run_full_e2e` 實作 | `[CONFIRMED]` |
+| current HEAD 已根治最新音檔 | 尚無 same-input fresh Browser E2E | `[UNKNOWN]` |
+| 正式 DOCX 內容是否忠實可用 | transcript-first semantic anchors + DOCX structural/visual QA | `Stage 05 required` |
 
 ## SYSTEM_BOUNDARY
 
-`Web upload -> task orchestration -> MLX ASR/cache -> deterministic transcript cleanup -> BEST_EFFORT LLM correction -> local context plan/chunking -> immutable LM Studio selection -> extraction -> hierarchical merge -> final/refinement -> quality validation -> DOCX/TXT persistence`
+`Fresh Git revision -> owned backend launcher -> health/provenance/model/data preflight -> Browser UI local/general selection -> browser file upload -> isolated upload bytes -> queue/WebSocket -> fresh MLX ASR -> deterministic cleanup -> BEST_EFFORT correction -> immutable LM Studio extraction/merge/final -> task completed + summary_failed flag -> result download headers/OOXML -> semantic anchors -> full-page DOCX QA -> accepted SHA rollout on 9527`
 
-- **Last known-good boundary：** fresh ASR、cache/TXT persistence、cleanup、19 個合法 chunks 與大部分 extraction generations。
-- **First current-code known-bad boundaries：** extraction reasoning retry 後仍 `stop + empty content`；merge 將 visible target 誤用為 provider completion cap 且禁用 recovery。
-- **External dependency：** LM Studio 本地服務與已載入模型。模型已多次在充足 completion budget 下產生正文，故不是永久不可用或 selection/lifecycle 問題。
-- **Fallback：** 摘要失敗仍保存逐字稿的安全路徑有效，但 fallback DOCX 不是 PRIMARY_OUTCOME 成功訊號。
-
-## CONFIRMED_ROOT_CAUSE
-
-### RC-1 — Merge budget semantic conflation
-
-`LocalContextPlan.notes_merge_budget_tokens` 同時承擔三個不同目的：來源 notes 分組大小、合併後 visible notes 目標，以及 provider completion `max_tokens`。對 reasoning model 而言，`max_tokens` 包含 hidden reasoning；900 tokens 全被 reasoning 消耗時不可能留下 final content。
-
-現行關鍵機制：
-
-```python
-reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
-```
-
-而 `_merge_notes_until_fit` 又以 `expand_output_budget=False` 呼叫 generation，因此明確禁止 merge recovery。這也違反 Revision 1 計畫對「visible content 仍受限，但 reasoning retry 應可成功」的語意承諾。
-
-### RC-2 — Recovery state machine does not cover empty stop response
-
-現行只允許 `length + reasoning + empty content` 後增加一次 budget。實際模型可能在該次 retry 以 `finish_reason=stop` 結束 reasoning、仍不提供 content。這不是 context exhaustion，也不是 network transient；需要一次同 model/instance/prompt/temperature、同目前 token cap 的最終 replay，且總呼叫數必須有界。
-
-### RC-3 — Silent tail truncation violates meeting-record correctness
-
-merge 達輪數上限或收斂不足時會呼叫 `_truncate_to_token_budget`，尾端內容被直接省略。後續 validator 只比較已截斷 notes，無法偵測消失的決議／待辦。即使先修復空 content，這條路徑仍可能輸出看似成功但資料不完整的 DOCX。
-
-### RC-4 — Planner/chunker overlap model mismatch amplifies stochastic calls
-
-context planner 以 220-token overlap 估算 chunk step，但 assembler 可保留最多半個 chunk 的 carry。真實 clean transcript 因此產生 19 個 chunks，高於粗估約 12 個，增加模型呼叫、wall time 與隨機空回應機率。這是 SUPPORTING 性能／可靠性缺陷，不得阻擋 CORE path。
-
-### RC-5 — Runtime provenance cannot distinguish stale and current services
-
-health 只回 semantic version `4.7.2`，兩個不同 commit 的 process 無法區分；startup log 又固定印出 9527，即使 uvicorn 實際監聽 9631。人工 E2E 因而能在不知情下命中 stale process。
-
-## FALSIFIED_ALTERNATIVES
-
-- **不是 chunk budget 再次失效：** current-code 19 個 chunks 全部 `<= 3,112`。
-- **不是 cleanup 未實作：** current-code static/fresh probe collapsed 7 loops；使用者 DOCX 命中的是 stale process。
-- **不是模型或 LM Studio 永久不可用：** 多數 extraction calls 以及多次 reasoning growth retry 已取得正文。
-- **不是 network transient 主因：** decisive responses 均為 completed HTTP responses，帶明確 finish reason 與 usage。
-- **不是換模型／disable thinking 可普遍解決：** Revision 1 已確認目前模型不支援可靠的 thinking-off contract；本計畫維持 provider-agnostic recovery。
-- **不是既有 unit tests 足以證明成功：** 495 tests 通過後仍有兩個 current-code true E2E failures。
+- **Last known-good in latest failed run：** Browser upload bytes、queue、MLX ASR、transcript persistence、fallback persistence/download。
+- **First known-bad in latest failed run：** stale old-code LM Studio generation returned empty final content and raised at first formal extraction。
+- **Current first unverified boundary：** current HEAD on this exact audio through extraction/merge/final generation。
+- **Acceptance gate boundary：** product `completed` means processing/fallback persisted; acceptance success additionally requires `summary_failed=false` and formal document evidence。
+- **External dependency：** local LM Studio service and current loaded model inventory; verifier is read-only and may not modify it。
 
 ## SEMANTIC_CONTRACT_AUDIT
 
-- generation success 必須有非空 final content；reasoning 不得當作正式摘要或寫入 DOCX/log。
-- provider total completion budget 與 orchestration visible-output target 是不同契約，不能共用一個 token 欄位。
-- merge 必須保留全部來源事實並確定性收斂；不能以 hard truncation 偽造成功。
-- semantic retry、network retry、merge rounds 必須分開計數且各自有界。
-- correction 是 BEST_EFFORT；CORE extraction/merge/final 才能啟用 reasoning recovery。
-- health revision 是 E2E freshness gate，但 unknown revision 不得使一般產品 startup/global health 失敗。
-- fallback transcript 是必要安全機制，不得被 acceptance 誤判為正式會議紀錄成功。
+- `TaskStatus.COMPLETED + summary_failed=true` remains a valid **product degradation state** because the transcript was preserved; it is never a valid **formal meeting-record acceptance state**.
+- Revision/dirty/model/DATA_DIR checks are E2E decision-validity gates, not general product readiness gates. They block a PASS claim because without them the tested build/input/model cannot be identified; they must not change `/api/health` behavior for normal users.
+- Browser interaction is CORE because the user explicitly requires a model to proxy the human journey. API polling/download and log inspection are sidecar evidence only.
+- Formal output requires both structural success (`summary_failed=false`, formal filename/title/sections) and semantic usability (representative source facts, decisions/actions, no unsupported facts). Either alone is insufficient.
+- Existing bounded retry/merge/token behavior is settled Revision 2 product semantics. This plan verifies it but does not redesign it. If the true E2E falsifies it, route to a new plan revision.
+- correction/overlap/paragraphization remain BEST_EFFORT and non-gating for product completion; their telemetry may explain quality but cannot substitute for CORE meeting-record success.
+- Post-PASS 9527 rollout is a controlled operational mutation. Unknown process ownership is a stop condition; no guessed PID kill is allowed.
 
 ## DECISION_CONTRIBUTION_MATRIX
 
-| 元素 | 分類 | 缺失／失敗時行為 | 目標貢獻 |
-|---|---|---|---|
-| 唯一 immutable model selection | CORE | 明確摘要失敗 | 確保全流程使用同一既載入模型 |
-| Provider completion 與 visible target 分離 | CORE | preflight stable failure | 防止 hidden reasoning 吃完正文預算 |
-| Bounded empty-content recovery | CORE | 耗盡後 `LMSTUDIO_NO_FINAL_CONTENT` | 吸收已觀察的隨機 reasoning-only 回應 |
-| Merge 全量收斂、禁止截斷 | CORE | `LOCAL_LLM_MERGE_NOT_CONVERGED` | 防止決議／待辦無聲遺失 |
-| Transcript cleanup/chunk invariant | CORE input | 保留 Revision 1 行為與 regressions | 控制輸入品質與 context 安全 |
-| 220-token overlap cap | SUPPORTING | overlap 可降為零 | 降低 call amplification |
-| Build revision/actual port | SUPPORTING | 一般執行允許 unknown | 避免 E2E 命中 stale process |
-| LLM correction | BEST_EFFORT | 熔斷並保留原文 | 提升文字品質但不阻擋會議紀錄 |
-| Transcript fallback | CORE safety | persistence failure 才全域失敗 | 摘要失敗時避免來源資料遺失 |
+| ID / element | Classification | E2E veto? | Missing/failure behavior | Goal contribution / rationale |
+|---|---|---:|---|---|
+| `REQ-CORE-01` exact revision + clean tree | CORE | YES | Stop before UI ready/upload | Prevents another stale/dirty runtime from invalidating the entire acceptance decision |
+| unique immutable LM Studio inventory | CORE prerequisite | YES | Stop before UI ready | Without a unique instance, model identity and Revision 2 selection contract cannot be proven |
+| writable isolated DATA_DIR | CORE prerequisite | YES | Explicit preflight failure | Prevents cache contamination, source overwrite and late `/app` permission failure |
+| `REQ-CORE-02/03` Browser upload + byte hash | CORE | YES | No E2E PASS | Proves the model executed the requested human journey on the exact file |
+| task `summary_failed=false` | CORE | YES | Verdict FAIL; preserve fallback artifacts | Distinguishes formal meeting record from safe transcript fallback |
+| formal filename/title/sections/OOXML | CORE | YES | Verdict FAIL | Prevents a downloadable fallback DOCX from masquerading as success |
+| semantic anchors + no fabrication | CORE | YES | Verdict FAIL | Proves the document is useful and faithful, not merely non-empty |
+| full-page DOCX visual QA | CORE usability | YES | Verdict FAIL | A clipped/garbled formal record does not satisfy the requested deliverable |
+| bounded metrics/model snapshots | SUPPORTING decision evidence | YES for acceptance evidence only | Product may continue; acceptance remains unproven | User explicitly requires full monitoring; missing evidence prevents causal/revision/model validation but must not become a product gate |
+| correction/paragraphization/overlap quality | BEST_EFFORT | NO | Record degradation; continue | Improves transcript quality without deciding formal summary validity |
+| automatic local 9527 rollout | CORE operational finish | YES after E2E PASS | Do not switch; report blocker | User selected automatic switch only after accepted revision is proven |
+
+## CONFIRMED_FACTS
+
+- `FACT-01`：audio and uploaded copy SHA-256 match exactly: `5ffba7...6683d0`.
+- `FACT-02`：user and system failed DOCX SHA-256 match exactly: `69e407...00d63`.
+- `FACT-03`：all 17 rendered DOCX pages contain only fallback transcript; no hidden summary/layout defect explains the failure.
+- `FACT-04`：latest task `c218e432` hit a process started before every applicable fix commit.
+- `FACT-05`：current product intentionally allows completed fallback with `summary_failed=true` and labels UI/download accordingly.
+- `FACT-06`：current runner does not include `summary_failed`, formal filename, OOXML or semantic checks in PASS requirements and does not hard-stop mismatch before upload.
+- `FACT-07`：current macOS launcher does not inject/verify `MEETINGSCRIBE_BUILD_REVISION`.
+- `FACT-08`：Revision 2 focused regression tests pass with isolated writable DATA_DIR; no same-input current-head E2E exists.
+
+## UNKNOWNS
+
+- `UNKNOWN-01`：current HEAD/implementation commit 是否可對 exact latest audio 完成非空 extraction/merge/final generation。
+- `UNKNOWN-02`：Stage 05 執行時 LM Studio inventory、context length、9527 ownership 與 worktree 是否仍與 planning time 相同；必須重驗。
+- `UNKNOWN-03`：Browser runtime 在 Stage 05 是否提供 local file upload 與下載存取能力；缺少必要 Browser capability 時是 environment blocker，不能改用 API 冒充 UI E2E。
+- `UNKNOWN-04`：正式輸出會包含哪些具體 9 個語意錨點；為避免對 DOCX 結果反向挑題，必須在讀 DOCX 前由 fresh verifier 從新 transcript 建立。
+
+## HYPOTHESES
+
+### H-1 — Latest manual failure was caused by stale runtime
+
+- **Mechanism：** pre-fix process retained old direct-empty raise behavior after source commits changed.
+- **Prediction：** process timestamp precedes commits; traceback matches old source and not current state machine.
+- **Result：** `[CONFIRMED]` by logs/timestamps/line-body comparison.
+
+### H-2 — Current HEAD may still fail on the exact latest audio
+
+- **Mechanism：** stochastic reasoning-only output, merge non-convergence, context pressure or an undiscovered product defect may survive Revision 2.
+- **Prediction：** owned current-revision fresh-data E2E reaches summary fallback or stable error with current diagnostics.
+- **Result：** `[UNKNOWN]`; only WAVE-04 true E2E may decide it.
+
+### H-3 — Existing E2E runner can false-PASS the exact user-visible failure
+
+- **Mechanism：** required checks stop at completed/downloaded and ignore product degradation markers/document semantics.
+- **Prediction：** fixture with `status=completed, summary_failed=true` and downloadable fallback files returns no failure.
+- **Result：** `[CONFIRMED]` statically; WAVE-01 must lock a fail-first regression.
+
+### H-4 — Managed restart can still create an unprovable/null revision runtime
+
+- **Mechanism：** launcher never sets build revision and only checks HTTP success.
+- **Prediction：** clean managed start without inherited env reports null revision but launcher announces ready.
+- **Result：** `[CONFIRMED]` statically; WAVE-01/02 must fix launcher contract.
+
+### H-5 — Inherited/unwritable DATA_DIR can cause an environment failure unrelated to product logic
+
+- **Mechanism：** config defaults/inherited shell point to `/app/data` on macOS, which is not writable.
+- **Prediction：** preflight on a non-directory/unwritable path fails explicitly before backend/UI upload; isolated `/private/tmp` or repo data works.
+- **Result：** `[SUPPORTED]`; focused pytest reproduced the environment distinction.
+
+## FALSIFICATION_RESULTS
+
+- Falsified “the user uploaded a different audio” by identical SHA-256.
+- Falsified “the DOCX only has a visual/render bug” by OOXML extraction and all-page render review.
+- Falsified “latest manual DOCX proves current HEAD fix failed” because the serving process predates current code.
+- Falsified “completed + downloadable files prove meeting-record success” by explicit product fallback semantics and failed DOCX.
+- Not yet falsified H-2; therefore no new product algorithm edit is authorized in Revision 3.
+
+## ROOT_CAUSE
+
+### RC-3A — Immediate cause of latest artifact: stale pre-fix runtime
+
+The manual request was executed by a backend started before the fixes. Source files on disk changed, but the long-lived Python process retained old code. Missing enforceable runtime provenance allowed the user to unknowingly retest the old implementation.
+
+### RC-3B — Acceptance-control defect: fallback is misclassified as E2E success
+
+The product correctly persists a transcript fallback as `completed + summary_failed=true`; the E2E runner incorrectly equates `completed + downloads` with formal meeting-record success. The verifier therefore cannot detect the exact user-visible failure it exists to prevent.
+
+### RC-3C — Launcher provenance/rollout defect
+
+The managed macOS launcher neither derives/injects the clean Git revision nor validates health against it. A restart can still be operationally “ready” while its tested revision is null/mismatched.
+
+### RC-3D — Product outcome on current HEAD remains undecided
+
+The previous product fixes have test evidence but no same-input fresh Browser E2E. Treating the old process failure as a new summarization root cause would be speculation. The correct next diagnostic is a strict true E2E, not another algorithm patch.
+
+## FIX_TYPE_AND_ENVELOPE
+
+- `FIX_TYPE: MIXED` because this revision combines a mechanical verifier/launcher correction with a strict acceptance/operational contract, while deliberately freezing existing product summary/fallback semantics.
+- **Allowed implementation files：** `scripts/e2e/run_owned_e2e.py`, `scripts/macos/start-mac-native.sh`, focused tests under `tests/`, and current task Stage 04/05 evidence artifacts owned by the proper stage.
+- **Allowed behavior：** hard preflight gates within the E2E harness; browser-upload wait/monitor mode; formal result checks; redacted/append-only evidence split from gitignored raw runtime; managed launcher revision/data/health validation; owned rollout/rollback.
+- **Conditional product work：** NONE in Stage 04. If WAVE-04 current-revision E2E fails in product code, Stage 05 records evidence and routes to Revision 4; it does not patch product code.
+
+## DO_NOT_TOUCH
+
+- `backend/services/summarization.py`, correction/chunk/merge/retry/prompt/token logic.
+- `backend/services/task_processor.py` fallback status/formatting semantics.
+- `backend/api/routes.py`, `backend/models/schemas.py`, `frontend/` public/UI behavior unless a new product defect is proven and replanned.
+- LM Studio model inventory/config/lifecycle; Ollama/Gemini behavior; ASR decoder/model settings.
+- dependencies/lockfiles, database/data schema, existing user runtime files and historical Review/E2E attempts.
+- any other repository or `/Users/hsiaojohnny/dev/yt_down_txt`.
+
+## GLOBAL_GATES_AND_RATIONALE
+
+- **E2E revision/cleanliness gate：** global to the acceptance run because dirty/mismatched code makes the tested implementation indeterminate; local degradation cannot preserve decision validity.
+- **Unique loaded model gate：** global to this local-LM E2E because the approved immutable selection contract cannot be attributed when inventory is ambiguous.
+- **Exact upload hash gate：** global because testing a different file does not answer the user’s request.
+- **`summary_failed=false` + formal document gate：** global to PASS because fallback is explicitly not the requested outcome.
+- **Browser capability gate：** global because the user explicitly asked for model-as-human UI E2E; API-only execution is a different acceptance mode.
+- **Unknown 9527 ownership gate：** global to rollout because killing/replacing an unknown process is unsafe; it does not invalidate the already completed isolated E2E evidence.
+
+## COMPLEXITY_BUDGET
+
+- One browser upload mode in the existing runner: necessary to let Browser execute the real UI while the runner owns/monitors backend.
+- Small pure validation helpers for revision/model/task/hash/DOCX/metrics: necessary to make acceptance predicates unit-testable and prevent false-PASS.
+- Evidence/runtime directory split: necessary to satisfy append-only auditability without committing sensitive raw artifacts.
+- Launcher revision/data/health validation: necessary to make post-acceptance 9527 rollout attributable and repeatable.
+- No new service, dependency, endpoint, database, orchestration framework or product gate.
 
 ## CRITICAL_PATH
 
-1. 先建立能重現兩個 current-code failure shapes 與 silent truncation 的 fail-first tests。
-2. 分離 merge input、visible target、provider completion 三種 token 語意，恢復 reasoning-aware merge generation。
-3. 擴充有界 recovery state machine，涵蓋 growth retry 後 `stop + reasoning + empty content`。
-4. 移除 CORE hard truncation，改用有進度證明的 hierarchical compaction 與 stable non-convergence error。
-5. 對齊 220-token overlap 實作與規劃假設，新增 bounded-call diagnostics。
-6. 新增 revision/port provenance，執行 owned-process fresh-cache true E2E 與 DOCX 全頁 QA。
-7. Stage 05 通過後才把本機 9527 切換到已核准 HEAD。
+1. `WAVE-01` 建立 fail-first verifier/launcher tests，證明 current runner 對 fallback、mismatch、wrong bytes、ambiguous inventory 與 launcher null revision 的判定不正確。
+2. `WAVE-02` 最小修改現有 runner：在 UI ready/upload 前完成 clean SHA/revision/data/model hard gates；增加 Browser upload detection/monitor mode；統一 API/browser 的正式摘要、hash、filename、OOXML、metrics 與 immutable inventory checks。
+3. `WAVE-03` 修改 macOS launcher：可靠注入 clean revision、顯示/驗證 actual port/DATA_DIR、解析 health revision；完成 focused/full verification，不跑真實音檔。
+4. `WAVE-04` fresh Stage 05 使用 in-app Browser 對 exact latest audio 做一次 true E2E，全程 sidecar 監看，完成 transcript-first semantic anchors 與 Documents 全頁 QA。
+5. `WAVE-05` 只有 WAVE-04 PASS 後，依 ownership gate 自動切換本機 9527 到核准 revision並做 Browser smoke；寫入 `result.md`。
 
 ## CHANGE_MAP
 
-### 1. Separate local merge budgets — CORE
+### `CM-01` Fail-first acceptance predicates — CORE
 
-將 internal `LocalContextPlan` 的單一 merge 欄位拆為：
+新增 `tests/test_owned_e2e_acceptance.py`（名稱可依 repo convention 微調，但不可散落到產品測試）並擴充 `tests/test_macos_scripts.py`。在修改 production scripts 前，至少鎖定：
 
-- `merge_input_budget_tokens`：一個 merge group 可攜帶的來源 notes 上限；由 selected context window 減去 merge prompt overhead 與初始 provider completion reserve 後計算。
-- `merge_visible_target_tokens`：合併後 notes 必須收斂到的可見 token 目標；保留目前約 900 tokens 的 final-stage fit 目的。
-- `merge_provider_output_tokens`：LM Studio 初始總 completion cap；使用現有 `LOCAL_LLM_RESERVED_OUTPUT_TOKENS`（目前約 3,072），可依既有 provider headroom/retry cap 公式有限增加。
+1. health revision mismatch 必須在任何 upload function 被呼叫前結束；fixture 需斷言 upload call count 為 0。
+2. `status=completed, summary_failed=true` 必須 FAIL；`summary_failed=false` 才可進入正式文件檢查。
+3. `Content-Disposition` 含 fallback label、DOCX OOXML 含 `逐字稿（會議紀錄生成失敗）`／failure banner／empty-summary error，任一即 FAIL。
+4. isolated upload bytes SHA 與 expected audio SHA 不同必須 FAIL；一致才通過。
+5. loaded LLM model/instance 不是「恰好一個 model 且恰好一個 instance」或 run 前後 snapshot 改變，必須 FAIL。
+6. DATA_DIR 是一般檔案、不可建立或不可寫時，必須在 backend 啟動前輸出明確 failure。
+7. Browser mode 只接受 isolated backend log 中唯一一筆本輪 upload mapping，提取 `stored filename + task_id`；0 筆逾時或 >1 筆都 FAIL。
+8. metrics parser 拒絕缺少 success metrics、`logical_generations<=0`、`semantic_attempts > 2 * logical_generations`、`merge_rounds > 3`、`max_tokens=1`、hard truncation 或 `LOCAL_LLM_MERGE_NOT_CONVERGED` 成功假象。
+9. launcher 靜態/行為契約至少證明 revision derivation/injection、dirty distinction、writable DATA_DIR validation、health JSON revision match、actual port logging，且不得使用 broad `pkill`。
 
-具體行為：
+Fail-first evidence 必須保存首個具代表性的正確原因；如果測試因 import/fixture/環境錯誤失敗，先修測試，不得當成產品 red。
 
-- `_group_texts_by_budget` 只使用 `merge_input_budget_tokens`，不得再以 900-token visible target 分組。
-- Preflight 必須確認 context 能同時容納 merge prompt、至少兩份目標大小 notes 與 provider completion reserve；否則拋 `LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED`。
-- Merge prompt 明示 `merge_visible_target_tokens`；provider `max_tokens` 使用 `merge_provider_output_tokens`。
-- 回應超過 visible target 時，把它當作下一輪待壓縮 note，不以字串截斷修正。
-- 一份 oversized note 允許單獨 compaction；多份 notes 優先依來源順序分組。
-- 每輪必須減少 note 數或 estimated total visible tokens；保持原有 max rounds 作硬上限。
-- 達輪數上限、模型持續超標或無實質進度時拋 `LOCAL_LLM_MERGE_NOT_CONVERGED`，進入既有明示 transcript fallback。
-- 移除 `_merge_notes_until_fit` CORE path 對 `_truncate_to_token_budget` 的使用；不得省略尾端來源內容。
+### `CM-02` Harden `scripts/e2e/run_owned_e2e.py` — CORE acceptance harness
 
-### 2. Bounded reasoning-only recovery state machine — CORE
+- 保留既有 `--smoke`、API upload 與 owned-process/free-port 能力；新增明確 `--upload-mode api|browser`（default `api`）或等價單一參數，不建立第二支 runner。
+- 非 smoke 均要求 `--audio`，runner 先計算 expected SHA；Browser mode 的 `--audio` 只作 expected-byte authority，runner 不得代 Browser 上傳。
+- **啟動前 hard preflight：** repo 必須 clean；actual HEAD 等於 expected revision；audio 存在；evidence/runtime/DATA_DIR 可建立且可寫。任何 failure 不得啟動 backend。
+- **啟動後、UI ready 前 hard preflight：** health 200 且 `build_revision == expected == HEAD`；LM Studio 可達且 loaded LLM 恰好一 model/一 instance。任何 failure 立刻只終止 owned child，不得 upload。
+- Browser mode 通過 gate 後 stdout flush 一行 machine-readable `BROWSER_E2E_READY`（至少含 URL、expected SHA、evidence/runtime paths）；Stage 05 Browser 此後才可開頁上傳。
+- Browser mode 透過本輪 isolated `backend.log` 的既有 upload success line，bounded poll 出唯一 `stored filename + task_id`；不得新增 public API。API mode 從 upload response 取得同兩項資訊。兩種 mode 後續共用同一 monitor/validation path。
+- 從 isolated `DATA_DIR/uploads/<stored filename>` 計算實際 SHA 並與 expected 比對；只允許一個本輪 task/upload。
+- task 終態要求 `completed` 且 `summary_failed is False`；缺欄位、true 或其他終態均 FAIL。
+- 下載 transcript/DOCX 時保存 `Content-Disposition`；正式 DOCX label 必須是 `會議紀錄` 且不含 fallback label。
+- 使用既有 `python-docx` 或 stdlib OOXML 讀取文字；拒絕 fallback title/banner/error/traceback，要求 formal title 與 general 模板四個必要 section pattern 有非空後續內容。此機械檢查不取代 Stage 05 語意/視覺 QA。
+- 解析成功 run 的 structured metrics 與 diagnostics：`logical_generations > 0`、`semantic_attempts <= 2 * logical_generations`、`merge_rounds <= LOCAL_LLM_MAX_MERGE_ROUNDS(目前 3)`；不得出現 `max_tokens=1`、hard truncation、merge non-convergence；run 前後 model key/instance/context snapshot 完全一致。
+- `summary_failed`/formal DOCX/upload hash/model/metrics 全部加入 full-mode `required` checks；不再只要求 completed/downloaded。
+- revision mismatch 必須 raise/return before `capture_model_snapshot` 之後的 UI-ready/upload path；不可僅 append failure 後繼續昂貴工作。
+- artifacts 採雙層：`.agent/tasks/<TASK_ID>/e2e/attempt-<NN>/` 自動選下一個不存在的 append-only evidence dir，只保存 hash/redacted verdict/metrics/QA manifest；完整 uploaded bytes、transcript、DOCX、backend log 與 backend DATA_DIR 放在 `data/cache/e2e/<attempt>/` 或等價 gitignored runtime dir。不得將原始敏感 payload 寫入 tracked evidence。
+- exception/finally 仍只終止 runner 自己用新 process group 啟動的 child；任何 attempt 不覆寫前一 attempt。
 
-- `allow_reasoning_retry` 單獨決定 semantic recovery；移除其與 `expand_output_budget` 的 conjunction。
-- Visible-output orchestration 不再透過禁止 provider recovery 實現；merge 在 generation 後檢查 visible target 並階層式收斂。
-- 每個 CORE logical generation 最多三次 completed provider calls：
-  1. **Initial call**：caller 指定的初始 provider completion cap。
-  2. **Growth retry**：只有 initial 為 `finish_reason=length + reasoning evidence + empty content` 時，沿用 Revision 1 的 instance headroom/configured-cap 公式增加一次 budget。
-  3. **Stop replay**：只有 growth retry 為 `finish_reason=stop + reasoning evidence + empty content` 時，以相同 model、instance、prompt、temperature 與目前 token cap replay 一次。
-- Initial 若直接為 `stop + reasoning evidence + empty content`，只做一次同 cap replay，總計兩次；不再接續 growth retry。
-- Growth retry 再次 `length + empty content`、stop replay 仍空、無 reasoning evidence、或沒有可增加 headroom 時立即拋既有 `LMSTUDIO_NO_FINAL_CONTENT`。
-- Network transient retries 與上述 completed-response semantic attempts 分開計數；不得互相重置上限。
-- Correction 明確停用 semantic recovery；首次 `StableServiceError` 後保留該段及剩餘原文並熔斷，維持 Revision 1 行為。
-- Diagnostics 只記 model/instance、finish reason、content/reasoning 字數、usage、cap、attempt type；禁止 prompt/reasoning 正文。
+### `CM-03` Fix `scripts/macos/start-mac-native.sh` provenance — CORE rollout support
 
-### 3. Preserve all source facts — CORE
+- 在 Git 可用時，以 repo `git rev-parse HEAD` 為本機 launcher authoritative revision；以 tracked/staged/untracked status 判斷 dirty，dirty 必須顯示為可區分值並在 Stage 05 exact-SHA rollout gate 失敗，不能冒充 clean SHA。
+- Git 可用時，如 caller 明示 `MEETINGSCRIBE_BUILD_REVISION` 且不同於 clean HEAD，啟動前 fail loudly；相同則保留。Git/metadata 不可用的 packaged environment 才允許 explicit revision 或 unknown/null，普通產品 startup 不因此新增 global health veto。
+- 在啟動前建立並驗證實際 `DATA_DIR` 可寫；錯誤訊息列出 path，不依賴 shell inherited `/app/data` 靜默失敗。
+- 啟動 log 明確列出 project root、actual host/port、DATA_DIR、build revision/dirty state。
+- readiness 不只 `curl` 200：以既有 `.venv` Python 解析 `/api/health` JSON，取得 `build_revision`，在本機 Git/explicit expected revision 已知時要求完全相同後才顯示 ready。
+- revision mismatch、health parse failure、timeout 或 child early exit 時，只終止本 script 剛啟動且 ownership 已知的 process/child，清除自己寫入的 PID file，不使用 `pkill` 或猜測性終止。
+- 不變更 stop/restart public invocation；不安裝 dependency、不管理外部 LM runtime。
 
-- 新增 deterministic tail sentinel fixture，讓最後一份 note 包含唯一決議／待辦；完整 pipeline 最終輸出必須仍包含 sentinel。
-- Quality validation 的輸入必須是完整 merge 結果，不能在 validator 前截斷來源。
-- `LOCAL_LLM_MERGE_NOT_CONVERGED` 透過既有 stable-error/fallback 管道顯示，不能新增假成功 task state。
+### `CM-04` Fresh-context Browser UI E2E + live monitoring — Stage 05 CORE
 
-### 4. Bound chunk overlap and call amplification — SUPPORTING
+- 必須是新的 Stage 05 verifier context，載入 `05_e2e_test_prompt.md`、Revision 3 plan/handoff、`browser:control-in-app-browser` 與 `documents:documents`；Verifier 不修改 product code。
+- 先執行 runner Browser mode，等待 `BROWSER_E2E_READY`；若 Browser skill/runtime 不支援 local file upload，記為 environment blocker，不得改用 API 並宣稱 user-journey E2E。
+- Browser 真正執行：開首頁 → 明確選 local → general → 選擇 `/Users/hsiaojohnny/Downloads/盤點工具討論.m4a` → 上傳 → 確認排隊/進度 UI → 監看 WebSocket 驅動階段 → result UI → 確認 failure banner 不可見 → 點擊下載逐字稿與 DOCX。
+- Sidecar 每 30–60 秒或每個 stage transition 讀取 bounded log tail/task state，記錄 ASR、cleanup/correction、extraction、merge、final/refinement、persistence；不得把完整 transcript/prompt/reasoning 貼入 tracked evidence。
+- 監控檢查：fresh ASR（isolated DATA_DIR 無 cache）、一個 task、相同 audio SHA、唯一 model/instance 不變、每 logical generation completed provider calls 的測試契約上限（E2E aggregate `semantic_attempts <= 2 * logical_generations`）、merge rounds <=3、無 hard truncation/max_tokens=1/non-convergence/fallback。
+- task 完成後先讀新 transcript，依內容位置建立 `B1-B3`、`M1-M3`、`E1-E3` 九個簡短語意錨點並先保存 hash/redacted description；之後才讀 DOCX，避免反向挑選容易通過的錨點。
+- 每個區段至少要有代表性覆蓋；明確決議與行動項必須出現在 DOCX。對人名、日期、數字、決議做 source-backed 抽查；任何 unsupported material fact 是 FAIL。
+- 使用 Documents skill canonical `render_docx.py`，逐頁檢查全部頁面；OOXML、section substance、全頁 render 三者都 PASS 才能接受。
+- Browser 點擊下載是 user journey 的一部分；runner sidecar 下載副本可供 deterministic hash/OOXML/Documents QA，但不能代替 Browser 點擊。
 
-- 建立共享內部常數 `LOCAL_LLM_CHUNK_OVERLAP_BUDGET_TOKENS = 220`，同時供 context plan 的 effective step 與 chunk assembler 使用。
-- Assembler carry 同時受 220-token cap 與既有 `LOCAL_LLM_CHUNK_OVERLAP_LINES` 限制；必要時 overlap 可降為零。
-- 保留 Revision 1 的 chunk postcondition、來源順序與非 overlap 內容完整覆蓋。
-- 新增 structured metrics/log fields：logical generations、semantic attempts、network retries、merge rounds/groups、chunk count 與各階段 duration。
-- 不建立依賴模型／硬體速度的固定 wall-time SLO；驗收只要求消除已證實的 correction/overlap/retry amplification。
+### `CM-05` Automatic accepted-revision rollout to local 9527 — post-PASS CORE
 
-### 5. Runtime provenance and E2E ownership — SUPPORTING
-
-- Health response model 向後相容新增 `build_revision: string | null`。
-- 以 `MEETINGSCRIBE_BUILD_REVISION` 作為執行期來源；local/E2E launcher 注入 `git rev-parse HEAD`，封裝或無 Git 環境允許 `null/unknown`。
-- 一般 startup/health 不因 unknown revision 失敗；只有 E2E harness 將 revision mismatch 視為 acceptance failure。
-- Startup log 改讀實際配置端口；E2E runner 使用同一端口值設定 uvicorn `--port` 與應用環境，移除固定顯示 9527。
-- E2E runner 選擇 free port、使用隔離 temp `DATA_DIR`、記錄 child PID，只終止自己啟動的 process。
-- E2E artifacts 保存 transcript、DOCX、backend log、health revision、model snapshot 與判定摘要，供 Stage 05 append-only attempt 使用。
-
-## PUBLIC_AND_STABLE_CONTRACT_CHANGES
-
-- **Additive HTTP field：** health response 新增 nullable `build_revision`; 現有 `status/version/services` 等欄位與狀態碼不變。
-- **New environment input：** optional `MEETINGSCRIBE_BUILD_REVISION`; 未設定不影響一般執行。
-- **New stable error：** `LOCAL_LLM_MERGE_NOT_CONVERGED`; 沿用既有 error description 與 fallback DOCX/TXT contract。
-- **Internal type change：** `LocalContextPlan.notes_merge_budget_tokens` 拆成三個明確 budget 欄位；所有 local provider call sites 必須編譯／測試更新。
-- **No migration：** 無 database、cache format、task state、model lifecycle 或依賴變更。
+- 只有 Stage 05 CORE verdict PASS 後執行；accepted revision 是 E2E 實際 health/HEAD 完全一致的 SHA。
+- 重新執行 `lsof`/PID file/`ps`/cwd/command checks。planning time 無 9527 listener，但這是 mutable fact；如果當下有 ownership 不明 listener，停止 rollout 並請使用者決定，不得 kill。
+- 如果存在本 repo managed process，使用 canonical stop script 且再次確認 target；否則直接以 `DATA_DIR=/Users/hsiaojohnny/dev/convert/data`、`MEETINGSCRIBE_PORT=9527` 與 accepted SHA 啟動 canonical macOS launcher。
+- health 200 且 `build_revision == accepted SHA`；Browser 打開 9527 首頁做 UI smoke（頁面載入、local/general 控件可用、file picker 可開但不再次上傳昂貴音檔）。
+- 保留 `data/uploads`、`data/outputs`、`data/logs` 與 cache，不清理、不覆寫。
+- rollback：只終止 rollout 當下由本流程啟動並記錄 PID/command 的新 process。planning time 沒有 prior service，因此 rollback 後維持 stopped；不得回復一個不存在/未知的舊 process。
 
 ## IMPLEMENTATION_WAVES
 
-### WAVE-01 — Fail-first evidence lock
+### `WAVE-01 [CORE]` — Verifier/launcher fail-first evidence lock
 
-- 加入 task `90fdb193` 的 merge `length/reasoning/empty` fixture。
-- 加入 task `8fd56c54` 的 `initial length/empty -> growth stop/empty -> replay content` fixture。
-- 加入 non-converging merge、tail sentinel、overlap 220-token 與 health revision compatibility tests。
-- 在 product code 修改前確認新 tests 以預期原因失敗；保存實際 failure，不用敘事代替執行。
+- 只新增/修改 focused tests，先跑並保存正確 failure 原因。
+- 覆蓋 `CM-01` 九類契約；不得先改 scripts 再補 fail-first 敘事。
+- 第一個 red run 若混有 test defect，先修 test harness 到只剩預期行為 red。
 
-### WAVE-02 — Restore CORE merge/output contracts
+### `WAVE-02 [CORE]` — Acceptance runner hardening
 
-- 實作三種 merge budgets、來源分組、visible-target compaction 與 preflight。
-- 實作最多三次的 semantic recovery state machine。
-- 移除 merge hard truncation，加入 bounded progress/non-convergence stable error。
-- 執行 LM Studio adapter、summarization、fallback focused/contract tests。
+- 只修改 `scripts/e2e/run_owned_e2e.py` 與必要 focused tests。
+- 完成 preflight、Browser mode、shared task/formal DOCX/hash/metrics/model checks、raw/evidence split。
+- 先讓 runner tests 全綠，再做 smoke/dry-run；不跑真實音檔。
 
-### WAVE-03 — Contain supporting amplification and provenance
+### `WAVE-03 [CORE/SUPPORTING]` — macOS launcher provenance + Stage 04 verification
 
-- 對齊 220-token overlap 與 diagnostics。
-- 新增 optional build revision、actual port logging 與 owned-process E2E runner。
-- 更新 health/config 文件，但不變更依賴或一般 readiness 語意。
+- 修改 `scripts/macos/start-mac-native.sh` 與 `tests/test_macos_scripts.py`。
+- focused tests、`bash -n`、runner dry-run/smoke、Revision 2 regression tests、完整 suite、final diff。
+- 驗證後把 scoped implementation/evidence 形成可識別 Git commit，讓 Stage 05 能在 clean worktree 上以 exact HEAD/build revision 驗收；不得夾帶其他變更。
+- Stage 04 寫 `execution.md`，不得寫 `result.md` 或宣稱 primary outcome fixed。
 
-### WAVE-04 — Full verification and independent acceptance
+### `WAVE-04 [CORE]` — Independent Browser UI true E2E
 
-- 執行 focused tests、完整 `uv run pytest tests/ -q`、final diff inspection。
-- 由獨立 Stage 05 context 執行原始音檔 fresh-cache true E2E、DOCX structural/full-page visual QA。
-- 通過後才執行本機 stale-process replacement 與 9527 smoke verification。
+- Stage 05 fresh verifier 依 `CM-04` 執行 exact latest audio 一次。
+- append-only `e2e/attempt-01` 起；失敗後修 verifier/environment 再用下一 attempt，不覆寫。
+- product failure 直接 `PLANNER_REPLAN`；Verifier 不改 product code。
+
+### `WAVE-05 [CORE operational]` — Accepted SHA local rollout
+
+- 僅在 WAVE-04 PASS 後依 `CM-05` 自動執行。
+- health + Browser smoke PASS 後才由 Stage 05 寫 `result.md` 並關閉任務。
 
 ## REGRESSION_AND_ACCEPTANCE
 
-### Fail-first unit/contract cases
+### Stage 04 focused verification
 
-1. **Merge budget separation**
-   - `merge_visible_target_tokens=900` 時，provider 初始 completion cap 仍為 reserved output，而不是 900。
-   - reasoning-only growth retry 可成功；回傳 note 經 orchestration 最終收斂到 `<=900`。
-   - merge 不會因 visible target 而設定 `allow_reasoning_retry=False`。
-2. **Observed three-call sequence**
-   - Initial `length/empty`、growth retry `stop/empty`、final replay content 成功。
-   - 精確三次 calls，model、instance、prompt、temperature 不變；只有 growth retry 增加 token cap。
-3. **Retry exhaustion**
-   - 第三次仍空、第二次再度 length、無 reasoning、無 headroom 都回傳 `LMSTUDIO_NO_FINAL_CONTENT`，不再呼叫 provider。
-4. **Correction degradation**
-   - 相同回應 shape 用於 correction 時最多一次 provider call，保留當段及剩餘文字，摘要核心繼續。
-5. **Merge progress/data integrity**
-   - Context 可行時每組至少容納兩份目標大小 notes。
-   - Single oversized note 可壓縮；持續不縮短時在既有 max rounds 內回傳 `LOCAL_LLM_MERGE_NOT_CONVERGED`。
-   - Tail sentinel 永不因 truncation 消失。
-6. **Overlap bound**
-   - 每個 chunk boundary 重複 carry `<=220 tokens`，line cap 仍生效；所有非 overlap 來源內容保持順序與完整覆蓋。
-7. **Compatibility**
-   - `build_revision` 可為 null；舊 health consumer、zero/one/multiple selection、Ollama/Gemini、task fallback 不回歸。
+1. 建立 isolated writable test data root，避免 inherited `/app/data` 污染測試。
+2. Fail-first：`uv run pytest -q tests/test_owned_e2e_acceptance.py tests/test_macos_scripts.py`（先 red，保存正確原因）。
+3. Post-fix 同一 focused command 全綠。
+4. Revision 2 product regression：
+   `uv run pytest -q tests/test_wave01_merge_budget_separation.py tests/test_wave01_recovery_sequence.py tests/test_wave01_merge_convergence.py tests/test_wave01_overlap_provenance.py tests/test_t20260827_regression.py`。
+5. `bash -n scripts/macos/start-mac-native.sh`；runner `--help`、`--smoke --dry-run`。
+6. 使用 free port、gitignored/private runtime path 做一次非昂貴 runner `--smoke`；驗證 exact revision gate 與 owned child cleanup。另以 mismatch fixture/unit test 證明 upload 不會發生，不需要實際長音檔。
+7. 完整 `uv run pytest tests/ -q`（若 repo baseline 按慣例排除 hardware-direct test，必須明列 command/skip 理由）；分類任何 failure。
+8. `git diff --check`、scope diff inspection；不允許 product/dependency/lockfile/HTTP schema 變更。
 
-### Integration/full suite
+### Stage 05 independent acceptance
 
-- 以接近真實 19 份 extracted notes 的 fixture 完成 extraction → merge → final generation。
-- 現有必要章節均具實質內容，tail sentinel 出現在 final meeting record。
-- Stable merge/reasoning errors 仍產出明示失敗的 transcript fallback，不新增 task state。
-- 保留 Revision 1 的 sparse single-line chunk、pathological repetition cleanup、YAML precedence 與 correction circuit-break regressions。
-- 依序執行 focused tests 與完整 `uv run pytest tests/ -q`；任何 failure 必須分類為 regression、pre-existing、environment 或 test defect。
+- `REQ-CORE-01` 至 `REQ-CORE-08` 全數有實際觀察證據才可 PASS。
+- API-only full runner PASS、unit/full suite PASS、或下載成功都不能替代 Browser true E2E。
+- Stage 05 evidence result 至少記錄：accepted SHA、clean status、audio/source/upload hashes、task ID/status/summary_failed、start/end model snapshots、redacted metrics、UI states、download header/OXML checks、9-anchor matrix、all-page QA count、9527 rollout PID/health/smoke、raw runtime paths/hashes。
+- 真實音檔預期耗時可能超過一小時；Verifier 要持續監控並提供簡短進度，不因暫時無輸出自行中止。timeout 以 runner 既有 7200 秒為起點，只有觀察到 process/task stall 才分類。
 
-### Independent owned-process true E2E
+## DEGRADATION_AND_GATE_TESTS
 
-1. 以 free port、隔離 temp `DATA_DIR` 與 expected Git revision 啟動並擁有 backend child process。
-2. Health `build_revision` 必須等於核准 HEAD；記錄唯一 loaded model/instance/context snapshot，不修改 LM Studio inventory。
-3. 實際上傳 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a`，確定 fresh MLX ASR 執行。
-4. Poll 到終態；不得為 `summary_failed`，不得出現 fallback title/warning、`max_tokens=1`、98-call correction amplification、hard truncation 或 merge non-convergence。
-5. 驗證每個 chunk 合法、correction stable failure 後最多一次呼叫、semantic retries/merge rounds 符合各自上限、全流程 model selection 不變。
-6. 下載逐字稿與 DOCX；必要章節非空，抽查尾端決議／待辦存在，逐字稿無達 cleanup threshold 的病態連續 run。
-7. 以 OOXML 結構抽取加 LibreOffice/Poppler render 檢查 DOCX 每一頁；100% 檢查 clipping、overlap、缺字、亂碼、failure banner、空白頁與可讀性。
-8. 保存完整 artifacts/log/result 至新的 Stage 05 append-only attempt；不得覆寫舊 E2E 證據。
+- `summary_failed=true`：產品仍可下載 transcript fallback，但 E2E formal-record verdict 必須 FAIL。
+- correction stable failure：保留原文並繼續；只要正式 meeting record 成功且內容可接受，不得單獨 veto。
+- build revision unknown：一般 `/api/health` 仍可 200；Stage 05/managed accepted-SHA rollout 必須 FAIL closed。
+- model snapshot API unreachable/ambiguous：產品一般 health contract不改；本 local-LM E2E 不具可歸因性，停止。
+- Browser capability missing：environment blocker；API mode 可作診斷但不得標 true E2E PASS。
+- Documents renderer missing：記錄 environment blocker；OOXML pass 不能冒充 all-page QA。
+- telemetry parser/test defect：修 verifier，建立新 append-only attempt；不把 verifier defect 誤報為 product defect。
 
-## LOCAL_ROLLOUT_AND_ROLLBACK
+## MIGRATION_COMPATIBILITY_ROLLBACK
 
-- Stage 05 通過前不替換目前 9527 使用者服務，也不宣稱 root cause 已完成。
-- 通過後先以 PID、cwd、open files 與 command line 確認 9527/9631 listeners 的 ownership。
-- 僅終止已證實是本 repo stale/test instance 的 process；無法證明時停止並回報，不猜測性 kill。
-- 透過受管理的 macOS start/restart path 啟動核准 HEAD 至 9527，確保 PID file 建立；health revision 必須符合核准 commit。
-- 執行便宜的 health/config smoke check，不重跑昂貴 E2E 作為一般 startup gate。
-- 不刪除既有 transcript cache、outputs 或使用者失敗 DOCX。
-- 若 target startup 失敗，不隱藏錯誤或假稱完成；保留 Stage 05 隔離產物作為可重現證據，重新進入 debug/replan。
-
-## RISKS_AND_CONTROLS
-
-- **Model stochasticity：** 最多三次 CORE semantic calls；correction 最多一次；所有 attempt 有結構化診斷。
-- **Merge token growth：** visible target 與 provider cap 分離，但每輪需有 progress 且受 max rounds 約束。
-- **Silent data loss：** 禁止 hard truncation，tail sentinel + stable non-convergence error。
-- **Call/latency amplification：** 220-token overlap cap、來源 group budget、logical/physical counters；不虛構硬體無關 SLA。
-- **Public compatibility：** health 僅 additive nullable field，新 env optional，無 schema migration。
-- **Stale process confusion：** owned-process E2E + expected revision gate；一般 runtime unknown revision 不 block。
-- **Scope growth：** 不變更模型 selection/lifecycle、ASR decoder、task states、provider architecture 或第三方依賴。
+- **Migration：** NONE。
+- **Public compatibility：** HTTP schema、frontend contract、task state、fallback filename semantics不變。
+- **Internal CLI compatibility：** 保留 runner 現有 `--smoke`、`--dry-run`、`--audio`、`--artifacts-dir` 可用；如重新命名 evidence/runtime 參數，提供相容 alias 或清楚 migration error，不讓 Stage 04/05 指令含糊。
+- **Launcher compatibility：** canonical start/stop/restart entry 保留；新增的 revision/DATA_DIR/health mismatch 只讓不可歸因或不可寫的啟動 fail loudly。
+- **Implementation rollback：** runner/launcher 變更可用單一 implementation commit revert；不涉及資料格式。
+- **Operational rollback：** 只停止 WAVE-05 新啟動的 owned process；不刪除 data/cache/evidence，不恢復未知 process。
 
 ## DEFERRED_OR_BEST_EFFORT
 
-- 不針對 Qwen 或個別模型家族建立專屬 thinking-disable adapter。
-- 不新增 speaker diarization、時間戳排版、語意段落重建或 ASR decoder tuning。
-- 不為 build revision 建立一般產品 readiness veto。
-- 不承諾所有自然重複都被刪除；cleanup 保持高 threshold 與保守策略，避免誤刪語意。
-- 不宣稱 NVIDIA hardware E2E；只執行可用的 shared regression tests。
+- 所有 transcript 同音字、語者與專有名詞精修。
+- 更細緻的 E2E dashboard、event stream、長期 metrics storage 或 browser automation framework。
+- 為 Qwen/特定模型建立 adapter、thinking-disable 或改模型策略。
+- 將 build revision 升級為一般產品 global readiness gate。
+- 遠端部署、CI E2E、NVIDIA hardware E2E、performance SLO。
+
+## RISKS
+
+- **Stochastic LLM failure：** 同一音檔仍可能偶發空 content；以 exact evidence、bounded contract 與新 attempt 處理，不 rerun-until-green 後隱瞞第一次失敗。
+- **長時間資源使用：** 約 87 分鐘音檔會長時間占用 ASR/LLM；只允許一個新 task，避免平行重跑。
+- **False semantic PASS：** 結構檢查可能通過但內容不忠實；以 transcript-first 9 anchors 和 unsupported-fact audit 控制。
+- **Sensitive artifacts：** runner 若仍把 raw data 寫進 tracked task dir 會造成洩漏；evidence/runtime split 是 implementation gate。
+- **Rollout ownership drift：** 9527 在驗收期間可能被其他 process 占用；未知 ownership 必須停止自動切換。
+- **Lower-tier Implementer scope drift：** handoff 必須把 `DO_NOT_TOUCH` 與 product-failure replan stop condition放在第一屏，避免看到空摘要就再改 summarization。
 
 ## DEFINITION_OF_DONE
 
-- Revision 2 的 fail-first tests 先以預期原因失敗，再於修復後通過。
-- Merge 三種 budget 語意分離，reasoning recovery 不再被 visible target 禁用。
-- `initial length/empty -> growth stop/empty -> replay content` production shape 有真實 regression coverage，最多三次 calls。
-- CORE merge 不存在無聲 hard truncation；無法收斂時使用 stable error/fallback，tail sentinel 保留。
-- Revision 1 的 chunk invariant、cleanup、config precedence、correction circuit-break 與跨 provider tests 不回歸。
-- Focused 與完整 suite 取得實際通過結果；不能只引用本計畫前的 495-test baseline。
-- Owned-process fresh-cache true E2E 使用原始音檔生成正式「會議紀錄」DOCX，revision/model/limits 均符合契約。
-- 最新 DOCX 完成結構與全頁 visual QA，無失敗 banner、空白必要章節、clipping、overlap、亂碼或已知病態重複。
-- 本機 9527 僅在 Stage 05 通過且 ownership 證實後切換到核准 revision。
-- 最終 diff 僅含核准 envelope，無 dependency/lockfile、模型 lifecycle、task-state 或無關變更。
+- `DoD-01`：Revision 3 verifier/launcher fail-first tests 先 red（正確原因）後 green；Revision 2 focused regressions與完整 suite 無新 regression。
+- `DoD-02`：runner 在 revision mismatch/dirty/data/model gate 失敗時，Browser UI 未 ready、API upload call count 0、owned child安全終止。
+- `DoD-03`：runner 對 `completed + summary_failed=true`、fallback header/OOXML、wrong upload hash、ambiguous/changed model、invalid metrics 一律 FAIL。
+- `DoD-04`：macOS launcher 注入可歸因 revision，顯示 actual port/DATA_DIR，只有 health revision match 才宣告 ready；不 broad-kill。
+- `DoD-05`：fresh Stage 05 Browser 真正上傳 exact audio；source/server SHA一致，只有一個 task，task completed且`summary_failed=false`，UI 無 failure banner，正式兩個下載按鈕均點擊。
+- `DoD-06`：formal DOCX 的 header/title/OOXML/general sections、9 semantic anchors、決議/待辦、unsupported-fact audit與全部頁面 visual QA 全數通過。
+- `DoD-07`：run 前後唯一 model/instance一致；metrics與 bounded-call/merge contract無違規；完整 raw artifacts留在 gitignored runtime，tracked attempt只有 redacted evidence/hash。
+- `DoD-08`：通過後 local 9527 確認 ownership並自動啟動 accepted SHA；health revision一致、Browser smoke通過；資料未刪除。
+- `DoD-09`：Stage 05 寫入 `result.md`；若任何 CORE failure，沒有 PASS/rollout/result，並依 failure routing 建立新 attempt、environment處理或 Revision 4 replan。
+
+## FAILURE_ROUTING
+
+- **Verifier/test harness defect：** 修 verifier/tests；不改 product；建立下一個 append-only Stage 05 attempt。
+- **Environment blocker：** 修環境或取得缺失 Browser/Documents capability；不得宣稱 PASS。
+- **Current HEAD product failure：** 保存 exact task/log/metrics/model/revision/audio hash 與 first bad boundary，停止 Stage 05，建立 same TASK_ID Revision 4 debug replan；不得由 Stage 04/05 即席改 summarization/task-state/fallback。
+- **Semantic contract change required：** 任何成功/requiredness/gating/error/fallback/model selection/priority 改變均回 Stage 01；使用者本次免 Review 只適用 Revision 3，不自動套用未來 revision。
+- **Unknown 9527 ownership：** isolated E2E PASS 可保留，但 rollout 標 blocked 並請使用者處理；不得 kill。
+
+## HANDOFF_HINTS
+
+- Fresh Implementer 先驗證 `PLAN_REVISION=3` 與 plan SHA，再讀 `GOAL_CONTRACT`、`ROOT_CAUSE`、`DO_NOT_TOUCH`、`CRITICAL_PATH`、`CHANGE_MAP CM-01~03`、`IMPLEMENTATION_WAVES WAVE-01~03`、`REGRESSION_AND_ACCEPTANCE`、`FAILURE_ROUTING`。
+- Stage 04 第一刀是 verifier/launcher fail-first tests，不是 summarization service。
+- 建議把 runner 的 acceptance predicates抽成少量 pure helpers再由 API/browser shared path呼叫，讓 tests 不需要啟動 ASR/LM Studio；不要建立新 framework。
+- Browser upload detection 使用 isolated backend 已存在的「檔案上傳成功 … stored filename … 任務ID」log line，bounded poll且要求唯一；不新增 endpoint。
+- Stage 04 不執行真實 86.95 分鐘音檔、不寫 `result.md`；Stage 05 才執行 exact audio 與 rollout。
 
 ## REVIEW_AND_HANDOFF_GATES
 
-- Stage 02 必須以 fresh context 對 Revision 2 執行獨立 top-down/bottom-up review。
-- Reviewer 優先挑戰：三次 retry 是否必要且有界、merge progress 是否可證明、禁止截斷是否會正確 fail loudly、provenance 是否保持 supporting/non-gating。
-- Reviewer 必須 snapshot 本 plan 並記錄 Revision 2 hash；Revision 1 的 `review/attempt-01` approval 已失效。
-- Revision 2 核准後才可重新編譯 `handoff.md`；再生成前依 harness 規則 archive Revision 1 handoff。
-- Stage 04 若發現需改變 selection/readiness/task state/fallback、引入模型特例、或無法用本 plan 的 progress/retry contract 修復，必須寫 escalation 並返回 Stage 01，不得即席改語意。
-- Stage 05 independent acceptance 通過前不得寫入完成 `result.md` 或宣稱使用者 primary outcome 已修復。
+- 使用者已批准 Revision 3 並明確要求本次不做 Review；`REVIEW_REQUIRED: NO`、`REVIEW_REPORT: NONE`。
+- Stage 03 必須先 archive Revision 2 handoff，再以 Revision 3 SHA 編譯新 handoff；不得引用 Revision 2 review 作為 Revision 3 approval。
+- Handoff 後 `NEXT_STAGE: 04_IMPLEMENT`，Fresh Implementer required。
+- Stage 04 若 handoff/plan SHA mismatch、工作樹有未知 dirty changes、或需要修改 `DO_NOT_TOUCH`，立即停止。
 
 ## ARTIFACT_GATE
 
 - `TASK_ID: T20260827-1127-01-lmstudio-e2e-empty-summary`
 - `PLAN_PATH: .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/plan.md`
-- `PLAN_REVISION: 2`
-- `PLAN_STATUS: READY_FOR_REVIEW`
+- `PLAN_REVISION: 3`
+- `PLAN_STATUS: READY_FOR_IMPLEMENTATION`
 - `DEBUG_STATUS: READY_FOR_IMPLEMENTATION`
 - `FIX_TYPE: MIXED`
-- `REVIEW_REQUIRED: YES`
+- `REVIEW_REQUIRED: NO`
 - `INDEPENDENT_ACCEPTANCE_REQUIRED: YES`
 - `E2E_REQUIRED: YES`
-- `NEXT_STAGE: 02_PLAN_REVIEW`
+- `NEXT_STAGE: 03_HANDOFF`
