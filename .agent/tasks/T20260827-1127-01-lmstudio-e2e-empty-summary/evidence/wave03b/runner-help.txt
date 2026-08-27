@@ -1,0 +1,35 @@
+usage: run_owned_e2e.py [-h] [--audio AUDIO] [--artifacts-dir ARTIFACTS_DIR]
+                        [--data-dir DATA_DIR] [--host HOST] [--port PORT]
+                        [--expected-revision EXPECTED_REVISION]
+                        [--processing-mode {local,cloud}]
+                        [--health-timeout HEALTH_TIMEOUT]
+                        [--task-timeout TASK_TIMEOUT]
+                        [--poll-interval POLL_INTERVAL] [--smoke] [--dry-run]
+                        [--no-inject-revision]
+
+Owned-process true E2E runner：free port + 隔離 DATA_DIR + build revision
+gate，啟動並擁有 backend child process（完整 true E2E 請在 Stage 05 獨立驗收執行）
+
+options:
+  -h, --help            show this help message and exit
+  --audio AUDIO         上傳音檔路徑（完整 true E2E 必填；--smoke 時忽略）
+  --artifacts-dir ARTIFACTS_DIR
+                        append-only attempt
+                        目錄（預設：evidence/stage05/attempt-<台北時間>；已存在即拒絕）
+  --data-dir DATA_DIR   隔離 DATA_DIR（預設：<artifacts>/backend_data）
+  --host HOST           backend 監聽 host（預設 127.0.0.1）
+  --port PORT           backend 端口（預設自動選 free port）
+  --expected-revision EXPECTED_REVISION
+                        expected Git revision（預設 git rev-parse HEAD）
+  --processing-mode {local,cloud}
+                        上傳處理模式（預設 local）
+  --health-timeout HEALTH_TIMEOUT
+                        health gate 逾時秒數（預設 120）
+  --task-timeout TASK_TIMEOUT
+                        任務終態 poll 逾時秒數（預設 7200）
+  --poll-interval POLL_INTERVAL
+                        health/task poll 間隔秒數（預設 5）
+  --smoke               煙霧模式：啟動 → health gate → 模型快照 → 乾淨終止（不上傳）
+  --dry-run             只印執行計畫，不啟動 backend、不建立目錄
+  --no-inject-revision  gate 自我驗證用：不注入 MEETINGSCRIBE_BUILD_REVISION；backend
+                        應回報 null，gate 必須判 mismatch → verdict FAIL（exit 1）

@@ -29,6 +29,20 @@ from backend.services import (
 
 router = APIRouter(prefix="/api", tags=["API"])
 
+_BUILD_REVISION_ENV = "MEETINGSCRIBE_BUILD_REVISION"
+
+
+def _resolve_build_revision() -> Optional[str]:
+    """RC-5 runtime provenance：build revision 來源優先序 settings → 環境變數。
+
+    空值（未設定或空白）視為 unknown，以 null 呈現；一般 health 不因
+    unknown revision 失敗，revision mismatch 只由 E2E harness 判定。
+    """
+    value = getattr(settings, "MEETINGSCRIBE_BUILD_REVISION", None) or os.environ.get(_BUILD_REVISION_ENV)
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
 
 @router.get("/health", response_model=HealthStatus)
 async def health_check(quick: bool = False):
@@ -77,6 +91,7 @@ async def health_check(quick: bool = False):
     return HealthStatus(
         status="healthy",
         version=__version__,
+        build_revision=_resolve_build_revision(),
         gpu_available=device_info.get("gpu_available", False),
         gpu_name=device_info.get("gpu_name"),
         ollama_available=ollama_available,

@@ -1,0 +1,19 @@
+{
+  "plan": {
+    "mode": "smoke",
+    "dry_run": true,
+    "inject_revision": true,
+    "host": "127.0.0.1",
+    "port": 53202,
+    "expected_build_revision": "2e446ed9a6c54823c5d3a77da1b59d726adfe677",
+    "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/stage05/attempt-20260827-151413",
+    "data_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/stage05/attempt-20260827-151413/backend_data",
+    "audio": null,
+    "processing_mode": "local",
+    "health_timeout_seconds": 120.0,
+    "task_timeout_seconds": 7200.0,
+    "poll_interval_seconds": 5.0
+  },
+  "dry_run": true,
+  "note": "未啟動 backend、未建立任何目錄"
+}

@@ -9,7 +9,7 @@ import os
 from typing import Optional, List
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, SecretStr
-from pydantic import Field
+from pydantic import Field, AliasChoices
 
 from backend.core.prompts import DEFAULT_MEETING_RECORD_PROMPT
 from backend.core.asr_model_resolver import DEFAULT_BREEZE_ASR_26_REVISION
@@ -356,6 +356,20 @@ class Settings(BaseSettings):
     # ========================================
     LOG_LEVEL: str = Field(default="INFO", description="日誌等級")
     DATA_DIR: str = Field(default="/app/data", description="資料目錄")
+    # RC-5 runtime provenance：E2E/local launcher 注入 git rev-parse HEAD。
+    # 未設定時 /api/health 的 build_revision 為 null；一般 startup/health
+    # 不因 unknown revision 失敗，revision gate 只由 E2E harness 判定。
+    MEETINGSCRIBE_BUILD_REVISION: Optional[str] = Field(
+        default=None,
+        description="執行期 build revision（/api/health build_revision 來源）；local/E2E launcher 注入 git rev-parse HEAD，未設定時為 null"
+    )
+    # RC-5 actual port logging：startup log 與 uvicorn 實際 --port 必須同一來源；
+    # scripts/macos 以 MEETINGSCRIBE_PORT 傳入 uvicorn，故同時接受兩個名稱。
+    SERVICE_PORT: int = Field(
+        default=9527,
+        validation_alias=AliasChoices("SERVICE_PORT", "MEETINGSCRIBE_PORT"),
+        description="API 服務監聽端口；啟動 log 與 uvicorn --port 應使用同一來源（scripts 以 MEETINGSCRIBE_PORT 傳入）"
+    )
     ALLOWED_ORIGINS: str = Field(
         default="*",
         description="CORS 允許來源（逗號分隔）；* 時自動停用 credentials（P2-7）"

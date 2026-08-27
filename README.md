@@ -254,6 +254,7 @@ curl http://localhost:9527/api/health
 {
   "status": "healthy",
   "version": "4.7.1",
+  "build_revision": "2e446ed9a6c54823c5d3a77da1b59d726adfe677",
   "gpu_available": true,
   "gpu_name": "NVIDIA GeForce RTX 4090",
   "ollama_available": true,
@@ -262,6 +263,13 @@ curl http://localhost:9527/api/health
   "queue_status": { "queue_length": 0, "processing": 0 }
 }
 ```
+
+`build_revision` 為 nullable 的 runtime provenance 欄位（additive 向後相容）：
+來源為環境變數 `MEETINGSCRIBE_BUILD_REVISION`（local/E2E launcher 注入
+`git rev-parse HEAD`）；未設定時為 `null`，**不影響一般啟動與健康檢查**。
+它用於區分 stale/current 服務——同一端口上兩個不同 commit 的 process
+可藉此辨識；revision mismatch 只由 E2E harness（見下方 owned-process
+E2E runner）視為驗收失敗，一般啟動不因 unknown revision 失敗。
 
 #### 上傳檔案
 ```bash
@@ -289,6 +297,32 @@ ws.onmessage = (event) => {
 };
 ```
 
+### Owned-process E2E runner（驗證 / 驗收用）
+
+`scripts/e2e/run_owned_e2e.py` 以「擁有 backend child process」的方式執行
+隔離 E2E：自動選 free port、建立隔離 `DATA_DIR`、注入
+`MEETINGSCRIBE_BUILD_REVISION=$(git rev-parse HEAD)`，並以
+`/api/health` 的 `build_revision` 作為 freshness gate（只終止自己啟動的
+process；artifacts 保存到 append-only attempt 目錄，已存在即拒絕覆寫）。
+
+```bash
+# 最小煙霧驗證：啟動 → health gate → LM Studio model snapshot → 乾淨終止（不上傳）
+uv run python scripts/e2e/run_owned_e2e.py --smoke
+
+# 完整 true E2E（昂貴；僅在獨立驗收階段執行）
+uv run python scripts/e2e/run_owned_e2e.py --audio /path/to/meeting.m4a \
+    --artifacts-dir .agent/tasks/<task>/evidence/stage05/attempt-01
+
+# 只印執行計畫（選定 port、隔離目錄、expected revision），不啟動
+uv run python scripts/e2e/run_owned_e2e.py --smoke --dry-run
+```
+
+artifacts 內容：`backend.log`（child 完整 log，含實際監聽端口與 build
+revision）、`health_snapshot.json`、`model_snapshot.json`（LM Studio
+loaded model/instance/context 唯讀快照）、`run_summary.json`（verdict
+PASS/FAIL 與各項檢查）；完整 E2E 另含 `transcript.txt`、
+`meeting_record.docx`、`upload_response.json`、`task_final.json`。
+
 ## ⚙️ 配置說明
 
 > ⚠️ 以下環境變數僅適用於**後端網頁服務**（`backend/`）。根目錄的
@@ -307,6 +341,8 @@ ws.onmessage = (event) => {
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 端點（Docker 內為 `host.docker.internal`） |
 | `LOCAL_LLM_MODEL` | `gemma4:31b` | 本地 LLM 模型 |
 | `LMSTUDIO_BASE_URL` | `http://localhost:1234/v1` | LM Studio 端點（OpenAI 相容 API） |
+| `MEETINGSCRIBE_BUILD_REVISION` | - | 執行期 build revision（`/api/health` 的 `build_revision` 來源）；local/E2E launcher 注入 `git rev-parse HEAD`，未設定時 health 回傳 `null`，不影響一般啟動 |
+| `MEETINGSCRIBE_PORT`（或 `SERVICE_PORT`） | `9527` | API 服務監聽端口；啟動 log 與 uvicorn `--port` 應使用同一來源（`scripts/macos/*.sh` 以此變數傳入） |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | 雲端 LLM 模型 |
 | `WHISPER_MODEL` | `MediaTek-Research/Breeze-ASR-26` | Whisper / ASR 模型名稱 |
 | `ENABLE_TRANSCRIPT_CORRECTION` | `true` | 是否啟用語意校正（詞彙表＋LLM＋同音閘門） |

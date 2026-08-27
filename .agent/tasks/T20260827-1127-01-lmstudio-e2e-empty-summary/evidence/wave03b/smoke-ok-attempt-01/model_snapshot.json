@@ -1,0 +1,71 @@
+{
+  "captured_at": "2026-08-27T15:09:24.235828+08:00",
+  "base_url": "http://127.0.0.1:1234",
+  "reachable": true,
+  "loaded_model_ids": [],
+  "unique_loaded_model_count": 0,
+  "raw_response": {
+    "models": [
+      {
+        "type": "llm",
+        "publisher": "lmstudio-community",
+        "key": "qwen3.6-35b-a3b-mlx",
+        "display_name": "Qwen3.6 35B A3B",
+        "architecture": "qwen3_5_moe",
+        "quantization": {
+          "name": "4bit",
+          "bits_per_weight": 4
+        },
+        "size_bytes": 20429174878,
+        "params_string": "35B",
+        "loaded_instances": [
+          {
+            "id": "qwen3.6-35b-a3b-mlx",
+            "config": {
+              "context_length": 183296,
+              "parallel": 4,
+              "reasoning_budget_message": ""
+            }
+          }
+        ],
+        "max_context_length": 262144,
+        "format": "mlx",
+        "capabilities": {
+          "vision": true,
+          "trained_for_tool_use": true
+        },
+        "description": null
+      },
+      {
+        "type": "embedding",
+        "publisher": "Ralriki",
+        "key": "text-embedding-multilingual-e5-large-instruct",
+        "display_name": "Multilingual E5 Large Instruct",
+        "quantization": {
+          "name": "Q8_0",
+          "bits_per_weight": 8
+        },
+        "size_bytes": 603097568,
+        "params_string": "335M",
+        "loaded_instances": [],
+        "max_context_length": 512,
+        "format": "gguf"
+      },
+      {
+        "type": "embedding",
+        "publisher": "nomic-ai",
+        "key": "text-embedding-nomic-embed-text-v1.5",
+        "display_name": "Nomic Embed Text v1.5",
+        "quantization": {
+          "name": "Q4_K_M",
+          "bits_per_weight": 4
+        },
+        "size_bytes": 84106624,
+        "params_string": null,
+        "loaded_instances": [],
+        "max_context_length": 2048,
+        "format": "gguf"
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+# WAVE-03b baseline（修復前）— tests/test_wave01_overlap_provenance.py
+
+執行指令：DATA_DIR="$PWD/data" uv run pytest tests/test_wave01_overlap_provenance.py -p no:cacheprovider -q
+執行時間：2026-08-27 15:03（HEAD 2e446ed，production code 修改前）
+
+```
+=========================== short test summary info ============================
+FAILED tests/test_wave01_overlap_provenance.py::TestChunkOverlapBound::test_chunk_boundary_carry_tokens_within_220_token_budget
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_defaults_to_null_without_env
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_returns_configured_value
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_response_model_declares_nullable_build_revision
+4 failed, 2 passed, 2 warnings in 0.45s
+```
+
+分類：
+- TestHealthBuildRevision 三個測試以預期原因失敗（RC-5：health 無 build_revision）→ WAVE-03b 修復範圍。
+- TestChunkOverlapBound::test_chunk_boundary_carry_tokens_within_220_token_budget 失敗 → WAVE-03a（平行 agent，summarization.py chunking）範圍，非本 wave。
+
+# 修復前 baseline — tests/test_api_routes.py
+
+```
+52 passed, 2 warnings in 0.60s
+```

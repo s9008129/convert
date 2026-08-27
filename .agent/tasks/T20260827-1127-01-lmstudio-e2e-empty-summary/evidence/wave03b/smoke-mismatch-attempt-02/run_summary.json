@@ -1,0 +1,23 @@
+{
+  "mode": "smoke",
+  "started_at": "2026-08-27T15:11:05.769255+08:00",
+  "finished_at": "2026-08-27T15:11:11.113767+08:00",
+  "port": 53138,
+  "child_pid": 31570,
+  "expected_build_revision": "2e446ed9a6c54823c5d3a77da1b59d726adfe677",
+  "actual_build_revision": null,
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-mismatch-attempt-02",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-mismatch-attempt-02/backend_data",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": false,
+    "model_snapshot_captured": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [
+    "build revision mismatch：expected='2e446ed9a6c54823c5d3a77da1b59d726adfe677' actual=None",
+    "缺少必要檢查：['build_revision_match']"
+  ],
+  "verdict": "FAIL"
+}

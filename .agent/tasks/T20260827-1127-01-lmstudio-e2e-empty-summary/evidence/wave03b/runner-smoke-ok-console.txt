@@ -1,0 +1,5 @@
+[INFO] backend child PID=31956 port=53167 DATA_DIR=/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-ok-attempt-02/backend_data
+[INFO] expected build_revision=2e446ed9a6c54823c5d3a77da1b59d726adfe677
+[INFO] /api/health 200，build_revision='2e446ed9a6c54823c5d3a77da1b59d726adfe677'
+[INFO] backend child（PID 31956）已終止（exit=0）
+[OK] verdict=PASS，artifacts：/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-ok-attempt-02

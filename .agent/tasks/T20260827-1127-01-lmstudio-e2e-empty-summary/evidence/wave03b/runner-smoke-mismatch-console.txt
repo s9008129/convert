@@ -1,0 +1,7 @@
+[INFO] backend child PID=31570 port=53138 DATA_DIR=/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-mismatch-attempt-02/backend_data
+[INFO] expected build_revision=2e446ed9a6c54823c5d3a77da1b59d726adfe677
+[INFO] /api/health 200，build_revision=None
+[INFO] backend child（PID 31570）已終止（exit=0）
+[FAIL] verdict=FAIL，artifacts：/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/wave03b/smoke-mismatch-attempt-02
+  - build revision mismatch：expected='2e446ed9a6c54823c5d3a77da1b59d726adfe677' actual=None
+  - 缺少必要檢查：['build_revision_match']

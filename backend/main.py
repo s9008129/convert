@@ -53,7 +53,13 @@ async def lifespan(app: FastAPI):
     if cleanup_result["total_freed_mb"] > 0:
         log.info(f"啟動清理完成: 釋放 {cleanup_result['total_freed_mb']} MB 空間")
     
-    log.info(f"服務已就緒，監聽端口: 9527")
+    # RC-5：startup log 讀實際配置端口（uvicorn 以同一 SERVICE_PORT /
+    # MEETINGSCRIBE_PORT 來源帶入 --port，避免 log 與實際監聽不一致）
+    log.info(f"服務已就緒，監聽端口: {settings.SERVICE_PORT}")
+    # RC-5 runtime provenance：log 記錄 build revision，便於比對 stale/current process
+    log.info(
+        f"Build revision: {settings.MEETINGSCRIBE_BUILD_REVISION or 'unknown（未設定 MEETINGSCRIBE_BUILD_REVISION）'}"
+    )
     log.info(f"預設處理模式: {settings.DEFAULT_MODE}")
     log.info(f"最大檔案大小: {settings.MAX_FILE_SIZE_MB}MB")
     log.info(f"批次上傳: {'啟用' if settings.ENABLE_BATCH_UPLOAD else '停用'}")
@@ -171,6 +177,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",
-        port=9527,
+        port=settings.SERVICE_PORT,
         reload=False
     )

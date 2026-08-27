@@ -111,6 +111,10 @@ class HealthStatus(BaseModel):
     gemini_available: bool
     queue_status: QueueStatus
     device_info: dict = Field(default_factory=dict)
+    # RC-5 runtime provenance：nullable build revision（additive 向後相容欄位）。
+    # 未設定時為 null；一般 startup/health 不因 unknown revision 失敗，
+    # revision mismatch 只由 E2E harness 視為 acceptance failure。
+    build_revision: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):
