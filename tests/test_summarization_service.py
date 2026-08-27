@@ -304,7 +304,9 @@ async def test_local_pipeline_chunks_merges_and_refines(monkeypatch):
         context_window_tokens=8192,
         estimated_transcript_tokens=6000,
         chunk_input_budget_tokens=1200,
-        notes_merge_budget_tokens=1500,
+        merge_input_budget_tokens=1500,
+        merge_visible_target_tokens=900,
+        merge_provider_output_tokens=3072,
         needs_chunking=True,
         estimated_chunk_count=2,
     )
@@ -791,7 +793,13 @@ def test_build_local_context_plan_context_override_shrinks_budgets():
     )
 
     assert degraded_plan.context_window_tokens == 8192
-    assert degraded_plan.notes_merge_budget_tokens < default_plan.notes_merge_budget_tokens
+    # RC-1：merge 預算語意分離後，「降級 ctx 必須同步縮小 merge 預算」的契約
+    # 落在 merge_input_budget_tokens（來源分組上限）；visible target 固定 900、
+    # provider cap 來自 reserved output，兩者不隨 context 縮放。
+    assert (
+        degraded_plan.merge_input_budget_tokens
+        < default_plan.merge_input_budget_tokens
+    )
 
 
 def _ps_response(size: int, size_vram: int) -> Mock:

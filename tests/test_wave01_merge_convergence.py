@@ -4,7 +4,7 @@
 涵蓋 plan.md `REGRESSION_AND_ACCEPTANCE` 第 5 組（Merge progress/data integrity）：
 1. 分組預算正確性：context 可行時，merge 分組每組必須容納至少兩份目標大小
    notes（正確行為以 merge_input_budget 分組；現行程式以 900-token visible
-   target（plan.notes_merge_budget_tokens）分組來源 notes → 每組只放得下一份、
+   target（plan.merge_visible_target_tokens）分組來源 notes → 每組只放得下一份、
    呼叫放大）。
 2. Single oversized note 可壓縮：單一 note 超過 visible target 時必須允許單獨
    compaction，不得直接硬截斷。
@@ -176,14 +176,14 @@ def _merge_round_numbers(calls) -> list[int]:
 async def test_merge_grouping_budget_fits_two_target_size_notes_per_group(monkeypatch):
     """Context 可行時，merge 分組每組必須容納至少兩份目標大小 notes。
 
-    現行程式以 900-token visible target（plan.notes_merge_budget_tokens）分組
+    現行程式以 900-token visible target（plan.merge_visible_target_tokens）分組
     來源 notes，每組只放得下一份 → provider 呼叫放大；正確行為是以
     merge_input_budget（context 頭空間扣除 merge prompt overhead 與 provider
     completion reserve）分組。斷言分組預算與分組結果。
     """
     service = SummarizationService()
     plan = _feasible_plan(service)
-    visible_target = plan.notes_merge_budget_tokens
+    visible_target = plan.merge_visible_target_tokens
 
     # 可行性前提（plan CHANGE_MAP 1 preflight）：context 頭空間必須同時容納
     # merge prompt、至少兩份目標大小 notes 與 provider completion reserve。
@@ -227,7 +227,7 @@ async def test_merge_grouping_budget_fits_two_target_size_notes_per_group(monkey
     result = await service._merge_notes_until_fit(
         "lmstudio",
         notes,
-        plan.notes_merge_budget_tokens,
+        plan.merge_visible_target_tokens,
         context_window_tokens=plan.context_window_tokens,
         lmstudio_selection=_one_loaded_selection(service),
     )
@@ -266,7 +266,7 @@ async def test_single_oversized_note_compacts_alone_without_error(monkeypatch):
     """
     service = SummarizationService()
     plan = _feasible_plan(service)
-    visible_target = plan.notes_merge_budget_tokens
+    visible_target = plan.merge_visible_target_tokens
     oversized = _note_with_tokens(service, "X", visible_target + 600, tail=SENTINEL_LINE + "\n")
     assert service._estimate_tokens(oversized) > visible_target
 
@@ -308,8 +308,8 @@ async def test_merge_non_convergence_raises_stable_error_within_max_rounds(monke
     service = SummarizationService()
     plan = _feasible_plan(service)
     notes = [
-        _note_with_tokens(service, "A", plan.notes_merge_budget_tokens),
-        _note_with_tokens(service, "B", plan.notes_merge_budget_tokens),
+        _note_with_tokens(service, "A", plan.merge_visible_target_tokens),
+        _note_with_tokens(service, "B", plan.merge_visible_target_tokens),
     ]
     calls = _install_merge_generator(monkeypatch, service, _non_converging_responder())
 
@@ -317,7 +317,7 @@ async def test_merge_non_convergence_raises_stable_error_within_max_rounds(monke
         await service._merge_notes_until_fit(
             "lmstudio",
             notes,
-            plan.notes_merge_budget_tokens,
+            plan.merge_visible_target_tokens,
             context_window_tokens=plan.context_window_tokens,
         )
 
@@ -349,8 +349,8 @@ async def test_core_merge_path_never_hard_truncates(monkeypatch):
     service = SummarizationService()
     plan = _feasible_plan(service)
     notes = [
-        _note_with_tokens(service, "A", plan.notes_merge_budget_tokens),
-        _note_with_tokens(service, "B", plan.notes_merge_budget_tokens),
+        _note_with_tokens(service, "A", plan.merge_visible_target_tokens),
+        _note_with_tokens(service, "B", plan.merge_visible_target_tokens),
     ]
     _install_merge_generator(monkeypatch, service, _converging_responder(service))
 
@@ -368,7 +368,7 @@ async def test_core_merge_path_never_hard_truncates(monkeypatch):
         result = await service._merge_notes_until_fit(
             "lmstudio",
             notes,
-            plan.notes_merge_budget_tokens,
+            plan.merge_visible_target_tokens,
             context_window_tokens=plan.context_window_tokens,
         )
     except StableServiceError as exc:
@@ -400,9 +400,9 @@ async def test_tail_sentinel_never_lost_to_truncation(monkeypatch):
     """
     service = SummarizationService()
     plan = _feasible_plan(service)
-    note_a = _note_with_tokens(service, "A", plan.notes_merge_budget_tokens)
+    note_a = _note_with_tokens(service, "A", plan.merge_visible_target_tokens)
     note_b = _note_with_tokens(
-        service, "B", plan.notes_merge_budget_tokens, tail=SENTINEL_LINE + "\n"
+        service, "B", plan.merge_visible_target_tokens, tail=SENTINEL_LINE + "\n"
     )
     assert SENTINEL_LINE in note_b, "fixture 最後一份 note 必須含 tail sentinel"
 
@@ -414,7 +414,7 @@ async def test_tail_sentinel_never_lost_to_truncation(monkeypatch):
         result = await service._merge_notes_until_fit(
             "lmstudio",
             [note_a, note_b],
-            plan.notes_merge_budget_tokens,
+            plan.merge_visible_target_tokens,
             context_window_tokens=plan.context_window_tokens,
         )
     except StableServiceError as exc:
@@ -439,7 +439,7 @@ async def test_tail_sentinel_never_lost_to_truncation(monkeypatch):
     converged = await service._merge_notes_until_fit(
         "lmstudio",
         [note_a, note_b],
-        plan.notes_merge_budget_tokens,
+        plan.merge_visible_target_tokens,
         context_window_tokens=plan.context_window_tokens,
     )
     assert SENTINEL_LINE in converged, "成功收斂路徑的輸出必須保留 tail sentinel"
