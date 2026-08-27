@@ -1,98 +1,122 @@
-# Handoff — 修復 macOS LM Studio 空摘要、錯誤切塊與逐字稿重複
+# Handoff — 修復 LM Studio 空摘要：merge 預算語意分離與有界 recovery
+
+## EXECUTOR_PROMPT
+
+你是接手本任務的實作工程師。你的唯一目標是：讓使用者上傳原始會議音檔後，系統以 fresh-cache MLX ASR 轉錄、以啟動時唯一選定的 LM Studio LLM 產出**非空、結構完整、保留尾端決議／待辦、可下載的「會議紀錄」DOCX**。
+
+嚴格依序執行下方 `IMPLEMENTATION_WAVES`，**不得跳步、不得先改 production code 再補測試**。每個 WAVE 完成後先跑對應 focused tests 確認結果，再進入下一 WAVE。
+
+你必須遵守的鐵律（違反即失敗）：
+1. **先寫會以正確原因失敗的測試**（WAVE-01），再改 production code。
+2. **不硬編碼／載入／卸載／切換 LM Studio 模型**；保留零／一／多模型與 optional override 選模契約。
+3. **不新增第三方依賴、不變更 database/schema/backfill、不變更 task state、不建立跨 repository 耦合**。
+4. **health 只允許新增向後相容 nullable `build_revision` 欄位**，其餘 HTTP contract 不變。
+5. **correction、overlap、paragraphization、diagnostics、build metadata 缺失不得升級成全域 veto**。
+6. **merge 不得以 hard truncation 偽造成功**；無法收斂時拋 `LOCAL_LLM_MERGE_NOT_CONVERGED` 走既有 fallback。
+7. 遇到 `STOP_AND_ESCALATE_IF` 任一情況，**停止並回報**，不得自行改語意。
+
+開始前先讀 `MUST_READ_PLAN` 列出的 plan 章節，再執行 `FIRST_ACTION`。
+
+---
 
 ## TASK
 - TASK_ID: T20260827-1127-01-lmstudio-e2e-empty-summary
 - STATUS: READY_FOR_IMPLEMENTATION
 - PLAN_PATH: .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/plan.md
-- PLAN_REVISION: 1
-- PLAN_SHA256: 7f1b5c3ff36d76f60f82242d0ca5b3e362097747dc56c9778c18e0117a6bd78a
+- PLAN_REVISION: 2
+- PLAN_SHA256: 7ecccb5633b6c35f618e8b2901d16ca65f6ea44c160aa181f318e8d8ba654731
 - REVIEW_REQUIRED: YES
-- REVIEW_REPORT: .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/review/attempt-01/review_report.md
-- REVIEWED_PLAN_REVISION: 1
-- REVIEWED_PLAN_SHA256: 7f1b5c3ff36d76f60f82242d0ca5b3e362097747dc56c9778c18e0117a6bd78a
+- REVIEW_REPORT: .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/review/attempt-02/review_report.md
+- REVIEWED_PLAN_REVISION: 2
+- REVIEWED_PLAN_SHA256: 7ecccb5633b6c35f618e8b2901d16ca65f6ea44c160aa181f318e8d8ba654731
 - INDEPENDENT_ACCEPTANCE_REQUIRED: YES
 - E2E_REQUIRED: YES
-- ACCEPTANCE_MODE: FOCUSED_REGRESSION + CONTRACT_INTEGRATION + FRESH_CACHE_TRUE_E2E
+- ACCEPTANCE_MODE: FAIL_FIRST_REGRESSION + CONTRACT_INTEGRATION + OWNED_PROCESS_FRESH_CACHE_TRUE_E2E + DOCX_FULL_PAGE_QA
 - Fresh Implementer required: YES
 - Planner/Reviewer transcript required: NO
 
 ## GOAL_ANCHOR
 
-- **PRIMARY_OUTCOME**：原始會議音檔 → MLX ASR → 唯一已載入的任意 LM Studio LLM → 產生**非空、結構完整、可下載的「會議紀錄」DOCX**。
-- **SUCCESS_EVIDENCE**：在無逐字稿快取的隔離環境完成真實上傳；DOCX 標題為「會議紀錄」、無摘要失敗警告、必要章節有實質內容、清理後逐字稿可獨立下載、全程沿用啟動時唯一選出的 loaded instance。
-- **MUST_NOT_BREAK**：不硬編碼/載入/卸載/切換 LM Studio 模型；保留零/一/多模型與 optional exact override 選模契約；保留 NVIDIA/Ollama、Gemini 與「摘要失敗仍保存逐字稿」降級路徑；**不新增依賴、不變更 task state、不變更 HTTP response schema**；不建立跨 repository 耦合。
+- **PRIMARY_OUTCOME**：原始會議音檔 → fresh-cache MLX ASR → 唯一已載入 LM Studio LLM → 非空、結構完整、保留尾端決議／待辦、可下載的「會議紀錄」DOCX。
+- **SUCCESS_EVIDENCE**：隔離 fresh-cache 環境完成真實上傳；DOCX 標題「會議紀錄」、無失敗警告、必要章節有實質內容、尾端決議／待辦存在、逐字稿可獨立下載、全程沿用啟動時唯一選出的 loaded instance。
+- **MUST_NOT_BREAK**：不硬編碼/載入/卸載/切換模型；保留零/一/多模型與 optional override 選模契約；保留 Ollama、Gemini、task state 與「摘要失敗仍保存逐字稿」降級路徑；不新增依賴、不變更 database/schema/backfill、不建立跨 repository 耦合；health 僅允許新增向後相容 nullable `build_revision`。
 
 ## CRITICAL_PATH
 
-1. 先寫**會以正確原因失敗**的 production-shaped regression tests（33k-token 單行、reasoning-only response、YAML precedence、correction amplification、repetition loop）。
-2. 恢復 token-budget chunk invariant（每個 fragment/chunk 都 ≤ budget，provider 呼叫前拒絕不合法 chunk）。
-3. 修正 LM Studio parameter precedence、context headroom、reasoning-aware bounded retry。
-4. 熔斷 BEST_EFFORT correction 的 provider-level failure，讓摘要核心路徑優先執行。
-5. 跑 focused/contract/full tests，再以隔離 fresh-cache 完成真實 Mac E2E 與 DOCX 全頁 QA。
+1. 先建立能重現兩個 current-code failure shapes 與 silent truncation 的 fail-first tests。
+2. 分離 merge input、visible target、provider completion 三種 token 語意，恢復 reasoning-aware merge generation。
+3. 擴充有界 recovery state machine，涵蓋 growth retry 後 `stop + reasoning + empty content`。
+4. 移除 CORE hard truncation，改用有進度證明的 hierarchical compaction 與 stable non-convergence error。
+5. 對齊 220-token overlap 實作與規劃假設，新增 bounded-call diagnostics。
+6. 新增 revision/port provenance，執行 owned-process fresh-cache true E2E 與 DOCX 全頁 QA。
+7. Stage 05 通過後才把本機 9527 切換到已核准 HEAD。
 
 ## SEMANTIC_INVARIANTS
 
 以下語意邊界**不可變更**，否則視為語意契約變更需重新 Review：
 
-1. **health ready ≠ generation success**：`health ready` 只代表 LM Studio 可達且有唯一可選 loaded LLM，不代表每次 generation 已成功。
-2. **generation success 必須有非空 final content**；reasoning 不得被當成正式摘要，也不得輸出到文件或 log。
-3. **chunk input budget 是硬性正確性 invariant**；overlap 是 best-effort enrichment，不能突破預算。
-4. **LLM correction 是 BEST_EFFORT**，不得形成全域 veto，也不得在相同 provider-level 錯誤後繼續放大呼叫。
-5. **DOCX fallback 是必要 fail-safe，但不是 PRIMARY_OUTCOME 成功訊號**。
-6. **config precedence 是 load-bearing contract**：backend 只讀環境變數／`.env`／Field default；legacy YAML 不得覆蓋執行中各摘要階段的顯式參數。
+1. **generation success 必須有非空 final content**；reasoning 不得當作正式摘要或寫入 DOCX/log。
+2. **provider total completion budget 與 orchestration visible-output target 是不同契約**，不能共用一個 token 欄位。
+3. **merge 必須保留全部來源事實並確定性收斂**；不能以 hard truncation 偽造成功。
+4. **semantic retry、network retry、merge rounds 必須分開計數且各自有界**。
+5. **correction 是 BEST_EFFORT**；CORE extraction/merge/final 才能啟用 reasoning recovery。
+6. **health revision 是 E2E freshness gate**，但 unknown revision 不得使一般產品 startup/global health 失敗。
+7. **fallback transcript 是必要安全機制**，不得被 acceptance 誤判為正式會議紀錄成功。
 
 ## BEST_EFFORT_DO_NOT_GATE
 
 以下元素失敗時**必須局部降級、保留原文並繼續**，不得阻擋核心摘要：
 
-- LLM 同音／專有名詞校正（correction）
-- 段落可讀性（paragraphization）
-- token diagnostics
-- overlap enrichment
+- LLM 同音／專有名詞校正（correction）——首次 `StableServiceError` 後保留該段及剩餘原文並熔斷。
+- overlap enrichment——可降為零。
+- paragraphization。
+- token diagnostics。
+- build metadata 缺失——一般執行允許 unknown。
 
 ## DEFERRED_NOT_THIS_TASK
 
-- 不針對個別 Qwen/模型家族建立專屬 thinking disable adapter。
-- 不為逐字稿增加 speaker diarization、時間戳版面或語意段落重建。
-- 不重新校準 ASR decoder（mlx-whisper 0.4.3 不暴露 repetition penalty/no-repeat n-gram）。
-- 不宣稱 NVIDIA hardware E2E；只執行其可用的 regression tests。
+- 不針對 Qwen 或個別模型家族建立專屬 thinking-disable adapter。
+- 不新增 speaker diarization、時間戳排版、語意段落重建或 ASR decoder tuning。
+- 不為 build revision 建立一般產品 readiness veto。
+- 不承諾所有自然重複都被刪除；cleanup 保持高 threshold 與保守策略。
+- 不宣稱 NVIDIA hardware E2E；只執行可用的 shared regression tests。
 
 ## REPO_ANCHOR
 
 - Project root: /Users/hsiaojohnny/dev/convert
 - Branch: main
-- Anchor HEAD: 9368e0419b7f0968be07a04bf45dc288aaa39c6a（plan 撰寫時）
-- Current HEAD: 59d3ae7（review commit，僅新增 review 產物，未動 product code）
+- Anchor HEAD: 96e6e7416a0791b674b0ef5f17f8ba34355ef5c5（Revision 1 實作 commit）
 - Relevant dirty state: 工作樹 clean
-- Drift since plan/review: 無 product code 變更
+- Drift since plan/review: 無 product code 變更；僅新增 review/attempt-02/ 與 handoff-history/ 產物
 
 ## CURRENT_STATE_DELTA
 
-無。plan 撰寫後僅新增 review/attempt-01/ 產物，product code 未變。
+無。plan 撰寫後僅新增 review/attempt-02/ 產物與 handoff-history/ 歸檔，product code 未變。
 
 ## MUST_READ_PLAN
 
 開始 FIRST_ACTION 前，**必須**先讀 plan.md 以下章節（其餘可略讀）：
 
 - `GOAL_CONTRACT`（PRIMARY_OUTCOME / CORE_ACCEPTANCE_SIGNAL / MUST_NOT_BREAK / NON_GOALS）
-- `ROOT_CAUSE`（五個根因，逐條對應修復）
-- `FIX_TYPE_AND_ENVELOPE`（允許改的元件 + 需 Review 的語意變更 + 全域 veto 理由）
-- `DO_NOT_TOUCH`（禁止改的範圍）
-- `CHANGE_MAP`（1–4 四組變更的完整規格）
+- `CONFIRMED_ROOT_CAUSE`（RC-1~RC-5，逐條對應修復）
+- `SEMANTIC_CONTRACT_AUDIT`
+- `DECISION_CONTRIBUTION_MATRIX`
+- `CRITICAL_PATH`
+- `CHANGE_MAP`（1~5 五組變更的完整規格）
 - `IMPLEMENTATION_WAVES`（WAVE-01~04 順序）
-- `REGRESSION_AND_ACCEPTANCE`（focused/unit、integration/contract、independent true E2E）
-- `DEGRADATION_AND_GATE_TESTS`
+- `REGRESSION_AND_ACCEPTANCE`（fail-first unit/contract、integration/full suite、independent owned-process true E2E）
 - `DEFINITION_OF_DONE`
 
 ## SETTLED_DO_NOT_REOPEN
 
 以下已由 plan + review 定案，**不得重新討論或推翻**：
 
-- 五個根因（H-1~H-6 已 falsified/confirmed，見 plan `FALSIFICATION_RESULTS`）。
+- 五個根因（RC-1~RC-5 已 falsified/confirmed，見 plan `CONFIRMED_ROOT_CAUSE` 與 `FALSIFIED_ALTERNATIVES`）。
 - 選模契約：zero/one/multiple/override 規則不變。
 - 不新增模型 allowlist、不新增模型專屬 prompt 分支、不新增 LM Studio lifecycle 管理。
 - 不把 health check 升級為會主動執行昂貴生成的全域 readiness gate。
-- config precedence 是 bug（H-5），修正方向是「backend 只讀 env/.env/Field default」，不是「保留 YAML 覆蓋」。
+- 不更換目前 loaded model 作為根因修復。
+- 三種 merge budget 語意分離是 CORE 修復方向，不是可選項。
 
 ## REVERIFY_ON_START
 
@@ -101,6 +125,7 @@
 - LM Studio 是否仍只有一個 loaded LLM（預期 `qwen3.6-35b-a3b-mlx`，loaded context length 183,296）。
 - LM Studio 服務可達性（`/api/v1/models`）。
 - 音檔 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a` 是否存在。
+- 目前 `LOCAL_LLM_RESERVED_OUTPUT_TOKENS`（預期 3072）與 `LOCAL_LLM_MAX_MERGE_ROUNDS`（預期 3）的實際值。
 
 ## TRIGGERED_POLICIES
 
@@ -116,47 +141,45 @@
 
 **WAVE-01**：在 `tests/` 下新增 production-shaped regression tests，先觀察它們以正確原因失敗，**不得先改 production code 再補測試敘事**。至少涵蓋：
 
-1. 單行 sparse-punctuation 33k-token shape 的 chunk 測試（現有 splitter 會產出兩個近整份重複、遠超 budget 的 chunks）。
-2. reasoning-only response（`content` 空 + `finish_reason=length` + 非空 reasoning）的 LM Studio 回應解析測試。
-3. YAML precedence 覆蓋 caller temperature/max_tokens 的測試。
-4. correction 對 provider-level 穩定失敗放大呼叫的測試。
-5. 無句界重複迴圈（如「請看影片」「個人專案管理」或單字）未被清理的測試。
+1. task `90fdb193` 的 merge `length/reasoning/empty` fixture。
+2. task `8fd56c54` 的 `initial length/empty -> growth stop/empty -> replay content` fixture。
+3. non-converging merge、tail sentinel、overlap 220-token 與 health revision compatibility tests。
 
 ## IMPLEMENTATION_WAVES
 
-- **WAVE-01 [CORE]** — Fail-first regression：新增上述 5 類測試，確認以正確原因失敗。
-- **WAVE-02 [CORE]** — 恢復 CORE input invariants：token-aware fragment splitting、overlap pruning、chunk postcondition、保守 repetition-loop collapse；paragraphization 排在核心 invariant 之後，不能成為 gate。
-- **WAVE-03 [CORE]** — 恢復 CORE LM Studio output contract：config precedence、provider context headroom、response diagnostics、reasoning retry、stable errors、merge cap。
-- **WAVE-04 [SUPPORTING/BEST_EFFORT]** — 熔斷 correction + 同步文件：correction circuit-break、no-reasoning-retry call site、更新 env/README/ADR-3。
+- **WAVE-01 [CORE]** — Fail-first evidence lock：新增上述 4 類測試，確認以正確原因失敗，保存實際 failure。
+- **WAVE-02 [CORE]** — 恢復 CORE merge/output contracts：實作三種 merge budgets、來源分組、visible-target compaction、preflight、最多三次 semantic recovery state machine、移除 hard truncation、新增 `LOCAL_LLM_MERGE_NOT_CONVERGED` stable error。
+- **WAVE-03 [SUPPORTING]** — 收斂 supporting amplification 與 provenance：對齊 220-token overlap、新增 diagnostics、optional build revision、actual port logging、owned-process E2E runner。
+- **WAVE-04 [VERIFICATION]** — 完整驗證與獨立驗收：focused tests、完整 `uv run pytest tests/ -q`、final diff inspection、獨立 Stage 05 true E2E 與 DOCX 全頁 QA。
 
-詳細規格見 plan `CHANGE_MAP` 1–4，此處不重複。
+詳細規格見 plan `CHANGE_MAP` 1~5，此處不重複。
 
 ## ACCEPTANCE_CONTRACT
 
 **CORE（必須全過）**：
 
-- production-shaped transcript 在 budget 3,112 下產生多個合法 chunks，所有 chunks `<= budget`，不再出現兩個近整份重複 chunks。
-- CJK、Latin、無空白、稀疏標點與 overlap boundary 都維持順序與涵蓋。
-- pathological loops 被壓縮；低於 threshold 的「對對對」等自然重複不變。
-- LM Studio caller 參數分別保留 correction `0.0`、extraction/merge `0.1`、final `0.2` 與 merge cap，不受 legacy YAML 影響。
-- reasoning-only 初次回應後**恰好一次**成功 retry；cap 有界、model selection 不變、reasoning 不外洩。
-- retry 後仍空、非 reasoning 空回應、context invariant failure 都回傳正確 stable code。
-- correction provider stable failure 最多呼叫一次，後續原文完整保留。
-- task fallback 包含 stable actionable detail，逐字稿 TXT/DOCX 仍可取得。
-- zero/multiple/wrong override/unreachable LM Studio contracts 維持。
-- health selection readiness 不被 generation history 改成全域 veto。
-- Ollama/Gemini/shared chunk paths 與現有 task processing regression tests 通過。
+- `merge_visible_target_tokens=900` 時，provider 初始 completion cap 仍為 reserved output（3072），而不是 900。
+- reasoning-only growth retry 可成功；回傳 note 經 orchestration 最終收斂到 `<=900`。
+- merge 不會因 visible target 而設定 `allow_reasoning_retry=False`。
+- `initial length/empty -> growth stop/empty -> final replay content` 精確三次 calls，model/instance/prompt/temperature 不變，只有 growth retry 增加 token cap。
+- 第三次仍空、第二次再度 length、無 reasoning、無 headroom 都回傳 `LMSTUDIO_NO_FINAL_CONTENT`，不再呼叫 provider。
+- correction 相同回應 shape 最多一次 provider call，保留當段及剩餘文字，摘要核心繼續。
+- Context 可行時每組至少容納兩份目標大小 notes；single oversized note 可壓縮；持續不縮短時在 max rounds 內回傳 `LOCAL_LLM_MERGE_NOT_CONVERGED`。
+- Tail sentinel 永不因 truncation 消失。
+- 每個 chunk boundary 重複 carry `<=220 tokens`，line cap 仍生效；所有非 overlap 來源內容保持順序與完整覆蓋。
+- `build_revision` 可為 null；舊 health consumer、zero/one/multiple selection、Ollama/Gemini、task fallback 不回歸。
 - 完整執行 `uv run pytest tests/ -q`；任何 failure 必須分類為 regression、pre-existing、environment 或 test defect。
 
-**Independent true E2E（DoD 核心）**：
+**Independent owned-process true E2E（DoD 核心）**：
 
-1. `mktemp` 建立隔離 `DATA_DIR`，在未使用 port 啟動 fresh-cache macOS backend；不刪除既有 cache/output。
-2. 確認 LM Studio 只有一個 loaded LLM，記錄 model/instance/context snapshot；不由測試自動修改 inventory。
-3. 經實際 Web upload journey 上傳 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a`，選 local mode。
-4. 驗證 MLX ASR 確實執行、summary 非空、DOCX 標題「會議紀錄」、必要欄位/章節有實質內容、逐字稿可下載。
-5. 驗證 transcript 不含達 cleanup threshold 的重複 run；log 無 `max_tokens=1`、無 98-call correction amplification、無 Ollama request、無 load/unload/switch。
-6. 記錄 full 與 cached wall time；performance gate 是消除已證實的 retry amplification，不虛構固定 SLA。
-7. 用 documents render workflow 將 DOCX 轉成每頁影像，逐頁檢查 clipping、overlap、failure banner、巨型單段與可讀性。
+1. 以 free port、隔離 temp `DATA_DIR` 與 expected Git revision 啟動並擁有 backend child process。
+2. Health `build_revision` 必須等於核准 HEAD；記錄唯一 loaded model/instance/context snapshot，不修改 LM Studio inventory。
+3. 實際上傳 `/Users/hsiaojohnny/Downloads/0818-優規需求確認會議.m4a`，確定 fresh MLX ASR 執行。
+4. Poll 到終態；不得為 `summary_failed`，不得出現 fallback title/warning、`max_tokens=1`、98-call correction amplification、hard truncation 或 merge non-convergence。
+5. 驗證每個 chunk 合法、correction stable failure 後最多一次呼叫、semantic retries/merge rounds 符合各自上限、全流程 model selection 不變。
+6. 下載逐字稿與 DOCX；必要章節非空，抽查尾端決議／待辦存在，逐字稿無達 cleanup threshold 的病態連續 run。
+7. 以 OOXML 結構抽取加 LibreOffice/Poppler render 檢查 DOCX 每一頁；100% 檢查 clipping、overlap、缺字、亂碼、failure banner、空白頁與可讀性。
+8. 保存完整 artifacts/log/result 至新的 Stage 05 append-only attempt；不得覆寫舊 E2E 證據。
 
 ## STOP_AND_ESCALATE_IF
 
@@ -164,10 +187,11 @@
 
 - 需要模型 allowlist、模型專屬 prompt 分支或 LM Studio lifecycle 管理。
 - 需要改變 selection readiness 語意。
-- 需要變更 task state、fallback DOCX 或 HTTP response schema。
+- 需要變更 task state、fallback DOCX 或 HTTP response schema（除 additive `build_revision` 外）。
 - 發現與 plan 不同的 root-cause decision。
 - 需要新增依賴或 lockfile 變更。
 - 需要修改 `/Users/hsiaojohnny/dev/yt_down_txt` 或建立跨 repository 耦合。
+- 無法用本 plan 的 progress/retry contract 修復（例如 merge 3 輪仍無法收斂且調整 provider cap/visible target 差距仍無效）。
 
 ## HISTORICAL_TASK_DEPENDENCIES
 
@@ -177,6 +201,6 @@
 
 TASK_ID: T20260827-1127-01-lmstudio-e2e-empty-summary
 HANDOFF_PATH: .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/handoff.md
-PLAN_REVISION: 1
+PLAN_REVISION: 2
 STATUS: READY_FOR_IMPLEMENTATION
 NEXT_STAGE: 04_IMPLEMENT
