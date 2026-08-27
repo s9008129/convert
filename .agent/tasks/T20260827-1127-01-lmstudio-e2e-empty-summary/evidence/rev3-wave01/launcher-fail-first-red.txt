@@ -1,0 +1,156 @@
+$ TEST_DATA_ROOT=$(mktemp -d) && DATA_DIR="$TEST_DATA_ROOT/data" uv run pytest -q tests/test_macos_scripts.py
+...FFFFFF.FF                                                             [100%]
+=================================== FAILURES ===================================
+____ test_launcher_derives_build_revision_from_git_head_when_git_available _____
+
+    def test_launcher_derives_build_revision_from_git_head_when_git_available():
+        text = "\n".join(_launcher_lines())
+>       assert "git rev-parse HEAD" in text, (
+            "launcher 必須由 Git clean HEAD 推導 build revision（git rev-parse HEAD）"
+        )
+E       AssertionError: launcher 必須由 Git clean HEAD 推導 build revision（git rev-parse HEAD）
+E       assert 'git rev-parse HEAD' in '#!/usr/bin/env bash\nset -euo pipefail\n\n# macOS native entry point. The environment is prepared separately with:\n#...r "服務程序已提前結束；請查看 $LOG_FILE"\n        exit 1\n    fi\n    sleep 1\ndone\n\nerror "服務尚未在 30 秒內回應；請查看 $LOG_FILE。"\nexit 1'
+
+tests/test_macos_scripts.py:127: AssertionError
+___ test_launcher_exports_meetingscribe_build_revision_to_child_environment ____
+
+    def test_launcher_exports_meetingscribe_build_revision_to_child_environment():
+        lines = _launcher_lines()
+        start_index = _backend_start_index(lines)
+        assert start_index is not None
+        export_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.strip().startswith("export") and "MEETINGSCRIBE_BUILD_REVISION" in line
+            ),
+            None,
+        )
+>       assert export_index is not None, (
+            "launcher 必須 export MEETINGSCRIBE_BUILD_REVISION，將 build revision 注入 child 環境"
+        )
+E       AssertionError: launcher 必須 export MEETINGSCRIBE_BUILD_REVISION，將 build revision 注入 child 環境
+E       assert None is not None
+
+tests/test_macos_scripts.py:144: AssertionError
+_ test_launcher_fails_before_backend_start_when_requested_revision_differs_from_clean_head _
+
+    def test_launcher_fails_before_backend_start_when_requested_revision_differs_from_clean_head():
+        lines = _launcher_lines()
+        start_index = _backend_start_index(lines)
+        assert start_index is not None
+        pre_start = lines[:start_index]
+        families = _trace_revision_var_families(pre_start)
+        revision_vars = families["derived"] | set(_REQUESTED_REVISION_VARS)
+        for index, line in enumerate(pre_start):
+            if "!=" not in line:
+                continue
+            tokens = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", line))
+            if not tokens & revision_vars:
+                continue
+            if re.search(r"\bexit\b", "\n".join(pre_start[index : index + 5])):
+                return
+>       pytest.fail(
+            "launcher 缺少 preflight：明確要求的 revision 與 clean Git HEAD 不同時，"
+            "必須在啟動 backend 之前 exit 1"
+        )
+E       Failed: launcher 缺少 preflight：明確要求的 revision 與 clean Git HEAD 不同時，必須在啟動 backend 之前 exit 1
+
+tests/test_macos_scripts.py:165: Failed
+_____ test_launcher_distinguishes_dirty_worktree_from_accepted_clean_head ______
+
+    def test_launcher_distinguishes_dirty_worktree_from_accepted_clean_head():
+        lines = _launcher_lines()
+        dirty_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.search(r"git status --porcelain|git describe --dirty|git diff --quiet", line)
+            ),
+            None,
+        )
+>       assert dirty_index is not None, (
+            "launcher 必須偵測 dirty worktree（如 git status --porcelain）以區分 clean HEAD"
+        )
+E       AssertionError: launcher 必須偵測 dirty worktree（如 git status --porcelain）以區分 clean HEAD
+E       assert None is not None
+
+tests/test_macos_scripts.py:181: AssertionError
+___ test_launcher_validates_actual_data_dir_is_writable_before_backend_start ___
+
+    def test_launcher_validates_actual_data_dir_is_writable_before_backend_start():
+        lines = _launcher_lines()
+        start_index = _backend_start_index(lines)
+        assert start_index is not None
+        pre_start = lines[:start_index]
+        for index, line in enumerate(pre_start):
+            if not _WRITABLE_DATA_DIR_PROBE.search(line):
+                continue
+            if re.search(r"\bexit\b", "\n".join(pre_start[index : index + 5])):
+                return
+>       pytest.fail(
+            "launcher 必須在啟動 backend 前驗證實際解析後的 DATA_DIR 可寫；"
+            "不可寫時必須明確 exit 1 且不啟動 backend"
+        )
+E       Failed: launcher 必須在啟動 backend 前驗證實際解析後的 DATA_DIR 可寫；不可寫時必須明確 exit 1 且不啟動 backend
+
+tests/test_macos_scripts.py:201: Failed
+_ test_launcher_parses_health_json_and_declares_ready_only_after_exact_revision_match _
+
+    def test_launcher_parses_health_json_and_declares_ready_only_after_exact_revision_match():
+        lines = _launcher_lines()
+        parse_index = next(
+            (index for index, line in enumerate(lines) if "build_revision" in line), None
+        )
+>       assert parse_index is not None, (
+            "launcher 必須解析 /api/health 回應 JSON 的 build_revision 欄位（不得只看 HTTP 狀態）"
+        )
+E       AssertionError: launcher 必須解析 /api/health 回應 JSON 的 build_revision 欄位（不得只看 HTTP 狀態）
+E       assert None is not None
+
+tests/test_macos_scripts.py:212: AssertionError
+______ test_launcher_failure_paths_terminate_only_the_backend_it_started _______
+
+    def test_launcher_failure_paths_terminate_only_the_backend_it_started():
+        lines = _launcher_lines()
+        pid_vars = _trace_owned_pid_vars(lines)
+        kill_indices = [
+            index
+            for index, line in enumerate(lines)
+            if re.search(r"(?<![\w-])kill\b(?!\s+-0\b)", line)
+            and any(var in line for var in pid_vars)
+        ]
+>       assert kill_indices, (
+            "launcher 在 mismatch/parse failure/timeout/early-exit 時必須 kill 自己啟動的 backend PID；"
+            "目前失敗路徑直接 exit，會遺留 child process"
+        )
+E       AssertionError: launcher 在 mismatch/parse failure/timeout/early-exit 時必須 kill 自己啟動的 backend PID；目前失敗路徑直接 exit，會遺留 child process
+E       assert []
+
+tests/test_macos_scripts.py:259: AssertionError
+________ test_launcher_logs_root_host_port_data_dir_and_build_revision _________
+
+    def test_launcher_logs_root_host_port_data_dir_and_build_revision():
+        logged = "\n".join(
+            line
+            for line in _launcher_lines()
+            if re.search(r"\b(?:info|success|error)\s+\"", line)
+        )
+        assert re.search(r"\$\{?PORT\b", logged), "launcher 必須記錄實際 port"
+>       assert re.search(r"\$\{?HOST\b", logged), "launcher 必須記錄 host"
+E       AssertionError: launcher 必須記錄 host
+E       assert None
+E        +  where None = <function search at 0x10049f1a0>('\\$\\{?HOST\\b', '    error "找不到 uv；請先依專案文件完成 uv 安裝。"\n    error "找不到已準備好的 .venv。請先在專案根目錄執行：uv sync --frozen"\n    error "找不到 ffmpeg；請先.../127.0.0.1:${PORT}（PID ${SERVICE_PID}）"\n        error "服務程序已提前結束；請查看 $LOG_FILE"\nerror "服務尚未在 30 秒內回應；請查看 $LOG_FILE。"')
+E        +    where <function search at 0x10049f1a0> = re.search
+
+tests/test_macos_scripts.py:272: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_macos_scripts.py::test_launcher_derives_build_revision_from_git_head_when_git_available
+FAILED tests/test_macos_scripts.py::test_launcher_exports_meetingscribe_build_revision_to_child_environment
+FAILED tests/test_macos_scripts.py::test_launcher_fails_before_backend_start_when_requested_revision_differs_from_clean_head
+FAILED tests/test_macos_scripts.py::test_launcher_distinguishes_dirty_worktree_from_accepted_clean_head
+FAILED tests/test_macos_scripts.py::test_launcher_validates_actual_data_dir_is_writable_before_backend_start
+FAILED tests/test_macos_scripts.py::test_launcher_parses_health_json_and_declares_ready_only_after_exact_revision_match
+FAILED tests/test_macos_scripts.py::test_launcher_failure_paths_terminate_only_the_backend_it_started
+FAILED tests/test_macos_scripts.py::test_launcher_logs_root_host_port_data_dir_and_build_revision
+8 failed, 4 passed in 0.04s

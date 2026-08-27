@@ -1,0 +1,21 @@
+# WAVE-03a launcher 功能性驗證（不啟動 backend、不觸碰 9527、僅終止自己啟動的 dummy process）
+
+$ MEETINGSCRIBE_REQUESTED_REVISION=deadbeef... DATA_DIR=$PWD/data/cache/wave03a-testroot/data bash scripts/macos/start-mac-native.sh
+[INFO] 偵測到未提交變更；build revision 將以可區分的 -dirty 值標記，不冒充 clean SHA。
+[ERROR] 明確要求的 build revision（deadbeef00000000000000000000000000000000）與 clean Git HEAD（31fb43cfb413c4efc92deef9c47f13c820ac1199）不一致；不啟動 backend。
+exit=1；.server.pid 未產生（backend 未啟動）
+
+$ DATA_DIR=$PWD/data/cache/wave03a-smoke-ro（chmod 555） bash scripts/macos/start-mac-native.sh
+mkdir: .../uploads: Permission denied（3 個子目錄）
+[ERROR] 無法建立資料/日誌目錄：/Users/hsiaojohnny/dev/convert/data/cache/wave03a-smoke-ro、/Users/hsiaojohnny/dev/convert/logs
+exit=1；.server.pid 未產生（backend 未啟動）
+
+# health JSON parse one-liner（.venv/bin/python）：
+#   {"build_revision":"31fb43cf..."} -> 31fb43cf...（精確回顯）
+#   {"build_revision":null} -> 空（觸發 fail path）
+#   non-JSON -> rc=1（觸發 fail path）
+
+# owned-cleanup 功能驗證（verbatim 抽取 find_service_pid/terminate_owned_service + dummy process tree）：
+#   OK: SERVER_PID terminated
+#   OK: service child terminated（pgrep -P + backend.main:app command filter）
+#   OK: unrelated process untouched

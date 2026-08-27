@@ -1,0 +1,104 @@
+# command: uv run python scripts/e2e/run_owned_e2e.py --smoke --artifacts-dir data/cache/e2e/smoke-rev3/attempt-20260827-200636
+# purpose: WAVE-03b actual smoke — free port, exact HEAD gate, gitignored runtime, owned child cleanup
+---
+[INFO] backend child PID=42438 port=51361 DATA_DIR=/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-200636/backend_data
+[INFO] expected build_revision=31fb43cfb413c4efc92deef9c47f13c820ac1199
+[INFO] /api/health 200，build_revision='31fb43cfb413c4efc92deef9c47f13c820ac1199'
+[INFO] model snapshot reachable=True unique_loaded_llm_count=1
+[INFO] backend child（PID 42438）已終止（exit=0）
+[OK] verdict=PASS，artifacts：/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-200636，runtime：/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-200636
+EXIT=0
+
+# post-run child process check + LM Studio observation:
+CHILD_GONE_OK (pid 42438 no longer exists)
+
+# LM Studio observation (read-only GET /api/v1/models):
+reachable: True
+loaded LLM ids: ['qwen3.6-35b-a3b-mlx', 'text-embedding-multilingual-e5-large-instruct', 'text-embedding-nomic-embed-text-v1.5']
+
+# model_snapshot.json from smoke artifacts:
+{
+  "captured_at": "2026-08-27T20:06:41.396482+08:00",
+  "base_url": "http://127.0.0.1:1234",
+  "reachable": true,
+  "loaded_llm_models": [
+    {
+      "model_key": "qwen3.6-35b-a3b-mlx",
+      "instances": [
+        {
+          "instance_id": "qwen3.6-35b-a3b-mlx",
+          "context_length": 183296
+        }
+      ]
+    }
+  ],
+  "loaded_instance_ids": [
+    "qwen3.6-35b-a3b-mlx"
+  ],
+  "unique_loaded_llm_count": 1,
+  "openai_compat_model_ids": [],
+  "raw_response": {
+    "models": [
+      {
+        "type": "llm",
+        "publisher": "lmstudio-community",
+        "key": "qwen3.6-35b-a3b-mlx",
+        "display_name": "Qwen3.6 35B A3B",
+        "architecture": "qwen3_5_moe",
+        "quantization": {
+          "name": "4bit",
+          "bits_per_weight": 4
+        },
+        "size_bytes": 20429174878,
+        "params_string": "35B",
+        "loaded_instances": [
+          {
+            "id": "qwen3.6-35b-a3b-mlx",
+            "config": {
+              "context_length": 183296,
+              "parallel": 1,
+              "reasoning_budget_message": ""
+            }
+          }
+        ],
+        "max_context_length": 262144,
+        "format": "mlx",
+        "capabilities": {
+          "vision": true,
+          "trained_for_tool_use": true
+        },
+        "description": null
+      },
+      {
+        "type": "embedding",
+        "publisher": "Ralriki",
+        "key": "text-embedding-multilingual-e5-large-instruct",
+        "display_name": "Multilingual E5 Large Instruct",
+        "quantization": {
+          "name": "Q8_0",
+          "bits_per_weight": 8
+        },
+        "size_bytes": 603097568,
+        "params_string": "335M",
+        "loaded_instances": [],
+        "max_context_length": 512,
+        "format": "gguf"
+      },
+      {
+        "type": "embedding",
+        "publisher": "nomic-ai",
+        "key": "text-embedding-nomic-embed-text-v1.5",
+        "display_name": "Nomic Embed Text v1.5",
+        "quantization": {
+          "name": "Q4_K_M",
+          "bits_per_weight": 4
+        },
+        "size_bytes": 84106624,
+        "params_string": null,
+        "loaded_instances": [],
+        "max_context_length": 2048,
+        "format": "gguf"
+      }
+    ]
+  }
+}

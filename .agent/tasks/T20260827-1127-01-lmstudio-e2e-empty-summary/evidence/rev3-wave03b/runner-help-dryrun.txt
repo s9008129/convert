@@ -1,0 +1,82 @@
+# command: uv run python scripts/e2e/run_owned_e2e.py --help
+# observed: help renders all flags incl. --upload-mode api|browser, --runtime-dir, BROWSER_E2E_READY contract
+---
+usage: run_owned_e2e.py [-h] [--audio AUDIO] [--artifacts-dir ARTIFACTS_DIR]
+                        [--runtime-dir RUNTIME_DIR] [--data-dir DATA_DIR]
+                        [--upload-mode {api,browser}] [--host HOST]
+                        [--port PORT] [--expected-revision EXPECTED_REVISION]
+                        [--processing-mode {local,cloud}]
+                        [--health-timeout HEALTH_TIMEOUT]
+                        [--task-timeout TASK_TIMEOUT]
+                        [--poll-interval POLL_INTERVAL]
+                        [--browser-upload-timeout BROWSER_UPLOAD_TIMEOUT]
+                        [--smoke] [--dry-run] [--no-inject-revision]
+
+Owned-process true E2E runner：free port + 隔離 DATA_DIR + build revision
+gate，啟動並擁有 backend child process（完整 true E2E 請在 Stage 05 獨立驗收執行）
+
+options:
+  -h, --help            show this help message and exit
+  --audio AUDIO         音檔路徑（完整 true E2E 必填，作為 expected SHA authority；--smoke
+                        時忽略）
+  --artifacts-dir ARTIFACTS_DIR
+                        append-only attempt
+                        目錄（預設：evidence/stage05/attempt-<台北時間>；已存在即拒絕；只放
+                        redacted 證據）
+  --runtime-dir RUNTIME_DIR
+                        raw 敏感 runtime 位置：backend.log／transcript／DOCX／backend
+                        DATA_DIR（預設：artifacts 位於 gitignored data/cache 或 repo
+                        外時沿用之，否則自動導到 data/cache/e2e/<attempt-name>）
+  --data-dir DATA_DIR   隔離 DATA_DIR（預設：<runtime>/backend_data）
+  --upload-mode {api,browser}
+                        上傳模式：api=runner 直接 POST（預設，相容既有）；browser=不 POST
+                        音檔，gates 通過後 flush BROWSER_E2E_READY 並 bounded 解析既有
+                        upload-success log（CM-02）
+  --host HOST           backend 監聽 host（預設 127.0.0.1）
+  --port PORT           backend 端口（預設自動選 free port）
+  --expected-revision EXPECTED_REVISION
+                        expected Git revision（預設 git rev-parse HEAD）
+  --processing-mode {local,cloud}
+                        上傳處理模式（預設 local）
+  --health-timeout HEALTH_TIMEOUT
+                        health gate 逾時秒數（預設 120）
+  --task-timeout TASK_TIMEOUT
+                        任務終態 poll 逾時秒數（預設 7200）
+  --poll-interval POLL_INTERVAL
+                        health/task poll 間隔秒數（預設 5）
+  --browser-upload-timeout BROWSER_UPLOAD_TIMEOUT
+                        browser 模式 bounded 等待唯一 upload mapping 的秒數（預設 7200）
+  --smoke               煙霧模式：啟動 → health gate → 模型快照（唯讀記錄）→ 乾淨終止（不上傳）
+  --dry-run             只印執行計畫，不啟動 backend、不建立目錄
+  --no-inject-revision  gate 自我驗證用：不注入 MEETINGSCRIBE_BUILD_REVISION；backend
+                        應回報 null，gate 必須判 mismatch → verdict FAIL（exit 1）
+
+# command: uv run python scripts/e2e/run_owned_e2e.py --smoke --dry-run
+# observed: below
+---
+{
+  "plan": {
+    "mode": "smoke",
+    "dry_run": true,
+    "upload_mode": "api",
+    "inject_revision": true,
+    "host": "127.0.0.1",
+    "port": 51359,
+    "expected_build_revision": "31fb43cfb413c4efc92deef9c47f13c820ac1199",
+    "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/stage05/attempt-20260827-200622",
+    "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-20260827-200622",
+    "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-20260827-200622/backend_data",
+    "audio": null,
+    "processing_mode": "local",
+    "health_timeout_seconds": 120.0,
+    "task_timeout_seconds": 7200.0,
+    "poll_interval_seconds": 5.0,
+    "browser_upload_timeout_seconds": 7200.0
+  },
+  "dry_run": true,
+  "note": "未啟動 backend、未建立任何目錄"
+}
+EXIT=0
+
+# post-dry-run directory check (must not create dirs):
+NO_DRYRUN_DIRS_OK

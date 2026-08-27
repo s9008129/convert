@@ -1,0 +1,29 @@
+# command: uv run python scripts/e2e/run_owned_e2e.py --smoke --dry-run
+
+{
+  "plan": {
+    "mode": "smoke",
+    "dry_run": true,
+    "upload_mode": "api",
+    "inject_revision": true,
+    "host": "127.0.0.1",
+    "port": 51156,
+    "expected_build_revision": "31fb43cfb413c4efc92deef9c47f13c820ac1199",
+    "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/stage05/attempt-20260827-195653",
+    "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-20260827-195653",
+    "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-20260827-195653/backend_data",
+    "audio": null,
+    "processing_mode": "local",
+    "health_timeout_seconds": 120.0,
+    "task_timeout_seconds": 7200.0,
+    "poll_interval_seconds": 5.0,
+    "browser_upload_timeout_seconds": 7200.0
+  },
+  "dry_run": true,
+  "note": "未啟動 backend、未建立任何目錄"
+}
+
+EXIT=0
+
+# verification: no new directories created under data/cache
+NO_NEW_DIRS_OK

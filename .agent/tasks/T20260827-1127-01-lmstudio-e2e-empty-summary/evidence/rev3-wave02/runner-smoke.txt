@@ -1,0 +1,18 @@
+# command: uv run python scripts/e2e/run_owned_e2e.py --smoke --artifacts-dir data/cache/e2e/smoke-rev3/attempt-20260827-195653
+
+[INFO] backend child PID=39476 port=51157 DATA_DIR=/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-195653/backend_data
+[INFO] expected build_revision=31fb43cfb413c4efc92deef9c47f13c820ac1199
+[INFO] /api/health 200，build_revision='31fb43cfb413c4efc92deef9c47f13c820ac1199'
+[INFO] model snapshot reachable=True unique_loaded_llm_count=1
+[INFO] backend child（PID 39476）已終止（exit=0）
+[OK] verdict=PASS，artifacts：/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-195653，runtime：/Users/hsiaojohnny/dev/convert/data/cache/e2e/smoke-rev3/attempt-20260827-195653
+
+EXIT=0
+
+# post-run child process check: ps -p 39476
+CHILD_GONE_OK (pid 39476 no longer exists)
+
+# LM Studio observation (model_snapshot.json, read-only GET /api/v1/models):
+reachable: True
+loaded LLM models: [{"model_key": "qwen3.6-35b-a3b-mlx", "instances": [{"instance_id": "qwen3.6-35b-a3b-mlx", "context_length": 183296}]}]
+loaded_instance_ids: ['qwen3.6-35b-a3b-mlx']

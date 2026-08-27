@@ -1,0 +1,1737 @@
+# T20260827-1127-01 Revision 3 WAVE-01a — runner fail-first red evidence
+# date: 2026-08-27T19:31:20+0800 (Asia/Taipei)
+# HEAD: 31fb43cfb413c4efc92deef9c47f13c820ac1199
+# plan SHA-256: d76e236204e53a298741f02e012a3d96e7de12cb89be072c77cdc0a9b9d7dafd
+# note: runtime forbids mktemp; isolated writable TEST_DATA_ROOT uses gitignored data/cache/ (same isolation intent as handoff command)
+
+===============================================================================
+== RUN 1 (primary): TEST_DATA_ROOT=data/cache/wave01-test-data-root; DATA_DIR=$TEST_DATA_ROOT/data
+===============================================================================
+$ TEST_DATA_ROOT=data/cache/wave01-test-data-root && mkdir -p "$TEST_DATA_ROOT" && DATA_DIR="$PWD/$TEST_DATA_ROOT/data" uv run pytest -q tests/test_owned_e2e_acceptance.py
+FFFFF.FFFFFFFFFFFFFF.F.                                                  [100%]
+=================================== FAILURES ===================================
+______________ test_revision_mismatch_must_stop_before_any_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1097b0cb0>
+capsys = <_pytest.capture.CaptureFixture object at 0x1097b0dd0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_revision_mismatch_must_st0')
+
+    def test_revision_mismatch_must_stop_before_any_upload(monkeypatch, capsys, tmp_path):
+        """health build_revision != expected 時，upload 呼叫次數必須為 0（fail closed）。
+    
+        現行 runner 只把 mismatch append 到 failure_reasons 後繼續 run_full_e2e →
+        仍會對 stale backend 執行昂貴上傳（WAVE-01 red 的核心原因）。
+        """
+        flow = _standard_flow(tmp_path, health_revision=STALE_REVISION)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert len(flow["client"].upload_calls) == 0, (
+            f"revision mismatch 時 upload 仍被呼叫 {len(flow['client'].upload_calls)} 次——"
+            "runner 必須在 upload 前因 mismatch fail closed（CM-01 #1／REQ-CORE-01）"
+        )
+E       AssertionError: revision mismatch 時 upload 仍被呼叫 1 次——runner 必須在 upload 前因 mismatch fail closed（CM-01 #1／REQ-CORE-01）
+E       assert 1 == 0
+E        +  where 1 = len([{'url': 'http://127.0.0.1:50664/api/upload', 'data': {'processing_mode': 'local'}}])
+E        +    where [{'url': 'http://127.0.0.1:50664/api/upload', 'data': {'processing_mode': 'local'}}] = <tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x109663530>.upload_calls
+
+tests/test_owned_e2e_acceptance.py:492: AssertionError
+__________ test_completed_with_summary_failed_true_must_fail_verdict ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109aa3e60>
+capsys = <_pytest.capture.CaptureFixture object at 0x109aa3890>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_completed_with_summary_fa0')
+
+    def test_completed_with_summary_failed_true_must_fail_verdict(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, summary_failed=True)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+        assert result.summary is not None, "runner 必須寫出 run_summary.json"
+>       assert result.summary["verdict"] == "FAIL", (
+            f"task=completed + summary_failed=true 時 runner 判 {result.summary['verdict']!r}——"
+            "正式會議紀錄驗收必須把 transcript fallback 判為 FAIL（CM-01 #2／RC-3B）"
+        )
+E       AssertionError: task=completed + summary_failed=true 時 runner 判 'PASS'——正式會議紀錄驗收必須把 transcript fallback 判為 FAIL（CM-01 #2／RC-3B）
+E       assert 'PASS' == 'FAIL'
+E         
+E         - FAIL
+E         + PASS
+
+tests/test_owned_e2e_acceptance.py:516: AssertionError
+_________________ test_fallback_docx_download_label_must_fail __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1097b0cb0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109aa3f20>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_fallback_docx_download_la0')
+
+    def test_fallback_docx_download_label_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(
+            tmp_path,
+            summary_failed=False,  # 隔離文件層偵測：即便旗標缺失/為 False，fallback 文件也必須 FAIL
+            docx_label=FALLBACK_FILENAME_LABEL,
+            docx_bytes=_fallback_docx_bytes(),
+        )
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            "Content-Disposition 帶 fallback 下載標籤（逐字稿(會議紀錄生成失敗)）時 runner 仍 PASS——"
+            "runner 必須檢查 Content-Disposition 正式 label（CM-01 #3）"
+        )
+E       AssertionError: Content-Disposition 帶 fallback 下載標籤（逐字稿(會議紀錄生成失敗)）時 runner 仍 PASS——runner 必須檢查 Content-Disposition 正式 label（CM-01 #3）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.234062+08:00', 'finished_at': '2026-08-27T19:31:21.235276+08:00', 'port': 50666, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.234062+08:00', 'finished_at': '2026-08-27T19:31:21.235276+08:00', 'port': 50666, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.234062+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_fallback_docx_download_la0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:545: AssertionError
+__________________ test_fallback_docx_ooxml_content_must_fail __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109ade0c0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109adc680>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_fallback_docx_ooxml_conte0')
+
+    def test_fallback_docx_ooxml_content_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(
+            tmp_path,
+            summary_failed=False,  # 隔離 OOXML 內容檢查本身
+            docx_label=FORMAL_LABEL,  # header 正式，但 OOXML 內容是 fallback
+            docx_bytes=_fallback_docx_bytes(),
+        )
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            "DOCX OOXML 含 fallback title／empty-summary error 時 runner 仍 PASS——"
+            "runner 必須解析 OOXML 文字並拒絕 fallback 文件（CM-01 #3）"
+        )
+E       AssertionError: DOCX OOXML 含 fallback title／empty-summary error 時 runner 仍 PASS——runner 必須解析 OOXML 文字並拒絕 fallback 文件（CM-01 #3）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.256904+08:00', 'finished_at': '2026-08-27T19:31:21.258551+08:00', 'port': 50667, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.256904+08:00', 'finished_at': '2026-08-27T19:31:21.258551+08:00', 'port': 50667, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.256904+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_fallback_docx_ooxml_conte0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:570: AssertionError
+_______________ test_stored_upload_bytes_sha_mismatch_must_fail ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109484d40>
+capsys = <_pytest.capture.CaptureFixture object at 0x10945b050>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_stored_upload_bytes_sha_m0')
+
+    def test_stored_upload_bytes_sha_mismatch_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, stored_bytes=b"tampered-or-wrong-bytes")
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"stored upload bytes={flow['client']._stored_bytes!r} 與 source audio 不同仍 PASS——"
+            "runner 必須對 DATA_DIR/uploads/<stored> 計算 SHA-256 並與 expected 比對（CM-01 #4）"
+        )
+E       AssertionError: stored upload bytes=b'tampered-or-wrong-bytes' 與 source audio 不同仍 PASS——runner 必須對 DATA_DIR/uploads/<stored> 計算 SHA-256 並與 expected 比對（CM-01 #4）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.274612+08:00', 'finished_at': '2026-08-27T19:31:21.275754+08:00', 'port': 50668, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.274612+08:00', 'finished_at': '2026-08-27T19:31:21.275754+08:00', 'port': 50668, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.274612+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_stored_upload_bytes_sha_m0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:594: AssertionError
+______________ test_two_loaded_llm_models_must_fail_before_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109aa29f0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109aa3560>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_llm_models_mus0')
+
+    def test_two_loaded_llm_models_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        models_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_A, "config": {"context_length": 183296}}],
+                },
+                {
+                    "key": MODEL_B_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_B, "config": {"context_length": 8192}}],
+                },
+            ]
+        }
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response(models_payload))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "two_models")
+
+tests/test_owned_e2e_acceptance.py:664: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.302739+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_llm_models_mus0/e2e-artifacts\n")
+case_name = 'two_models'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（two_models）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.302739+08:00', 'finished_at': '2026-08-27T19:31:21.306054+08:00', 'port': 50670, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.302739+08:00', 'finished_at': '2026-08-27T19:31:21.306054+08:00', 'port': 50670, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.302739+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_llm_models_mus0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+________ test_two_loaded_instances_of_one_model_must_fail_before_upload ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109adf770>
+capsys = <_pytest.capture.CaptureFixture object at 0x109adfa10>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_instances_of_o0')
+
+    def test_two_loaded_instances_of_one_model_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        models_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [
+                        {"id": INSTANCE_A, "config": {"context_length": 183296}},
+                        {"id": INSTANCE_B, "config": {"context_length": 8192}},
+                    ],
+                }
+            ]
+        }
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response(models_payload))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "two_instances")
+
+tests/test_owned_e2e_acceptance.py:689: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.322783+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_instances_of_o0/e2e-artifacts\n")
+case_name = 'two_instances'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（two_instances）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.322783+08:00', 'finished_at': '2026-08-27T19:31:21.324010+08:00', 'port': 50671, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.322783+08:00', 'finished_at': '2026-08-27T19:31:21.324010+08:00', 'port': 50671, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.322783+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_two_loaded_instances_of_o0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+______________ test_zero_loaded_llm_model_must_fail_before_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b1bd40>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b19190>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_zero_loaded_llm_model_mus0')
+
+    def test_zero_loaded_llm_model_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response({"models": []}))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "zero_models")
+
+tests/test_owned_e2e_acceptance.py:702: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.341772+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_zero_loaded_llm_model_mus0/e2e-artifacts\n")
+case_name = 'zero_models'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（zero_models）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.341772+08:00', 'finished_at': '2026-08-27T19:31:21.342833+08:00', 'port': 50672, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.341772+08:00', 'finished_at': '2026-08-27T19:31:21.342833+08:00', 'port': 50672, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.341772+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_zero_loaded_llm_model_mus0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+_________ test_model_changed_between_start_and_end_snapshots_must_fail _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109addee0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109add6a0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_model_changed_between_sta0')
+
+    def test_model_changed_between_start_and_end_snapshots_must_fail(monkeypatch, capsys, tmp_path):
+        """start snapshot 是唯一 model A；end snapshot 變成 model B → 必須 FAIL。
+    
+        現行 runner 只 capture 一次 snapshot 且不比較（capability absent + 行為缺失）。
+        """
+        start_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_A, "config": {"context_length": 183296}}],
+                }
+            ]
+        }
+        end_payload = {
+            "models": [
+                {
+                    "key": MODEL_B_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": "inst-b1", "config": {"context_length": 8192}}],
+                }
+            ]
+        }
+    
+        def models_factory(call_index):
+            return _lmstudio_models_response(start_payload if call_index == 1 else end_payload)
+    
+        flow = _standard_flow(tmp_path, models_factory=models_factory)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"run 前後 model snapshot 改變（{MODEL_A_KEY} → {MODEL_B_KEY}）仍 PASS——"
+            "runner 必須 capture 並比較 ending model snapshot（CM-01 #5／CM-02 metrics+model snapshot）"
+        )
+E       AssertionError: run 前後 model snapshot 改變（qwen3.6-35b-a3b-mlx → other-model）仍 PASS——runner 必須 capture 並比較 ending model snapshot（CM-01 #5／CM-02 metrics+model snapshot）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.360158+08:00', 'finished_at': '2026-08-27T19:31:21.361427+08:00', 'port': 50673, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.360158+08:00', 'finished_at': '2026-08-27T19:31:21.361427+08:00', 'port': 50673, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.360158+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_model_changed_between_sta0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:742: AssertionError
+__ test_invalid_or_unwritable_data_dir_fails_closed[data-dir-is-regular-file] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b1a510>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b1adb0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_or_unwritable_dat0')
+case = 'data-dir-is-regular-file'
+
+    @pytest.mark.parametrize("case", ["data-dir-is-regular-file", "data-dir-parent-readonly"])
+    def test_invalid_or_unwritable_data_dir_fails_closed(monkeypatch, capsys, tmp_path, case):
+        audio_path = tmp_path / "audio.m4a"
+        audio_path.write_bytes(AUDIO_BYTES)
+    
+        read_only_parent = None
+        if case == "data-dir-is-regular-file":
+            bad_data_dir = tmp_path / "not-a-dir"
+            bad_data_dir.write_bytes(b"this is a file, not a directory")
+        else:
+            read_only_parent = tmp_path / "read-only"
+            read_only_parent.mkdir()
+            bad_data_dir = read_only_parent / "data"
+        try:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o555)
+            result = _run_runner(
+                monkeypatch, capsys, tmp_path,
+                audio_path=audio_path, data_dir=bad_data_dir,
+            )
+        finally:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o755)
+    
+        assert len(result.popen_calls) == 0, (
+            f"invalid/unwritable DATA_DIR（case={case}）時 backend 仍被啟動——"
+            "DATA_DIR preflight 必須在啟動 child 之前 fail closed（CM-01 #6）"
+        )
+>       assert _looks_like_explicit_data_dir_gate_failure(result), (
+            f"invalid/unwritable DATA_DIR（case={case}）必須輸出明確的 DATA_DIR gate failure"
+            "（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；"
+            f"實際：exception={result.exception!r}, summary={result.summary!r}, output={result.output!r}"
+        )
+E       AssertionError: invalid/unwritable DATA_DIR（case=data-dir-is-regular-file）必須輸出明確的 DATA_DIR gate failure（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；實際：exception=FileExistsError(17, 'File exists'), summary=None, output=''
+E       assert False
+E        +  where False = _looks_like_explicit_data_dir_gate_failure(namespace(exit_code=None, exception=FileExistsError(17, 'File exists'), summary=None, artifacts_dir=PosixPath('/privat...n_calls=[], models_calls=0, client=<tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x109aa3dd0>, output=''))
+
+tests/test_owned_e2e_acceptance.py:797: AssertionError
+__ test_invalid_or_unwritable_data_dir_fails_closed[data-dir-parent-readonly] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b1a540>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b19d90>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_or_unwritable_dat1')
+case = 'data-dir-parent-readonly'
+
+    @pytest.mark.parametrize("case", ["data-dir-is-regular-file", "data-dir-parent-readonly"])
+    def test_invalid_or_unwritable_data_dir_fails_closed(monkeypatch, capsys, tmp_path, case):
+        audio_path = tmp_path / "audio.m4a"
+        audio_path.write_bytes(AUDIO_BYTES)
+    
+        read_only_parent = None
+        if case == "data-dir-is-regular-file":
+            bad_data_dir = tmp_path / "not-a-dir"
+            bad_data_dir.write_bytes(b"this is a file, not a directory")
+        else:
+            read_only_parent = tmp_path / "read-only"
+            read_only_parent.mkdir()
+            bad_data_dir = read_only_parent / "data"
+        try:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o555)
+            result = _run_runner(
+                monkeypatch, capsys, tmp_path,
+                audio_path=audio_path, data_dir=bad_data_dir,
+            )
+        finally:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o755)
+    
+        assert len(result.popen_calls) == 0, (
+            f"invalid/unwritable DATA_DIR（case={case}）時 backend 仍被啟動——"
+            "DATA_DIR preflight 必須在啟動 child 之前 fail closed（CM-01 #6）"
+        )
+>       assert _looks_like_explicit_data_dir_gate_failure(result), (
+            f"invalid/unwritable DATA_DIR（case={case}）必須輸出明確的 DATA_DIR gate failure"
+            "（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；"
+            f"實際：exception={result.exception!r}, summary={result.summary!r}, output={result.output!r}"
+        )
+E       AssertionError: invalid/unwritable DATA_DIR（case=data-dir-parent-readonly）必須輸出明確的 DATA_DIR gate failure（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；實際：exception=PermissionError(13, 'Permission denied'), summary=None, output=''
+E       assert False
+E        +  where False = _looks_like_explicit_data_dir_gate_failure(namespace(exit_code=None, exception=PermissionError(13, 'Permission denied'), summary=None, artifacts_dir=PosixPath('/...n_calls=[], models_calls=0, client=<tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x109b1a9c0>, output=''))
+
+tests/test_owned_e2e_acceptance.py:797: AssertionError
+_____________ test_missing_audio_fails_closed_before_backend_start _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b395e0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b3b0e0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_missing_audio_fails_close0')
+
+    def test_missing_audio_fails_closed_before_backend_start(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, audio_exists=False)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+        )
+    
+>       assert len(result.popen_calls) == 0, (
+            "--audio 不存在時 backend 仍被啟動（Popen 呼叫 "
+            f"{len(result.popen_calls)} 次）——audio 存在性屬啟動前 hard preflight（CM-01 #6／固定 gate order）"
+        )
+E       AssertionError: --audio 不存在時 backend 仍被啟動（Popen 呼叫 1 次）——audio 存在性屬啟動前 hard preflight（CM-01 #6／固定 gate order）
+E       assert 1 == 0
+E        +  where 1 = len([{'args': (['/Users/hsiaojohnny/dev/convert/.venv/bin/python', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0...00gn/T/pytest-of-hsiaojohnny/pytest-5/test_missing_audio_fails_close0/e2e-artifacts/backend.log'>, 'stderr': -2, ...}}])
+E        +    where [{'args': (['/Users/hsiaojohnny/dev/convert/.venv/bin/python', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0...00gn/T/pytest-of-hsiaojohnny/pytest-5/test_missing_audio_fails_close0/e2e-artifacts/backend.log'>, 'stderr': -2, ...}}] = namespace(exit_code=1, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.417920+08:00', 'fin...st_missing_audio_fails_close0/audio.m4a'\n  - 缺少必要檢查：['task_completed', 'transcript_downloaded', 'docx_downloaded']\n").popen_calls
+
+tests/test_owned_e2e_acceptance.py:817: AssertionError
+____________ test_browser_upload_log_mapping_requires_unique_match _____________
+
+    def test_browser_upload_log_mapping_requires_unique_match():
+        single = (
+            f"2026-08-27 12:00:00 | INFO | 檔案上傳成功: 盤點工具討論.m4a -> {STORED_FILENAME}, "
+            f"任務ID: {TASK_ID}\n"
+        )
+        zero = "2026-08-27 12:00:01 | INFO | 與上傳無關的訊息\n"
+        double = single + single.replace(TASK_ID, "task-0002")
+    
+        helper, name = _find_browser_upload_mapping_helper(runner)
+>       assert helper is not None, (
+            "WAVE-02 CM-01 #7：runner 必須提供『從 isolated backend.log bounded 解析唯一 "
+            "stored filename + task_id』的 helper（0 筆逾時、>1 筆皆 FAIL）；"
+            f"現行 runner 沒有任何 upload-log mapping 解析能力（callables：{_callable_names(runner)}）"
+        )
+E       AssertionError: WAVE-02 CM-01 #7：runner 必須提供『從 isolated backend.log bounded 解析唯一 stored filename + task_id』的 helper（0 筆逾時、>1 筆皆 FAIL）；現行 runner 沒有任何 upload-log mapping 解析能力（callables：['Optional', 'Path', 'ZoneInfo', 'build_child_env', 'capture_model_snapshot', 'datetime', 'main', 'normalize_base_url', 'pick_free_port', 'resolve_expected_revision', 'run_full_e2e', 'save_json', 'taipei_now', 'terminate_owned_process', 'wait_for_health']）
+E       assert None is not None
+
+tests/test_owned_e2e_acceptance.py:880: AssertionError
+________ test_invalid_metrics_must_fail[missing-metrics-metrics_lines0] ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b38ef0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b3b320>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail0')
+case = 'missing-metrics', metrics_lines = []
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.440154+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail0/e2e-artifacts\n")
+case = 'missing-metrics'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='missing-metrics' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.440154+08:00', 'finished_at': '2026-08-27T19:31:21.441652+08:00', 'port': 50677, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.440154+08:00', 'finished_at': '2026-08-27T19:31:21.441652+08:00', 'port': 50677, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.440154+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_ test_invalid_metrics_must_fail[semantic-attempts-above-bound-metrics_lines1] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b3adb0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b3ae10>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail1')
+case = 'semantic-attempts-above-bound'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=1, semantic_attempts=3, network_retries=0, merge_..._groups_last_round=1, duration_seconds={'extraction': 100.0, 'merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}"]
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.459532+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail1/e2e-artifacts\n")
+case = 'semantic-attempts-above-bound'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='semantic-attempts-above-bound' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.459532+08:00', 'finished_at': '2026-08-27T19:31:21.460649+08:00', 'port': 50678, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.459532+08:00', 'finished_at': '2026-08-27T19:31:21.460649+08:00', 'port': 50678, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.459532+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail1/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_____ test_invalid_metrics_must_fail[merge-rounds-exceed-3-metrics_lines2] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109aa3c50>
+capsys = <_pytest.capture.CaptureFixture object at 0x109aa2a50>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail2')
+case = 'merge-rounds-exceed-3'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_..._groups_last_round=1, duration_seconds={'extraction': 100.0, 'merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}"]
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.478478+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail2/e2e-artifacts\n")
+case = 'merge-rounds-exceed-3'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='merge-rounds-exceed-3' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.478478+08:00', 'finished_at': '2026-08-27T19:31:21.479725+08:00', 'port': 50679, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.478478+08:00', 'finished_at': '2026-08-27T19:31:21.479725+08:00', 'port': 50679, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.478478+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail2/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_________ test_invalid_metrics_must_fail[max-tokens-1-metrics_lines3] __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b39940>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b3a750>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail3')
+case = 'max-tokens-1'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_... 使用 LM Studio 生成摘要 (model=qwen3.6-35b-a3b-mlx, instance=inst-a1, temperature=0.3, max_tokens=1, attempt_type=initial)']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.497849+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail3/e2e-artifacts\n")
+case = 'max-tokens-1'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='max-tokens-1' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.497849+08:00', 'finished_at': '2026-08-27T19:31:21.498989+08:00', 'port': 50680, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.497849+08:00', 'finished_at': '2026-08-27T19:31:21.498989+08:00', 'port': 50680, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.497849+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail3/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+________ test_invalid_metrics_must_fail[hard-truncation-metrics_lines4] ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b19eb0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b1ac60>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail4')
+case = 'hard-truncation'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_...merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}", 'WARNING:  整併筆記硬截斷：45000 → 3112 tokens（預算 3112）；後段內容未進入最終生成']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.517154+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail4/e2e-artifacts\n")
+case = 'hard-truncation'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='hard-truncation' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.517154+08:00', 'finished_at': '2026-08-27T19:31:21.518391+08:00', 'port': 50681, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.517154+08:00', 'finished_at': '2026-08-27T19:31:21.518391+08:00', 'port': 50681, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.517154+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail4/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_ test_invalid_metrics_must_fail[merge-nonconvergence-while-completed-metrics_lines5] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b3a3c0>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b3a240>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail5')
+case = 'merge-nonconvergence-while-completed'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_... 50.0, 'final_and_refine': 20.0, 'total': 170.0}", 'ERROR:    LM Studio 摘要整併失敗：LOCAL_LLM_MERGE_NOT_CONVERGED（單輪無實質進度）']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.536643+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail5/e2e-artifacts\n")
+case = 'merge-nonconvergence-while-completed'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='merge-nonconvergence-while-completed' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.536643+08:00', 'finished_at': '2026-08-27T19:31:21.537767+08:00', 'port': 50682, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.536643+08:00', 'finished_at': '2026-08-27T19:31:21.537767+08:00', 'port': 50682, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.536643+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_invalid_metrics_must_fail5/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+______ test_preflight_gate_helpers_exist_and_run_before_start_and_upload _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109b1bf80>
+capsys = <_pytest.capture.CaptureFixture object at 0x109b1bb30>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-5/test_preflight_gate_helpers_ex0')
+
+    def test_preflight_gate_helpers_exist_and_run_before_start_and_upload(monkeypatch, capsys, tmp_path):
+        """批准契約：revision/clean/data/model 等 gates 必須是可測試的 discrete helpers，
+        且在啟動 backend／任何 upload 之前執行（行為面另由本檔其他測試的
+        popen/upload call count 斷言鎖定）。"""
+        names = _callable_names(runner)
+        validate_verbs = ("validate", "check", "ensure", "preflight", "gate", "assert")
+    
+        data_gates = [n for n in names if "data" in n.lower() and any(v in n.lower() for v in validate_verbs)]
+        clean_gates = [n for n in names if any(v in n.lower() for v in ("clean", "dirty", "worktree"))]
+        model_gates = [
+            n for n in names
+            if "model" in n.lower() and any(v in n.lower() for v in (*validate_verbs, "unique", "consistency", "snapshot_match"))
+        ]
+        metrics_helpers = [n for n in names if "metric" in n.lower()]
+        sha_helpers = [n for n in names if "sha" in n.lower() or "hash" in n.lower()]
+    
+        missing = []
+        if not data_gates:
+            missing.append("DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）")
+        if not clean_gates:
+            missing.append("clean worktree / revision gate helper")
+        if not model_gates:
+            missing.append("model/instance 唯一性 gate helper")
+        if not metrics_helpers:
+            missing.append("structured metrics validator/parser")
+        if not sha_helpers:
+            missing.append("SHA-256 helper（source audio vs stored bytes 比對）")
+>       assert not missing, (
+            "WAVE-02 gate 契約缺少可測試 helpers（gate 必須存在且在 backend start/upload 前執行）："
+            + "; ".join(missing)
+            + f"；現行 runner callables：{names}"
+        )
+E       AssertionError: WAVE-02 gate 契約缺少可測試 helpers（gate 必須存在且在 backend start/upload 前執行）：DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）; clean worktree / revision gate helper; model/instance 唯一性 gate helper; structured metrics validator/parser; SHA-256 helper（source audio vs stored bytes 比對）；現行 runner callables：['Optional', 'Path', 'ZoneInfo', 'build_child_env', 'capture_model_snapshot', 'datetime', 'main', 'normalize_base_url', 'pick_free_port', 'resolve_expected_revision', 'run_full_e2e', 'save_json', 'taipei_now', 'terminate_owned_process', 'wait_for_health']
+E       assert not ['DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）', 'clean worktree / revision gate helper', 'model/instance 唯一性 gate helper', 'structured metrics validator/parser', 'SHA-256 helper（source audio vs stored bytes 比對）']
+
+tests/test_owned_e2e_acceptance.py:992: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_owned_e2e_acceptance.py::test_revision_mismatch_must_stop_before_any_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_completed_with_summary_failed_true_must_fail_verdict
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_download_label_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_ooxml_content_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_stored_upload_bytes_sha_mismatch_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_llm_models_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_instances_of_one_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_zero_loaded_llm_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_model_changed_between_start_and_end_snapshots_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-is-regular-file]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-parent-readonly]
+FAILED tests/test_owned_e2e_acceptance.py::test_missing_audio_fails_closed_before_backend_start
+FAILED tests/test_owned_e2e_acceptance.py::test_browser_upload_log_mapping_requires_unique_match
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[missing-metrics-metrics_lines0]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[semantic-attempts-above-bound-metrics_lines1]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-rounds-exceed-3-metrics_lines2]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[max-tokens-1-metrics_lines3]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[hard-truncation-metrics_lines4]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-nonconvergence-while-completed-metrics_lines5]
+FAILED tests/test_owned_e2e_acceptance.py::test_preflight_gate_helpers_exist_and_run_before_start_and_upload
+20 failed, 3 passed in 0.47s
+
+===============================================================================
+== RUN 2 (plain, no DATA_DIR env): tests use explicit --data-dir under pytest tmp_path
+===============================================================================
+$ TEST_DATA_ROOT=data/cache/wave01-test-data-root-plain && mkdir -p "$TEST_DATA_ROOT" && uv run pytest -q tests/test_owned_e2e_acceptance.py
+FFFFF.FFFFFFFFFFFFFF.F.                                                  [100%]
+=================================== FAILURES ===================================
+______________ test_revision_mismatch_must_stop_before_any_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1095a0ce0>
+capsys = <_pytest.capture.CaptureFixture object at 0x1095a0e00>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_revision_mismatch_must_st0')
+
+    def test_revision_mismatch_must_stop_before_any_upload(monkeypatch, capsys, tmp_path):
+        """health build_revision != expected 時，upload 呼叫次數必須為 0（fail closed）。
+    
+        現行 runner 只把 mismatch append 到 failure_reasons 後繼續 run_full_e2e →
+        仍會對 stale backend 執行昂貴上傳（WAVE-01 red 的核心原因）。
+        """
+        flow = _standard_flow(tmp_path, health_revision=STALE_REVISION)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert len(flow["client"].upload_calls) == 0, (
+            f"revision mismatch 時 upload 仍被呼叫 {len(flow['client'].upload_calls)} 次——"
+            "runner 必須在 upload 前因 mismatch fail closed（CM-01 #1／REQ-CORE-01）"
+        )
+E       AssertionError: revision mismatch 時 upload 仍被呼叫 1 次——runner 必須在 upload 前因 mismatch fail closed（CM-01 #1／REQ-CORE-01）
+E       assert 1 == 0
+E        +  where 1 = len([{'url': 'http://127.0.0.1:50685/api/upload', 'data': {'processing_mode': 'local'}}])
+E        +    where [{'url': 'http://127.0.0.1:50685/api/upload', 'data': {'processing_mode': 'local'}}] = <tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x109669610>.upload_calls
+
+tests/test_owned_e2e_acceptance.py:492: AssertionError
+__________ test_completed_with_summary_failed_true_must_fail_verdict ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10993f950>
+capsys = <_pytest.capture.CaptureFixture object at 0x10993ff50>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_completed_with_summary_fa0')
+
+    def test_completed_with_summary_failed_true_must_fail_verdict(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, summary_failed=True)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+        assert result.summary is not None, "runner 必須寫出 run_summary.json"
+>       assert result.summary["verdict"] == "FAIL", (
+            f"task=completed + summary_failed=true 時 runner 判 {result.summary['verdict']!r}——"
+            "正式會議紀錄驗收必須把 transcript fallback 判為 FAIL（CM-01 #2／RC-3B）"
+        )
+E       AssertionError: task=completed + summary_failed=true 時 runner 判 'PASS'——正式會議紀錄驗收必須把 transcript fallback 判為 FAIL（CM-01 #2／RC-3B）
+E       assert 'PASS' == 'FAIL'
+E         
+E         - FAIL
+E         + PASS
+
+tests/test_owned_e2e_acceptance.py:516: AssertionError
+_________________ test_fallback_docx_download_label_must_fail __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10993eff0>
+capsys = <_pytest.capture.CaptureFixture object at 0x10993fa10>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_fallback_docx_download_la0')
+
+    def test_fallback_docx_download_label_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(
+            tmp_path,
+            summary_failed=False,  # 隔離文件層偵測：即便旗標缺失/為 False，fallback 文件也必須 FAIL
+            docx_label=FALLBACK_FILENAME_LABEL,
+            docx_bytes=_fallback_docx_bytes(),
+        )
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            "Content-Disposition 帶 fallback 下載標籤（逐字稿(會議紀錄生成失敗)）時 runner 仍 PASS——"
+            "runner 必須檢查 Content-Disposition 正式 label（CM-01 #3）"
+        )
+E       AssertionError: Content-Disposition 帶 fallback 下載標籤（逐字稿(會議紀錄生成失敗)）時 runner 仍 PASS——runner 必須檢查 Content-Disposition 正式 label（CM-01 #3）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.862239+08:00', 'finished_at': '2026-08-27T19:31:21.863273+08:00', 'port': 50687, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.862239+08:00', 'finished_at': '2026-08-27T19:31:21.863273+08:00', 'port': 50687, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.862239+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_fallback_docx_download_la0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:545: AssertionError
+__________________ test_fallback_docx_ooxml_content_must_fail __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10993f200>
+capsys = <_pytest.capture.CaptureFixture object at 0x10993ffb0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_fallback_docx_ooxml_conte0')
+
+    def test_fallback_docx_ooxml_content_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(
+            tmp_path,
+            summary_failed=False,  # 隔離 OOXML 內容檢查本身
+            docx_label=FORMAL_LABEL,  # header 正式，但 OOXML 內容是 fallback
+            docx_bytes=_fallback_docx_bytes(),
+        )
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            "DOCX OOXML 含 fallback title／empty-summary error 時 runner 仍 PASS——"
+            "runner 必須解析 OOXML 文字並拒絕 fallback 文件（CM-01 #3）"
+        )
+E       AssertionError: DOCX OOXML 含 fallback title／empty-summary error 時 runner 仍 PASS——runner 必須解析 OOXML 文字並拒絕 fallback 文件（CM-01 #3）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.883966+08:00', 'finished_at': '2026-08-27T19:31:21.885168+08:00', 'port': 50688, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.883966+08:00', 'finished_at': '2026-08-27T19:31:21.885168+08:00', 'port': 50688, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.883966+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_fallback_docx_ooxml_conte0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:570: AssertionError
+_______________ test_stored_upload_bytes_sha_mismatch_must_fail ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109274e30>
+capsys = <_pytest.capture.CaptureFixture object at 0x109247470>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_stored_upload_bytes_sha_m0')
+
+    def test_stored_upload_bytes_sha_mismatch_must_fail(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, stored_bytes=b"tampered-or-wrong-bytes")
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"stored upload bytes={flow['client']._stored_bytes!r} 與 source audio 不同仍 PASS——"
+            "runner 必須對 DATA_DIR/uploads/<stored> 計算 SHA-256 並與 expected 比對（CM-01 #4）"
+        )
+E       AssertionError: stored upload bytes=b'tampered-or-wrong-bytes' 與 source audio 不同仍 PASS——runner 必須對 DATA_DIR/uploads/<stored> 計算 SHA-256 並與 expected 比對（CM-01 #4）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.900775+08:00', 'finished_at': '2026-08-27T19:31:21.902024+08:00', 'port': 50689, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.900775+08:00', 'finished_at': '2026-08-27T19:31:21.902024+08:00', 'port': 50689, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.900775+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_stored_upload_bytes_sha_m0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:594: AssertionError
+______________ test_two_loaded_llm_models_must_fail_before_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10993f350>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099785c0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_llm_models_mus0')
+
+    def test_two_loaded_llm_models_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        models_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_A, "config": {"context_length": 183296}}],
+                },
+                {
+                    "key": MODEL_B_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_B, "config": {"context_length": 8192}}],
+                },
+            ]
+        }
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response(models_payload))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "two_models")
+
+tests/test_owned_e2e_acceptance.py:664: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.930048+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_llm_models_mus0/e2e-artifacts\n")
+case_name = 'two_models'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（two_models）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.930048+08:00', 'finished_at': '2026-08-27T19:31:21.932636+08:00', 'port': 50691, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.930048+08:00', 'finished_at': '2026-08-27T19:31:21.932636+08:00', 'port': 50691, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.930048+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_llm_models_mus0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+________ test_two_loaded_instances_of_one_model_must_fail_before_upload ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109979f40>
+capsys = <_pytest.capture.CaptureFixture object at 0x10997bbf0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_instances_of_o0')
+
+    def test_two_loaded_instances_of_one_model_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        models_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [
+                        {"id": INSTANCE_A, "config": {"context_length": 183296}},
+                        {"id": INSTANCE_B, "config": {"context_length": 8192}},
+                    ],
+                }
+            ]
+        }
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response(models_payload))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "two_instances")
+
+tests/test_owned_e2e_acceptance.py:689: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.949657+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_instances_of_o0/e2e-artifacts\n")
+case_name = 'two_instances'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（two_instances）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.949657+08:00', 'finished_at': '2026-08-27T19:31:21.950809+08:00', 'port': 50692, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.949657+08:00', 'finished_at': '2026-08-27T19:31:21.950809+08:00', 'port': 50692, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.949657+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_two_loaded_instances_of_o0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+______________ test_zero_loaded_llm_model_must_fail_before_upload ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099b0a70>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099b3aa0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_zero_loaded_llm_model_mus0')
+
+    def test_zero_loaded_llm_model_must_fail_before_upload(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, models_factory=lambda _c: _lmstudio_models_response({"models": []}))
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_unique_model_gate(result, "zero_models")
+
+tests/test_owned_e2e_acceptance.py:702: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.968772+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_zero_loaded_llm_model_mus0/e2e-artifacts\n")
+case_name = 'zero_models'
+
+    def _assert_unique_model_gate(result, case_name):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"loaded LLM inventory 非唯一（{case_name}）時 runner 仍 PASS——"
+            "runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）"
+        )
+E       AssertionError: loaded LLM inventory 非唯一（zero_models）時 runner 仍 PASS——runner 必須要求恰好一個 model 且恰好一個 instance（CM-01 #5）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.968772+08:00', 'finished_at': '2026-08-27T19:31:21.969937+08:00', 'port': 50693, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.968772+08:00', 'finished_at': '2026-08-27T19:31:21.969937+08:00', 'port': 50693, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.968772+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_zero_loaded_llm_model_mus0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:628: AssertionError
+_________ test_model_changed_between_start_and_end_snapshots_must_fail _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10997bc50>
+capsys = <_pytest.capture.CaptureFixture object at 0x109979c10>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_model_changed_between_sta0')
+
+    def test_model_changed_between_start_and_end_snapshots_must_fail(monkeypatch, capsys, tmp_path):
+        """start snapshot 是唯一 model A；end snapshot 變成 model B → 必須 FAIL。
+    
+        現行 runner 只 capture 一次 snapshot 且不比較（capability absent + 行為缺失）。
+        """
+        start_payload = {
+            "models": [
+                {
+                    "key": MODEL_A_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": INSTANCE_A, "config": {"context_length": 183296}}],
+                }
+            ]
+        }
+        end_payload = {
+            "models": [
+                {
+                    "key": MODEL_B_KEY,
+                    "type": "llm",
+                    "loaded_instances": [{"id": "inst-b1", "config": {"context_length": 8192}}],
+                }
+            ]
+        }
+    
+        def models_factory(call_index):
+            return _lmstudio_models_response(start_payload if call_index == 1 else end_payload)
+    
+        flow = _standard_flow(tmp_path, models_factory=models_factory)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+    
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"run 前後 model snapshot 改變（{MODEL_A_KEY} → {MODEL_B_KEY}）仍 PASS——"
+            "runner 必須 capture 並比較 ending model snapshot（CM-01 #5／CM-02 metrics+model snapshot）"
+        )
+E       AssertionError: run 前後 model snapshot 改變（qwen3.6-35b-a3b-mlx → other-model）仍 PASS——runner 必須 capture 並比較 ending model snapshot（CM-01 #5／CM-02 metrics+model snapshot）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:21.987635+08:00', 'finished_at': '2026-08-27T19:31:21.989089+08:00', 'port': 50694, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:21.987635+08:00', 'finished_at': '2026-08-27T19:31:21.989089+08:00', 'port': 50694, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:21.987635+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_model_changed_between_sta0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:742: AssertionError
+__ test_invalid_or_unwritable_data_dir_fails_closed[data-dir-is-regular-file] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099b1d00>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099b0140>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_or_unwritable_dat0')
+case = 'data-dir-is-regular-file'
+
+    @pytest.mark.parametrize("case", ["data-dir-is-regular-file", "data-dir-parent-readonly"])
+    def test_invalid_or_unwritable_data_dir_fails_closed(monkeypatch, capsys, tmp_path, case):
+        audio_path = tmp_path / "audio.m4a"
+        audio_path.write_bytes(AUDIO_BYTES)
+    
+        read_only_parent = None
+        if case == "data-dir-is-regular-file":
+            bad_data_dir = tmp_path / "not-a-dir"
+            bad_data_dir.write_bytes(b"this is a file, not a directory")
+        else:
+            read_only_parent = tmp_path / "read-only"
+            read_only_parent.mkdir()
+            bad_data_dir = read_only_parent / "data"
+        try:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o555)
+            result = _run_runner(
+                monkeypatch, capsys, tmp_path,
+                audio_path=audio_path, data_dir=bad_data_dir,
+            )
+        finally:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o755)
+    
+        assert len(result.popen_calls) == 0, (
+            f"invalid/unwritable DATA_DIR（case={case}）時 backend 仍被啟動——"
+            "DATA_DIR preflight 必須在啟動 child 之前 fail closed（CM-01 #6）"
+        )
+>       assert _looks_like_explicit_data_dir_gate_failure(result), (
+            f"invalid/unwritable DATA_DIR（case={case}）必須輸出明確的 DATA_DIR gate failure"
+            "（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；"
+            f"實際：exception={result.exception!r}, summary={result.summary!r}, output={result.output!r}"
+        )
+E       AssertionError: invalid/unwritable DATA_DIR（case=data-dir-is-regular-file）必須輸出明確的 DATA_DIR gate failure（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；實際：exception=FileExistsError(17, 'File exists'), summary=None, output=''
+E       assert False
+E        +  where False = _looks_like_explicit_data_dir_gate_failure(namespace(exit_code=None, exception=FileExistsError(17, 'File exists'), summary=None, artifacts_dir=PosixPath('/privat...n_calls=[], models_calls=0, client=<tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x1099b3e60>, output=''))
+
+tests/test_owned_e2e_acceptance.py:797: AssertionError
+__ test_invalid_or_unwritable_data_dir_fails_closed[data-dir-parent-readonly] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10997a030>
+capsys = <_pytest.capture.CaptureFixture object at 0x10997bfb0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_or_unwritable_dat1')
+case = 'data-dir-parent-readonly'
+
+    @pytest.mark.parametrize("case", ["data-dir-is-regular-file", "data-dir-parent-readonly"])
+    def test_invalid_or_unwritable_data_dir_fails_closed(monkeypatch, capsys, tmp_path, case):
+        audio_path = tmp_path / "audio.m4a"
+        audio_path.write_bytes(AUDIO_BYTES)
+    
+        read_only_parent = None
+        if case == "data-dir-is-regular-file":
+            bad_data_dir = tmp_path / "not-a-dir"
+            bad_data_dir.write_bytes(b"this is a file, not a directory")
+        else:
+            read_only_parent = tmp_path / "read-only"
+            read_only_parent.mkdir()
+            bad_data_dir = read_only_parent / "data"
+        try:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o555)
+            result = _run_runner(
+                monkeypatch, capsys, tmp_path,
+                audio_path=audio_path, data_dir=bad_data_dir,
+            )
+        finally:
+            if read_only_parent is not None:
+                read_only_parent.chmod(0o755)
+    
+        assert len(result.popen_calls) == 0, (
+            f"invalid/unwritable DATA_DIR（case={case}）時 backend 仍被啟動——"
+            "DATA_DIR preflight 必須在啟動 child 之前 fail closed（CM-01 #6）"
+        )
+>       assert _looks_like_explicit_data_dir_gate_failure(result), (
+            f"invalid/unwritable DATA_DIR（case={case}）必須輸出明確的 DATA_DIR gate failure"
+            "（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；"
+            f"實際：exception={result.exception!r}, summary={result.summary!r}, output={result.output!r}"
+        )
+E       AssertionError: invalid/unwritable DATA_DIR（case=data-dir-parent-readonly）必須輸出明確的 DATA_DIR gate failure（例如 exit 1 + 提及 DATA_DIR 不可寫/無效的訊息或 explicit RuntimeError）；實際：exception=PermissionError(13, 'Permission denied'), summary=None, output=''
+E       assert False
+E        +  where False = _looks_like_explicit_data_dir_gate_failure(namespace(exit_code=None, exception=PermissionError(13, 'Permission denied'), summary=None, artifacts_dir=PosixPath('/...n_calls=[], models_calls=0, client=<tests.test_owned_e2e_acceptance.FakeUploadClient object at 0x1099b11c0>, output=''))
+
+tests/test_owned_e2e_acceptance.py:797: AssertionError
+_____________ test_missing_audio_fails_closed_before_backend_start _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10997b9b0>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d2db0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_missing_audio_fails_close0')
+
+    def test_missing_audio_fails_closed_before_backend_start(monkeypatch, capsys, tmp_path):
+        flow = _standard_flow(tmp_path, audio_exists=False)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+        )
+    
+>       assert len(result.popen_calls) == 0, (
+            "--audio 不存在時 backend 仍被啟動（Popen 呼叫 "
+            f"{len(result.popen_calls)} 次）——audio 存在性屬啟動前 hard preflight（CM-01 #6／固定 gate order）"
+        )
+E       AssertionError: --audio 不存在時 backend 仍被啟動（Popen 呼叫 1 次）——audio 存在性屬啟動前 hard preflight（CM-01 #6／固定 gate order）
+E       assert 1 == 0
+E        +  where 1 = len([{'args': (['/Users/hsiaojohnny/dev/convert/.venv/bin/python', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0...00gn/T/pytest-of-hsiaojohnny/pytest-6/test_missing_audio_fails_close0/e2e-artifacts/backend.log'>, 'stderr': -2, ...}}])
+E        +    where [{'args': (['/Users/hsiaojohnny/dev/convert/.venv/bin/python', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0...00gn/T/pytest-of-hsiaojohnny/pytest-6/test_missing_audio_fails_close0/e2e-artifacts/backend.log'>, 'stderr': -2, ...}}] = namespace(exit_code=1, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.046015+08:00', 'fin...st_missing_audio_fails_close0/audio.m4a'\n  - 缺少必要檢查：['task_completed', 'transcript_downloaded', 'docx_downloaded']\n").popen_calls
+
+tests/test_owned_e2e_acceptance.py:817: AssertionError
+____________ test_browser_upload_log_mapping_requires_unique_match _____________
+
+    def test_browser_upload_log_mapping_requires_unique_match():
+        single = (
+            f"2026-08-27 12:00:00 | INFO | 檔案上傳成功: 盤點工具討論.m4a -> {STORED_FILENAME}, "
+            f"任務ID: {TASK_ID}\n"
+        )
+        zero = "2026-08-27 12:00:01 | INFO | 與上傳無關的訊息\n"
+        double = single + single.replace(TASK_ID, "task-0002")
+    
+        helper, name = _find_browser_upload_mapping_helper(runner)
+>       assert helper is not None, (
+            "WAVE-02 CM-01 #7：runner 必須提供『從 isolated backend.log bounded 解析唯一 "
+            "stored filename + task_id』的 helper（0 筆逾時、>1 筆皆 FAIL）；"
+            f"現行 runner 沒有任何 upload-log mapping 解析能力（callables：{_callable_names(runner)}）"
+        )
+E       AssertionError: WAVE-02 CM-01 #7：runner 必須提供『從 isolated backend.log bounded 解析唯一 stored filename + task_id』的 helper（0 筆逾時、>1 筆皆 FAIL）；現行 runner 沒有任何 upload-log mapping 解析能力（callables：['Optional', 'Path', 'ZoneInfo', 'build_child_env', 'capture_model_snapshot', 'datetime', 'main', 'normalize_base_url', 'pick_free_port', 'resolve_expected_revision', 'run_full_e2e', 'save_json', 'taipei_now', 'terminate_owned_process', 'wait_for_health']）
+E       assert None is not None
+
+tests/test_owned_e2e_acceptance.py:880: AssertionError
+________ test_invalid_metrics_must_fail[missing-metrics-metrics_lines0] ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099d0ef0>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d1400>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail0')
+case = 'missing-metrics', metrics_lines = []
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.068090+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail0/e2e-artifacts\n")
+case = 'missing-metrics'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='missing-metrics' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.068090+08:00', 'finished_at': '2026-08-27T19:31:22.069280+08:00', 'port': 50698, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.068090+08:00', 'finished_at': '2026-08-27T19:31:22.069280+08:00', 'port': 50698, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.068090+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail0/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_ test_invalid_metrics_must_fail[semantic-attempts-above-bound-metrics_lines1] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099d0e90>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d2810>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail1')
+case = 'semantic-attempts-above-bound'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=1, semantic_attempts=3, network_retries=0, merge_..._groups_last_round=1, duration_seconds={'extraction': 100.0, 'merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}"]
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.087454+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail1/e2e-artifacts\n")
+case = 'semantic-attempts-above-bound'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='semantic-attempts-above-bound' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.087454+08:00', 'finished_at': '2026-08-27T19:31:22.088598+08:00', 'port': 50699, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.087454+08:00', 'finished_at': '2026-08-27T19:31:22.088598+08:00', 'port': 50699, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.087454+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail1/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_____ test_invalid_metrics_must_fail[merge-rounds-exceed-3-metrics_lines2] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099d3290>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d0680>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail2')
+case = 'merge-rounds-exceed-3'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_..._groups_last_round=1, duration_seconds={'extraction': 100.0, 'merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}"]
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.106490+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail2/e2e-artifacts\n")
+case = 'merge-rounds-exceed-3'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='merge-rounds-exceed-3' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.106490+08:00', 'finished_at': '2026-08-27T19:31:22.107552+08:00', 'port': 50700, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.106490+08:00', 'finished_at': '2026-08-27T19:31:22.107552+08:00', 'port': 50700, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.106490+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail2/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_________ test_invalid_metrics_must_fail[max-tokens-1-metrics_lines3] __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099d0710>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d35c0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail3')
+case = 'max-tokens-1'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_... 使用 LM Studio 生成摘要 (model=qwen3.6-35b-a3b-mlx, instance=inst-a1, temperature=0.3, max_tokens=1, attempt_type=initial)']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.125153+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail3/e2e-artifacts\n")
+case = 'max-tokens-1'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='max-tokens-1' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.125153+08:00', 'finished_at': '2026-08-27T19:31:22.126314+08:00', 'port': 50701, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.125153+08:00', 'finished_at': '2026-08-27T19:31:22.126314+08:00', 'port': 50701, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.125153+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail3/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+________ test_invalid_metrics_must_fail[hard-truncation-metrics_lines4] ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099b0740>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099b0860>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail4')
+case = 'hard-truncation'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_...merge': 50.0, 'final_and_refine': 20.0, 'total': 170.0}", 'WARNING:  整併筆記硬截斷：45000 → 3112 tokens（預算 3112）；後段內容未進入最終生成']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.144063+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail4/e2e-artifacts\n")
+case = 'hard-truncation'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='hard-truncation' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.144063+08:00', 'finished_at': '2026-08-27T19:31:22.145144+08:00', 'port': 50702, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.144063+08:00', 'finished_at': '2026-08-27T19:31:22.145144+08:00', 'port': 50702, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.144063+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail4/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+_ test_invalid_metrics_must_fail[merge-nonconvergence-while-completed-metrics_lines5] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099d1ee0>
+capsys = <_pytest.capture.CaptureFixture object at 0x1099d27b0>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail5')
+case = 'merge-nonconvergence-while-completed'
+metrics_lines = ["INFO:     本地摘要 pipeline metrics：chunk_count=9, logical_generations=9, semantic_attempts=9, network_retries=0, merge_... 50.0, 'final_and_refine': 20.0, 'total': 170.0}", 'ERROR:    LM Studio 摘要整併失敗：LOCAL_LLM_MERGE_NOT_CONVERGED（單輪無實質進度）']
+
+    @pytest.mark.parametrize(
+        "case, metrics_lines",
+        [
+            ("missing-metrics", []),
+            ("semantic-attempts-above-bound", [METRICS_ATTEMPTS_LINE]),
+            ("merge-rounds-exceed-3", [METRICS_MERGE_ROUNDS_LINE]),
+            ("max-tokens-1", [METRICS_OK_LINE, MAX_TOKENS_1_LINE]),
+            ("hard-truncation", [METRICS_OK_LINE, HARD_TRUNCATION_LINE]),
+            ("merge-nonconvergence-while-completed", [METRICS_OK_LINE, MERGE_NONCONVERGENCE_LINE]),
+        ],
+    )
+    def test_invalid_metrics_must_fail(monkeypatch, capsys, tmp_path, case, metrics_lines):
+        flow = _standard_flow(tmp_path, metrics_lines=metrics_lines)
+        result = _run_runner(
+            monkeypatch, capsys, tmp_path,
+            audio_path=flow["audio_path"],
+            data_dir=flow["data_dir"],
+            health_json=flow["health_json"],
+            models_factory=flow["models_factory"],
+            client=flow["client"],
+        )
+>       _assert_metrics_veto(result, case)
+
+tests/test_owned_e2e_acceptance.py:935: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.162281+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail5/e2e-artifacts\n")
+case = 'merge-nonconvergence-while-completed'
+
+    def _assert_metrics_veto(result, case):
+>       assert result.summary is not None and result.summary["verdict"] == "FAIL", (
+            f"metrics case={case!r} 時 runner 仍 PASS——runner 必須解析 structured metrics 並"
+            "拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）"
+        )
+E       AssertionError: metrics case='merge-nonconvergence-while-completed' 時 runner 仍 PASS——runner 必須解析 structured metrics 並拒絕缺失/超界/截斷/non-convergence 成功假象（CM-01 #8）
+E       assert ({'mode': 'full', 'started_at': '2026-08-27T19:31:22.162281+08:00', 'finished_at': '2026-08-27T19:31:22.163613+08:00', 'port': 50703, ...} is not None and 'PASS' == 'FAIL'
+E        +  where {'mode': 'full', 'started_at': '2026-08-27T19:31:22.162281+08:00', 'finished_at': '2026-08-27T19:31:22.163613+08:00', 'port': 50703, ...} = namespace(exit_code=0, exception=None, summary={'mode': 'full', 'started_at': '2026-08-27T19:31:22.162281+08:00', 'fin...rs/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_invalid_metrics_must_fail5/e2e-artifacts\n").summary
+E         
+E         - FAIL
+E         + PASS)
+
+tests/test_owned_e2e_acceptance.py:901: AssertionError
+______ test_preflight_gate_helpers_exist_and_run_before_start_and_upload _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1099b1b20>
+capsys = <_pytest.capture.CaptureFixture object at 0x109979580>
+tmp_path = PosixPath('/private/var/folders/0r/r3qmjfbn0z57mtmdxmnp60c80000gn/T/pytest-of-hsiaojohnny/pytest-6/test_preflight_gate_helpers_ex0')
+
+    def test_preflight_gate_helpers_exist_and_run_before_start_and_upload(monkeypatch, capsys, tmp_path):
+        """批准契約：revision/clean/data/model 等 gates 必須是可測試的 discrete helpers，
+        且在啟動 backend／任何 upload 之前執行（行為面另由本檔其他測試的
+        popen/upload call count 斷言鎖定）。"""
+        names = _callable_names(runner)
+        validate_verbs = ("validate", "check", "ensure", "preflight", "gate", "assert")
+    
+        data_gates = [n for n in names if "data" in n.lower() and any(v in n.lower() for v in validate_verbs)]
+        clean_gates = [n for n in names if any(v in n.lower() for v in ("clean", "dirty", "worktree"))]
+        model_gates = [
+            n for n in names
+            if "model" in n.lower() and any(v in n.lower() for v in (*validate_verbs, "unique", "consistency", "snapshot_match"))
+        ]
+        metrics_helpers = [n for n in names if "metric" in n.lower()]
+        sha_helpers = [n for n in names if "sha" in n.lower() or "hash" in n.lower()]
+    
+        missing = []
+        if not data_gates:
+            missing.append("DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）")
+        if not clean_gates:
+            missing.append("clean worktree / revision gate helper")
+        if not model_gates:
+            missing.append("model/instance 唯一性 gate helper")
+        if not metrics_helpers:
+            missing.append("structured metrics validator/parser")
+        if not sha_helpers:
+            missing.append("SHA-256 helper（source audio vs stored bytes 比對）")
+>       assert not missing, (
+            "WAVE-02 gate 契約缺少可測試 helpers（gate 必須存在且在 backend start/upload 前執行）："
+            + "; ".join(missing)
+            + f"；現行 runner callables：{names}"
+        )
+E       AssertionError: WAVE-02 gate 契約缺少可測試 helpers（gate 必須存在且在 backend start/upload 前執行）：DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）; clean worktree / revision gate helper; model/instance 唯一性 gate helper; structured metrics validator/parser; SHA-256 helper（source audio vs stored bytes 比對）；現行 runner callables：['Optional', 'Path', 'ZoneInfo', 'build_child_env', 'capture_model_snapshot', 'datetime', 'main', 'normalize_base_url', 'pick_free_port', 'resolve_expected_revision', 'run_full_e2e', 'save_json', 'taipei_now', 'terminate_owned_process', 'wait_for_health']
+E       assert not ['DATA_DIR 可寫/有效 preflight helper（如 validate_data_dir）', 'clean worktree / revision gate helper', 'model/instance 唯一性 gate helper', 'structured metrics validator/parser', 'SHA-256 helper（source audio vs stored bytes 比對）']
+
+tests/test_owned_e2e_acceptance.py:992: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_owned_e2e_acceptance.py::test_revision_mismatch_must_stop_before_any_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_completed_with_summary_failed_true_must_fail_verdict
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_download_label_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_ooxml_content_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_stored_upload_bytes_sha_mismatch_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_llm_models_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_instances_of_one_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_zero_loaded_llm_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_model_changed_between_start_and_end_snapshots_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-is-regular-file]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-parent-readonly]
+FAILED tests/test_owned_e2e_acceptance.py::test_missing_audio_fails_closed_before_backend_start
+FAILED tests/test_owned_e2e_acceptance.py::test_browser_upload_log_mapping_requires_unique_match
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[missing-metrics-metrics_lines0]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[semantic-attempts-above-bound-metrics_lines1]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-rounds-exceed-3-metrics_lines2]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[max-tokens-1-metrics_lines3]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[hard-truncation-metrics_lines4]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-nonconvergence-while-completed-metrics_lines5]
+FAILED tests/test_owned_e2e_acceptance.py::test_preflight_gate_helpers_exist_and_run_before_start_and_upload
+20 failed, 3 passed in 0.46s
+
+===============================================================================
+== RUN 3 (verbose per-test summary of RUN 1)
+===============================================================================
+FAILED tests/test_owned_e2e_acceptance.py::test_revision_mismatch_must_stop_before_any_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_completed_with_summary_failed_true_must_fail_verdict
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_download_label_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_fallback_docx_ooxml_content_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_stored_upload_bytes_sha_mismatch_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_llm_models_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_two_loaded_instances_of_one_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_zero_loaded_llm_model_must_fail_before_upload
+FAILED tests/test_owned_e2e_acceptance.py::test_model_changed_between_start_and_end_snapshots_must_fail
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-is-regular-file]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_or_unwritable_data_dir_fails_closed[data-dir-parent-readonly]
+FAILED tests/test_owned_e2e_acceptance.py::test_missing_audio_fails_closed_before_backend_start
+FAILED tests/test_owned_e2e_acceptance.py::test_browser_upload_log_mapping_requires_unique_match
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[missing-metrics-metrics_lines0]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[semantic-attempts-above-bound-metrics_lines1]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-rounds-exceed-3-metrics_lines2]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[max-tokens-1-metrics_lines3]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[hard-truncation-metrics_lines4]
+FAILED tests/test_owned_e2e_acceptance.py::test_invalid_metrics_must_fail[merge-nonconvergence-while-completed-metrics_lines5]
+FAILED tests/test_owned_e2e_acceptance.py::test_preflight_gate_helpers_exist_and_run_before_start_and_upload

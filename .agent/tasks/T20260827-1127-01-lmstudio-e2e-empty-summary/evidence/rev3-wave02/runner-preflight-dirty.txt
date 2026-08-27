@@ -1,0 +1,10 @@
+# command: uv run python scripts/e2e/run_owned_e2e.py --audio data/cache/wave02-probe-audio.m4a --artifacts-dir data/cache/e2e/preflight-dirty-probe/attempt-20260827-195710 --expected-revision $(git rev-parse HEAD)   (worktree intentionally dirty with WAVE-01/02/sibling changes)
+
+[FAIL] preflight fail closed（backend 未啟動）：
+  - repo worktree 不是 clean（E2E decision-validity gate）：7 個未提交變更——請先形成 clean HEAD 再驗收
+
+EXIT=1
+
+# verification: backend must NOT start (no backend.log), run_summary.json verdict=FAIL
+NO_BACKEND_LOG_OK (backend never started)
+verdict: FAIL | child_pid: None | reasons: ['repo worktree 不是 clean（E2E decision-validity gate）：7 個未提交變更——請先形成 clean HEAD 再驗收']

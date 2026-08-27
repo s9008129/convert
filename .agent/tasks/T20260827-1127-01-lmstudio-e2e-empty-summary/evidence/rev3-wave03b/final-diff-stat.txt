@@ -1,0 +1,25 @@
+# command: git status --short --branch && git diff --stat (final scope inspection before staging, rev3-wave03b)
+---
+## main...origin/main [領先 19]
+ M scripts/e2e/run_owned_e2e.py
+ M scripts/macos/start-mac-native.sh
+ M tests/test_macos_scripts.py
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave01/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave02/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave03a/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave03b/
+?? tests/test_owned_e2e_acceptance.py
+
+ scripts/e2e/run_owned_e2e.py      | 887 ++++++++++++++++++++++++++++++++++----
+ scripts/macos/start-mac-native.sh |  94 +++-
+ tests/test_macos_scripts.py       | 232 ++++++++++
+ 3 files changed, 1115 insertions(+), 98 deletions(-)
+
+# untracked files under task dir:
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave01/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave02/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave03a/
+?? .agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/evidence/rev3-wave03b/
+
+# diff --check:
+CLEAN

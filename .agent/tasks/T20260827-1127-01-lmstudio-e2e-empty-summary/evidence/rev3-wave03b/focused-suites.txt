@@ -1,0 +1,6 @@
+# command: DATA_DIR="$PWD/data/cache/wave03b-testroot/data" uv run pytest -q tests/test_owned_e2e_acceptance.py tests/test_macos_scripts.py
+# purpose: WAVE-03b final focused run of new acceptance harness + launcher contract suites (expect 23 + 12 = 35 passed)
+# observed: see tail
+---
+...................................                                      [100%]
+35 passed in 0.31s

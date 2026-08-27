@@ -1,0 +1,11 @@
+# command: TEST_DATA_ROOT=data/cache/wave02-test-data-root && mkdir -p "$TEST_DATA_ROOT" && DATA_DIR="$PWD/$TEST_DATA_ROOT/data" uv run pytest -q tests/test_owned_e2e_acceptance.py
+
+.......................                                                  [100%]
+23 passed in 0.29s
+
+EXIT=0
+
+# --- extra safety: Revision 2 + WAVE-01 regression suites (runner change must not affect product tests) ---
+# command: TEST_DATA_ROOT=data/cache/wave02-test-data-root DATA_DIR="$PWD/$TEST_DATA_ROOT/data" uv run pytest -q tests/test_t20260827_regression.py tests/test_wave01_merge_budget_separation.py tests/test_wave01_merge_convergence.py tests/test_wave01_overlap_provenance.py tests/test_wave01_recovery_sequence.py
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+33 passed, 2 warnings in 0.57s

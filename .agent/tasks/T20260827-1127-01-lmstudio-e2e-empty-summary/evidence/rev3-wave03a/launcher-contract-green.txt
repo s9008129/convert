@@ -1,0 +1,6 @@
+$ bash -n scripts/macos/start-mac-native.sh && TEST_DATA_ROOT="$PWD/data/cache/wave03a-testroot" DATA_DIR="$PWD/data/cache/wave03a-testroot/data" uv run pytest -q tests/test_macos_scripts.py
+# NOTE: TEST_DATA_ROOT 使用專案內 gitignored data/cache/wave03a-testroot（runtime 禁止 /tmp/mktemp），
+#       與 METHOD 指定的 $(mktemp -d) 具同等 isolated writable root 效果；tests 為靜態契約檢查，不觸碰該目錄。
+[bash -n OK]
+............                                                             [100%]
+12 passed in 0.02s
