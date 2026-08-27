@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -158,9 +159,22 @@ class SummarizationService:
     # max_tokens，也不得用字串截斷修正。
     LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS = 900
 
+    # T20260827-1127-01 RC-4：chunk 邊界重疊的 token 上限，同時供 context
+    # planner 的 effective step 估算與 chunk assembler 的 carry 封頂使用，
+    # 消除「planner 假設 220、assembler 放行半個 chunk」的模型錯位
+    # （19 chunks vs 粗估 12 的呼叫放大）。
+    LOCAL_LLM_CHUNK_OVERLAP_BUDGET_TOKENS = 220
+
     def __init__(self):
         """準備各種 LLM 客戶端與健康檢查快取，減少重複連線成本。"""
         self._ollama_client: Optional[httpx.AsyncClient] = None
+        # T20260827-1127-01 CHANGE_MAP 4：有界呼叫的 structured metrics
+        #（pipeline 起始重置；local pipeline 為循序執行，無併發競態）
+        self._lmstudio_logical_generations = 0
+        self._lmstudio_semantic_attempts = 0
+        self._lmstudio_network_retries = 0
+        self._merge_rounds_used = 0
+        self._merge_groups_last_round = 0
         self._lmstudio_client: Optional[AsyncOpenAI] = None
         self._lmstudio_client_base_url: Optional[str] = None
         self._lmstudio_http_client: Optional[httpx.AsyncClient] = None
@@ -429,7 +443,9 @@ class SummarizationService:
             merge_visible_target_tokens,
             merge_feasible_input,
         )
-        effective_chunk_step = max(chunk_input_budget - 220, 1)
+        effective_chunk_step = max(
+            chunk_input_budget - self.LOCAL_LLM_CHUNK_OVERLAP_BUDGET_TOKENS, 1
+        )
         estimated_chunk_count = max(1, (transcript_tokens + effective_chunk_step - 1) // effective_chunk_step)
 
         return LocalContextPlan(
@@ -584,7 +600,15 @@ class SummarizationService:
 
                 carry_lines = current_lines[-overlap_lines:]
                 carry_tokens = sum(self._estimate_tokens(item) + 1 for item in carry_lines)
-                max_overlap_tokens = max(12, max_input_tokens // 2)
+                # RC-4：carry 同時受共享 220-token 常數與 max_input_tokens 一半
+                # 封頂（極小 budget 時保留 12-token 下限行為）；overlap 可降為零。
+                max_overlap_tokens = max(
+                    12,
+                    min(
+                        self.LOCAL_LLM_CHUNK_OVERLAP_BUDGET_TOKENS,
+                        max_input_tokens // 2,
+                    ),
+                )
                 while len(carry_lines) > 1 and carry_tokens > max_overlap_tokens:
                     removed = carry_lines.pop(0)
                     carry_tokens -= self._estimate_tokens(removed) + 1
@@ -1104,6 +1128,8 @@ class SummarizationService:
             previous_note_count = len(current_notes)
 
             note_groups = self._group_texts_by_budget(current_notes, merge_input_budget_tokens)
+            self._merge_rounds_used = round_index
+            self._merge_groups_last_round = len(note_groups)
             merged_round: list[str] = []
             for group_index, note_group in enumerate(note_groups, start=1):
                 self._emit_progress(
@@ -1453,6 +1479,13 @@ class SummarizationService:
         # LM Studio 選模只在工作開始時做一次；整個摘要工作沿用 immutable
         # selection，避免中途 inventory 變化導致不同階段偷偷換模型。
         lmstudio_selection = self._active_lmstudio_selection
+        # CHANGE_MAP 4：structured metrics 起點（pipeline 級彙總於結束時輸出）
+        self._lmstudio_logical_generations = 0
+        self._lmstudio_semantic_attempts = 0
+        self._lmstudio_network_retries = 0
+        self._merge_rounds_used = 0
+        self._merge_groups_last_round = 0
+        pipeline_started = time.monotonic()
         # v4.7.0：任務級 num_ctx——warmup 自我修復失敗時降級，一次讀取、全程顯式傳遞
         context_tokens = self._effective_context_tokens()
         if lmstudio_selection and lmstudio_selection.context_length:
@@ -1482,6 +1515,7 @@ class SummarizationService:
 
         extracted_notes: list[str] = []
         total_chunks = len(chunks)
+        extraction_started = time.monotonic()
         for chunk_index, chunk in enumerate(chunks, start=1):
             progress = 68.0 + ((chunk_index - 1) / max(total_chunks, 1)) * 12.0
             self._emit_progress(progress_callback, progress, f"萃取逐字稿重點 {chunk_index}/{total_chunks}...")
@@ -1496,6 +1530,7 @@ class SummarizationService:
             )
             extracted_notes.append(self._clean_ollama_output(notes))
 
+        extraction_duration = time.monotonic() - extraction_started
         merged_notes = await self._merge_notes_until_fit(
             engine,
             extracted_notes,
@@ -1507,6 +1542,7 @@ class SummarizationService:
             merge_provider_output_tokens=plan.merge_provider_output_tokens,
         )
 
+        merge_duration = time.monotonic() - extraction_duration - extraction_started
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
         summary = await self._generate_with_local_engine(
             engine,
@@ -1540,6 +1576,22 @@ class SummarizationService:
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")
+
+        # CHANGE_MAP 4：bounded-call structured metrics 彙總（不虛構 wall-time SLO，
+        # 僅呈現呼叫放大與階段耗時事實，供驗收與除錯使用）
+        log.info(
+            "本地摘要 pipeline metrics："
+            f"chunk_count={total_chunks}, "
+            f"logical_generations={self._lmstudio_logical_generations}, "
+            f"semantic_attempts={self._lmstudio_semantic_attempts}, "
+            f"network_retries={self._lmstudio_network_retries}, "
+            f"merge_rounds={self._merge_rounds_used}, "
+            f"merge_groups_last_round={self._merge_groups_last_round}, "
+            f"duration_seconds={{'extraction': {extraction_duration:.1f}, "
+            f"'merge': {merge_duration:.1f}, "
+            f"'final_and_refine': {time.monotonic() - pipeline_started - extraction_duration - merge_duration:.1f}, "
+            f"'total': {time.monotonic() - pipeline_started:.1f}}}"
+        )
 
         return summary
 
@@ -1945,6 +1997,7 @@ class SummarizationService:
         provider recovery 實現。``expand_output_budget`` 僅作用於 Ollama
         num_predict 擴張，不再參與 LM Studio recovery 決策。
         """
+        self._lmstudio_logical_generations += 1
         selection = selection or self._active_lmstudio_selection
         if selection is None:
             selection = await self._resolve_lmstudio_selection()
@@ -2105,6 +2158,7 @@ class SummarizationService:
             initial_max_tokens,
             retry_cap,
         )
+        self._lmstudio_semantic_attempts += 1
         growth_response = await self._lmstudio_chat_request(
             client, selection, messages, temperature, retry_cap
         )
@@ -2180,6 +2234,7 @@ class SummarizationService:
             stop_finish_reason,
             replay_max_tokens,
         )
+        self._lmstudio_semantic_attempts += 1
         replay_response = await self._lmstudio_chat_request(
             client, selection, messages, temperature, replay_max_tokens
         )
@@ -2265,6 +2320,7 @@ class SummarizationService:
                         f"LM Studio chat 請求失敗：{describe_exception(exc)}",
                     ) from exc
                 wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                self._lmstudio_network_retries += 1
                 log.warning(
                     "LM Studio 請求瞬時失敗（第 %s/%s 次）：%s，%.0f 秒後重試",
                     attempt + 1,
@@ -2283,6 +2339,7 @@ class SummarizationService:
                 if isinstance(status_code, int) and status_code >= 500:
                     if attempt < retries:
                         wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
+                        self._lmstudio_network_retries += 1
                         log.warning(
                             "LM Studio server error HTTP {}（第 {}/{} 次），{:.0f} 秒後重試",
                             status_code,
