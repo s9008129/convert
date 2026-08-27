@@ -98,6 +98,9 @@ UPLOAD_SUCCESS_PATTERN = re.compile(
     r"\s*任務ID:\s*(?P<task_id>\S+)"
 )
 METRICS_KEY_VALUE_PATTERN = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(-?\d+)")
+# backend loguru 以 colorize=True 寫檔（backend/core/logger.py），行內含 ANSI 色碼；
+# 解析前必須剝除，避免 task_id 尾端黏上 \x1b[0m 使 URL 建構丟 httpx.InvalidURL
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def taipei_now() -> datetime:
@@ -544,9 +547,14 @@ def validate_formal_docx_bytes(docx_bytes: bytes, content_disposition: Optional[
 
 
 def parse_upload_success_lines(log_text: str) -> list:
-    """解析既有 backend log 的「檔案上傳成功 … 任務ID」行（不新增 endpoint）。"""
+    """解析既有 backend log 的「檔案上傳成功 … 任務ID」行（不新增 endpoint）。
+
+    backend log（loguru colorize=True）行內含 ANSI 色碼；先剝除再解析，
+    避免 task_id/stored filename 尾端黏上 ANSI 序列。
+    """
     matches = []
-    for match in UPLOAD_SUCCESS_PATTERN.finditer(log_text or ""):
+    clean_text = ANSI_ESCAPE_PATTERN.sub("", log_text or "")
+    for match in UPLOAD_SUCCESS_PATTERN.finditer(clean_text):
         matches.append(
             {
                 "original_filename": match.group("original_filename").strip(),

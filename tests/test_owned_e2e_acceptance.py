@@ -897,6 +897,29 @@ def test_browser_upload_log_mapping_requires_unique_match():
     assert _mapping_helper_rejects(helper, double), ">1 筆 upload mapping 必須判 FAIL"
 
 
+def test_upload_log_mapping_strips_ansi_color_codes():
+    """CM-01 #7 補強：backend loguru colorize=True 寫檔，log 行含 ANSI 色碼。
+
+    attempt-01 事故：task_id 尾端黏上 \\x1b[0m → httpx InvalidURL →
+    runner 提前終止（ASR 子程序連帶 SIGTERM）。解析必須先剝除 ANSI。
+    """
+    ansi_line = (
+        "2026-08-27 21:40:08 | INFO     | backend.api.routes:upload_file:187 - "
+        "\x1b[1m檔案上傳成功\x1b[0m: 盤點工具討論.m4a -> "
+        f"{STORED_FILENAME}\x1b[0m, 任務ID: {TASK_ID}\x1b[0m\n"
+    )
+    matches = runner.parse_upload_success_lines(ansi_line)
+    assert len(matches) == 1, f"ANSI 彩色 log 行應解析出唯一 mapping，實際：{matches!r}"
+    parsed = matches[0]
+    for key in ("original_filename", "stored_filename", "task_id"):
+        assert "\x1b" not in parsed[key], f"{key} 不得殘留 ANSI 序列：{parsed[key]!r}"
+    assert parsed["stored_filename"] == STORED_FILENAME
+    assert parsed["task_id"] == TASK_ID, (
+        f"task_id 應為乾淨 {TASK_ID!r}，實際 {parsed['task_id']!r}"
+        "（ANSI 色碼殘留會使後續 URL 建構丟 InvalidURL）"
+    )
+
+
 # ---------------------------------------------------------------------------
 # CM-01 #8：structured metrics 驗收 gate
 # ---------------------------------------------------------------------------
