@@ -1,0 +1,292 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0 -- /Users/hsiaojohnny/dev/convert/.venv/bin/python
+rootdir: /Users/hsiaojohnny/dev/convert
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 5 items
+
+tests/test_wave01_merge_convergence.py::test_merge_grouping_budget_fits_two_target_size_notes_per_group FAILED [ 20%]
+tests/test_wave01_merge_convergence.py::test_single_oversized_note_compacts_alone_without_error FAILED [ 40%]
+tests/test_wave01_merge_convergence.py::test_merge_non_convergence_raises_stable_error_within_max_rounds FAILED [ 60%]
+tests/test_wave01_merge_convergence.py::test_core_merge_path_never_hard_truncates FAILED [ 80%]
+tests/test_wave01_merge_convergence.py::test_tail_sentinel_never_lost_to_truncation FAILED [100%]
+
+=================================== FAILURES ===================================
+_______ test_merge_grouping_budget_fits_two_target_size_notes_per_group ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10afebb30>
+
+    @pytest.mark.asyncio
+    async def test_merge_grouping_budget_fits_two_target_size_notes_per_group(monkeypatch):
+        """Context 可行時，merge 分組每組必須容納至少兩份目標大小 notes。
+    
+        現行程式以 900-token visible target（plan.notes_merge_budget_tokens）分組
+        來源 notes，每組只放得下一份 → provider 呼叫放大；正確行為是以
+        merge_input_budget（context 頭空間扣除 merge prompt overhead 與 provider
+        completion reserve）分組。斷言分組預算與分組結果。
+        """
+        service = SummarizationService()
+        plan = _feasible_plan(service)
+        visible_target = plan.notes_merge_budget_tokens
+    
+        # 可行性前提（plan CHANGE_MAP 1 preflight）：context 頭空間必須同時容納
+        # merge prompt、至少兩份目標大小 notes 與 provider completion reserve。
+        available_input = (
+            plan.context_window_tokens
+            - settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+            - (service._estimate_tokens(service.LOCAL_NOTES_MERGE_PROMPT) + 250)
+        )
+        assert available_input >= 2 * visible_target, (
+            f"測試前提不成立：context {plan.context_window_tokens} 扣除 provider "
+            f"completion reserve {settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS} 與 merge "
+            f"prompt overhead 後僅剩 {available_input} tokens，容不下兩份 "
+            f"{visible_target}-token 目標筆記（此情境應走 preflight stable failure，"
+            "非本測試範疇）"
+        )
+    
+        notes = [
+            _note_with_tokens(service, "A", visible_target),
+            _note_with_tokens(service, "B", visible_target),
+        ]
+        calls = _install_merge_generator(monkeypatch, service, _converging_responder(service))
+    
+        captured = []
+        original_group = service._group_texts_by_budget
+    
+        def spy_group(*args, **kwargs):
+            texts = kwargs.get("texts", args[0] if args else None)
+            budget = kwargs.get("budget_tokens", args[1] if len(args) > 1 else None)
+            groups = original_group(*args, **kwargs)
+            captured.append(
+                {
+                    "texts": list(texts or []),
+                    "budget": budget,
+                    "groups": [list(group) for group in groups],
+                }
+            )
+            return groups
+    
+        monkeypatch.setattr(service, "_group_texts_by_budget", spy_group)
+    
+        result = await service._merge_notes_until_fit(
+            "lmstudio",
+            notes,
+            plan.notes_merge_budget_tokens,
+            context_window_tokens=plan.context_window_tokens,
+            lmstudio_selection=_one_loaded_selection(service),
+        )
+    
+        assert captured, "merge 必須實際分組來源 notes 並呼叫模型整併"
+        first_round = captured[0]
+>       assert first_round["budget"] is not None and first_round["budget"] >= 2 * visible_target, (
+            f"分組預算 {first_round['budget']} 無法在單組容納兩份 {visible_target}-token "
+            f"目標筆記：不應以 900-token visible target 分組來源 notes（每組只放得下"
+            f"一份、呼叫放大）；context 可行（headroom {available_input} ≥ "
+            f"{2 * visible_target}）時應以 merge_input_budget 分組"
+        )
+E       AssertionError: 分組預算 900 無法在單組容納兩份 900-token 目標筆記：不應以 900-token visible target 分組來源 notes（每組只放得下一份、呼叫放大）；context 可行（headroom 4715 ≥ 1800）時應以 merge_input_budget 分組
+E       assert (900 is not None and 900 >= (2 * 900))
+
+tests/test_wave01_merge_convergence.py:237: AssertionError
+___________ test_single_oversized_note_compacts_alone_without_error ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b01bbc0>
+
+    @pytest.mark.asyncio
+    async def test_single_oversized_note_compacts_alone_without_error(monkeypatch):
+        """單一 note 超過 visible target 時必須允許單獨 compaction，不得直接硬截斷。
+    
+        現行程式：單份 note 形成單一 group 時 `len(note_groups) == 1 and
+        len(current_notes) == 1` 直接 break，該 note 從未送模型壓縮，接著
+        `_truncate_to_token_budget` 立即硬截斷（尾端內容無聲消失）。
+        """
+        service = SummarizationService()
+        plan = _feasible_plan(service)
+        visible_target = plan.notes_merge_budget_tokens
+        oversized = _note_with_tokens(service, "X", visible_target + 600, tail=SENTINEL_LINE + "\n")
+        assert service._estimate_tokens(oversized) > visible_target
+    
+        calls = _install_merge_generator(monkeypatch, service, _converging_responder(service))
+    
+        result = await service._merge_notes_until_fit(
+            "lmstudio",
+            [oversized],
+            visible_target,
+            context_window_tokens=plan.context_window_tokens,
+        )
+    
+>       assert len(calls) >= 1, (
+            f"單一 oversized note（{service._estimate_tokens(oversized)} tokens > 目標 "
+            f"{visible_target}）應允許單獨 compaction（至少一次模型壓縮呼叫），實際呼叫 "
+            f"{len(calls)} 次——現行程式跳過壓縮直接硬截斷"
+        )
+E       AssertionError: 單一 oversized note（1500 tokens > 目標 900）應允許單獨 compaction（至少一次模型壓縮呼叫），實際呼叫 0 次——現行程式跳過壓縮直接硬截斷
+E       assert 0 >= 1
+E        +  where 0 = len([])
+
+tests/test_wave01_merge_convergence.py:282: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:56:31[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_truncate_to_token_budget[0m:[36m1075[0m - [33m[1m整併筆記硬截斷：1499 → 12 tokens（預算 900）；後段內容未進入最終生成[0m
+_______ test_merge_non_convergence_raises_stable_error_within_max_rounds _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b0b01a0>
+
+    @pytest.mark.asyncio
+    async def test_merge_non_convergence_raises_stable_error_within_max_rounds(monkeypatch):
+        """模型持續超標且無實質進度時，必須在既有 max rounds 內拋 stable error。
+    
+        現行程式於縮減停滯/輪數上限時 break，改呼叫 `_truncate_to_token_budget`
+        以「截斷後的成功結果」返回、不拋錯 → `pytest.raises` 以 DID NOT RAISE
+        失敗，此即預期 fail 原因。`LOCAL_LLM_MERGE_NOT_CONVERGED` 為 WAVE-02
+        新增 stable error（尚未存在），故以 StableServiceError + message 行為
+        斷言，不得 top-level import。
+        """
+        service = SummarizationService()
+        plan = _feasible_plan(service)
+        notes = [
+            _note_with_tokens(service, "A", plan.notes_merge_budget_tokens),
+            _note_with_tokens(service, "B", plan.notes_merge_budget_tokens),
+        ]
+        calls = _install_merge_generator(monkeypatch, service, _non_converging_responder())
+    
+>       with pytest.raises(StableServiceError) as excinfo:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE StableServiceError
+
+tests/test_wave01_merge_convergence.py:316: Failed
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:56:31[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_merge_notes_until_fit[0m:[36m1021[0m - [33m[1m筆記整併縮減停滯（1798 → 3580 tokens），停止整併改用硬截斷[0m
+[32m2026-08-27 14:56:31[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_truncate_to_token_budget[0m:[36m1075[0m - [33m[1m整併筆記硬截斷：3580 → 0 tokens（預算 900）；後段內容未進入最終生成[0m
+__________________ test_core_merge_path_never_hard_truncates ___________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10afd7710>
+
+    @pytest.mark.asyncio
+    async def test_core_merge_path_never_hard_truncates(monkeypatch):
+        """CORE merge path 永不呼叫 `_truncate_to_token_budget` 省略尾端來源內容。
+    
+        以 raise-spy 證明：即使是成功收斂路徑，merge 也必須完全不觸及硬截斷
+        helper。現行程式 `_merge_notes_until_fit` 結尾（line ~1059）無條件呼叫
+        `_truncate_to_token_budget` → spy raise AssertionError，此即預期 fail 原因
+        （CORE merge path 仍觸及 hard truncation）。
+        """
+        service = SummarizationService()
+        plan = _feasible_plan(service)
+        notes = [
+            _note_with_tokens(service, "A", plan.notes_merge_budget_tokens),
+            _note_with_tokens(service, "B", plan.notes_merge_budget_tokens),
+        ]
+        _install_merge_generator(monkeypatch, service, _converging_responder(service))
+    
+        def _forbidden_truncate(*args, **kwargs):
+            raise AssertionError(
+                "CORE merge path 不得呼叫 _truncate_to_token_budget：merge 必須全量收斂"
+                "或拋 LOCAL_LLM_MERGE_NOT_CONVERGED，不得以硬截斷省略尾端來源內容"
+            )
+    
+        monkeypatch.setattr(service, "_truncate_to_token_budget", _forbidden_truncate)
+    
+        result = None
+        non_convergence_error = None
+        try:
+>           result = await service._merge_notes_until_fit(
+                "lmstudio",
+                notes,
+                plan.notes_merge_budget_tokens,
+                context_window_tokens=plan.context_window_tokens,
+            )
+
+tests/test_wave01_merge_convergence.py:368: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+backend/services/summarization.py:1059: in _merge_notes_until_fit
+    return self._truncate_to_token_budget(combined, notes_merge_budget_tokens)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('# 萃取筆記\n\n## 議題與決議\n整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整...整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整整\n- 整合結論：預算編列與後續分工已確認。', 900)
+kwargs = {}
+
+    def _forbidden_truncate(*args, **kwargs):
+>       raise AssertionError(
+            "CORE merge path 不得呼叫 _truncate_to_token_budget：merge 必須全量收斂"
+            "或拋 LOCAL_LLM_MERGE_NOT_CONVERGED，不得以硬截斷省略尾端來源內容"
+        )
+E       AssertionError: CORE merge path 不得呼叫 _truncate_to_token_budget：merge 必須全量收斂或拋 LOCAL_LLM_MERGE_NOT_CONVERGED，不得以硬截斷省略尾端來源內容
+
+tests/test_wave01_merge_convergence.py:358: AssertionError
+_________________ test_tail_sentinel_never_lost_to_truncation __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b0b32c0>
+
+    @pytest.mark.asyncio
+    async def test_tail_sentinel_never_lost_to_truncation(monkeypatch):
+        """tail sentinel 不得因 merge hard truncation 無聲消失。
+    
+        情境 A（無法收斂）：模型每輪回傳超標內容（且於輸出尾端保留 sentinel），
+        merge 必須以 `LOCAL_LLM_MERGE_NOT_CONVERGED` stable error 結束——此時
+        sentinel 不可能被無聲丟失；若仍返回結果，該結果必須含 sentinel。
+        現行程式以「截斷後的成功結果」返回且 sentinel 消失 → 斷言失敗（預期原因）。
+        情境 B（成功收斂）：輸出必須仍含 sentinel。
+        """
+        service = SummarizationService()
+        plan = _feasible_plan(service)
+        note_a = _note_with_tokens(service, "A", plan.notes_merge_budget_tokens)
+        note_b = _note_with_tokens(
+            service, "B", plan.notes_merge_budget_tokens, tail=SENTINEL_LINE + "\n"
+        )
+        assert SENTINEL_LINE in note_b, "fixture 最後一份 note 必須含 tail sentinel"
+    
+        # 情境 A：持續不收斂
+        _install_merge_generator(monkeypatch, service, _non_converging_responder())
+        result = None
+        error = None
+        try:
+            result = await service._merge_notes_until_fit(
+                "lmstudio",
+                [note_a, note_b],
+                plan.notes_merge_budget_tokens,
+                context_window_tokens=plan.context_window_tokens,
+            )
+        except StableServiceError as exc:
+            error = exc
+    
+        if error is not None:
+            # 正確行為：非收斂必須以 stable error 顯式失敗（sentinel 不可能被無聲丟失）。
+            assert "LOCAL_LLM_MERGE_NOT_CONVERGED" in str(error), (
+                f"無法收斂時必須拋 LOCAL_LLM_MERGE_NOT_CONVERGED，實際：{str(error)!r}"
+            )
+        else:
+            # 現行程式：硬截斷後返回成功 → sentinel 必須仍在（會失敗：sentinel 消失）。
+            assert result is not None
+>           assert SENTINEL_LINE in result, (
+                f"tail sentinel 因 merge hard truncation 無聲消失（回傳 "
+                f"{service._estimate_tokens(result)} tokens 的「截斷成功」結果）；無法收斂"
+                "時必須拋 LOCAL_LLM_MERGE_NOT_CONVERGED stable error，而非以截斷偽造成功"
+            )
+E           AssertionError: tail sentinel 因 merge hard truncation 無聲消失（回傳 1798 tokens 的「截斷成功」結果）；無法收斂時必須拋 LOCAL_LLM_MERGE_NOT_CONVERGED stable error，而非以截斷偽造成功
+E           assert '決議：T20260827-SENTINEL-RESOLUTION 待辦：T20260827-SENTINEL-ACTION' in '超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超超\n\n超超超超超超超超'
+
+tests/test_wave01_merge_convergence.py:431: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:56:31[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_merge_notes_until_fit[0m:[36m1021[0m - [33m[1m筆記整併縮減停滯（1798 → 3587 tokens），停止整併改用硬截斷[0m
+[32m2026-08-27 14:56:31[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_truncate_to_token_budget[0m:[36m1075[0m - [33m[1m整併筆記硬截斷：3587 → 0 tokens（預算 900）；後段內容未進入最終生成[0m
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field "model_info" has conflict with protected namespace "model_".
+  
+  You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_wave01_merge_convergence.py::test_merge_grouping_budget_fits_two_target_size_notes_per_group
+FAILED tests/test_wave01_merge_convergence.py::test_single_oversized_note_compacts_alone_without_error
+FAILED tests/test_wave01_merge_convergence.py::test_merge_non_convergence_raises_stable_error_within_max_rounds
+FAILED tests/test_wave01_merge_convergence.py::test_core_merge_path_never_hard_truncates
+FAILED tests/test_wave01_merge_convergence.py::test_tail_sentinel_never_lost_to_truncation
+======================== 5 failed, 2 warnings in 0.46s =========================

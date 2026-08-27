@@ -1,0 +1,503 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0 -- /Users/hsiaojohnny/dev/convert/.venv/bin/python
+rootdir: /Users/hsiaojohnny/dev/convert
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 7 items
+
+tests/test_wave01_recovery_sequence.py::test_observed_three_call_sequence_replays_after_growth_stop_empty FAILED [ 14%]
+tests/test_wave01_recovery_sequence.py::test_initial_stop_reasoning_empty_replays_once_at_same_cap FAILED [ 28%]
+tests/test_wave01_recovery_sequence.py::test_stop_replay_still_empty_raises_after_exactly_three_calls FAILED [ 42%]
+tests/test_wave01_recovery_sequence.py::test_growth_retry_again_length_empty_raises_without_third_call PASSED [ 57%]
+tests/test_wave01_recovery_sequence.py::test_empty_response_without_reasoning_evidence_raises_without_retry PASSED [ 71%]
+tests/test_wave01_recovery_sequence.py::test_no_available_headroom_raises_after_single_call PASSED [ 85%]
+tests/test_wave01_recovery_sequence.py::test_correction_reasoning_only_empty_response_circuit_breaks_after_one_call PASSED [100%]
+
+=================================== FAILURES ===================================
+______ test_observed_three_call_sequence_replays_after_growth_stop_empty _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108f33ad0>
+
+    @pytest.mark.asyncio
+    async def test_observed_three_call_sequence_replays_after_growth_stop_empty(monkeypatch):
+        """8fd56c54 observed 序列：length/empty → growth stop/empty(6522) → replay content。
+    
+        契約：精確三次 provider calls；三次的 model/prompt/temperature 完全相同；
+        只有 growth retry 增加 token cap，stop replay 沿用相同 cap。
+    
+        現行程式（RC-2 缺陷）在 growth retry 回應 stop+reasoning+empty 後直接拋
+        LMSTUDIO_NO_FINAL_CONTENT，缺少同 cap stop replay → 本測試以該原因失敗。
+        """
+        service = SummarizationService()
+        _recovery_settings(monkeypatch)
+        selection = _one_loaded_selection(service)
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # initial：length + reasoning evidence + empty content（cap 3072）
+                    _lmstudio_response(
+                        finish_reason="length",
+                        content="",
+                        reasoning=_reasoning_text(3194),
+                        reasoning_tokens=OBSERVED_REASONING_TOKENS,
+                    ),
+                    # growth retry：fixture 重現——stop + reasoning_chars=828 + content_chars=0
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                    # final stop replay：同 model/instance/prompt/temperature、同 cap，非空 content
+                    _lmstudio_response(finish_reason="stop", content=FINAL_CONTENT),
+                ]
+            ),
+        )
+    
+        try:
+>           result = await service._summarize_with_lmstudio(
+                "system", "user", max_tokens=INITIAL_CAP, selection=selection,
+            )
+
+tests/test_wave01_recovery_sequence.py:175: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+backend/services/summarization.py:1932: in _summarize_with_lmstudio
+    summary = await self._retry_lmstudio_reasoning_only(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <backend.services.summarization.SummarizationService object at 0x108873ec0>
+client = namespace(chat=namespace(completions=namespace(create=<AsyncMock id='4445123360'>)))
+selection = LMStudioModelSelection(provider='lmstudio', model_identifier='model-alpha', loaded_instance_id='model-alpha-instance-1', context_length=16384, inventory_timestamp=datetime.datetime(2026, 8, 27, 14, 53, 54, 295603))
+messages = [{'role': 'system', 'content': 'system'}, {'role': 'user', 'content': 'user'}]
+temperature = 0.2, initial_max_tokens = 3072, context_budget = 16384
+prompt_tokens = 66
+reasoning_text = '讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重...。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重點。讓我依序思考會議紀錄的結構與重'
+usage_tokens = {'prompt_tokens': 120, 'completion_tokens': 400, 'reasoning_tokens': 3400}
+finish_reason = 'length'
+
+    async def _retry_lmstudio_reasoning_only(
+        self,
+        client,
+        selection: LMStudioModelSelection,
+        messages: list[dict],
+        temperature: float,
+        initial_max_tokens: int,
+        context_budget: int,
+        prompt_tokens: int,
+        reasoning_text: Optional[str],
+        usage_tokens: dict,
+        finish_reason: Optional[str],
+    ) -> str:
+        """reasoning-only 空回應的 semantic retry：恰好一次、同一 selection/prompt/temperature。
+    
+        retry_cap = min(provider_headroom, configured_cap,
+                        max(initial * 2, observed_reasoning + initial + 256))；
+        cap 無法增加或 retry 仍空 → LMSTUDIO_NO_FINAL_CONTENT。
+        """
+        observed_reasoning_tokens = usage_tokens.get("reasoning_tokens")
+        if not observed_reasoning_tokens and reasoning_text:
+            # usage 未提供 reasoning tokens 時以文字 token 估算代替（不記錄文字）
+            observed_reasoning_tokens = self._estimate_tokens(reasoning_text)
+        observed_reasoning_tokens = int(observed_reasoning_tokens or 0)
+    
+        configured_cap = max(1, int(settings.LMSTUDIO_REASONING_RETRY_MAX_TOKENS))
+        provider_headroom = context_budget - prompt_tokens - 64
+        retry_cap = min(
+            provider_headroom,
+            configured_cap,
+            max(initial_max_tokens * 2, observed_reasoning_tokens + initial_max_tokens + 256),
+        )
+        retry_cap = max(1, int(retry_cap))
+        if retry_cap <= initial_max_tokens:
+            raise StableServiceError(
+                LMSTUDIO_NO_FINAL_CONTENT,
+                "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+                f"（finish_reason={finish_reason}, reasoning_tokens≈{observed_reasoning_tokens}），"
+                f"且 provider headroom 無法提高 max_tokens（{initial_max_tokens}→{retry_cap}）；"
+                "請縮短輸入或調低 max_tokens",
+            )
+    
+        log.warning(
+            "LM Studio 回應僅含 reasoning（finish_reason={}, reasoning_tokens≈{}），"
+            "提高 max_tokens {}→{} 執行恰好一次 semantic retry（model/instance/prompt/temperature 不變）",
+            finish_reason,
+            observed_reasoning_tokens,
+            initial_max_tokens,
+            retry_cap,
+        )
+        retry_response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, retry_cap
+        )
+        retry_content, retry_reasoning, retry_finish_reason, retry_usage = (
+            self._parse_lmstudio_response_payload(retry_response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, retry_finish_reason, retry_content, retry_reasoning,
+            retry_usage, retry_cap, retry=True,
+        )
+        summary = self._clean_ollama_output(str(retry_content))
+        if not (summary and summary.strip()):
+>           raise StableServiceError(
+                LMSTUDIO_NO_FINAL_CONTENT,
+                f"LM Studio semantic retry（max_tokens={retry_cap}）後仍無 final content"
+                f"（finish_reason={retry_finish_reason}）",
+            )
+E           backend.core.errors.StableServiceError: LMSTUDIO_NO_FINAL_CONTENT: LM Studio semantic retry（max_tokens=6522）後仍無 final content（finish_reason=stop）
+
+backend/services/summarization.py:2035: StableServiceError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108f33ad0>
+
+    @pytest.mark.asyncio
+    async def test_observed_three_call_sequence_replays_after_growth_stop_empty(monkeypatch):
+        """8fd56c54 observed 序列：length/empty → growth stop/empty(6522) → replay content。
+    
+        契約：精確三次 provider calls；三次的 model/prompt/temperature 完全相同；
+        只有 growth retry 增加 token cap，stop replay 沿用相同 cap。
+    
+        現行程式（RC-2 缺陷）在 growth retry 回應 stop+reasoning+empty 後直接拋
+        LMSTUDIO_NO_FINAL_CONTENT，缺少同 cap stop replay → 本測試以該原因失敗。
+        """
+        service = SummarizationService()
+        _recovery_settings(monkeypatch)
+        selection = _one_loaded_selection(service)
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # initial：length + reasoning evidence + empty content（cap 3072）
+                    _lmstudio_response(
+                        finish_reason="length",
+                        content="",
+                        reasoning=_reasoning_text(3194),
+                        reasoning_tokens=OBSERVED_REASONING_TOKENS,
+                    ),
+                    # growth retry：fixture 重現——stop + reasoning_chars=828 + content_chars=0
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                    # final stop replay：同 model/instance/prompt/temperature、同 cap，非空 content
+                    _lmstudio_response(finish_reason="stop", content=FINAL_CONTENT),
+                ]
+            ),
+        )
+    
+        try:
+            result = await service._summarize_with_lmstudio(
+                "system", "user", max_tokens=INITIAL_CAP, selection=selection,
+            )
+        except StableServiceError as exc:
+>           pytest.fail(
+                "現行程式缺陷（RC-2）：growth retry（max_tokens=6522）回應 "
+                "stop + reasoning + empty content 後直接拋 "
+                f"{exc.code}，未執行同 model/instance/prompt/temperature、同 cap 的 "
+                f"final stop replay（provider 呼叫數 {create.await_count}）：{exc}"
+            )
+E           Failed: 現行程式缺陷（RC-2）：growth retry（max_tokens=6522）回應 stop + reasoning + empty content 後直接拋 LMSTUDIO_NO_FINAL_CONTENT，未執行同 model/instance/prompt/temperature、同 cap 的 final stop replay（provider 呼叫數 2）：LMSTUDIO_NO_FINAL_CONTENT: LM Studio semantic retry（max_tokens=6522）後仍無 final content（finish_reason=stop）
+
+tests/test_wave01_recovery_sequence.py:179: Failed
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_summarize_with_lmstudio[0m:[36m1902[0m - [1m使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.2, max_tokens=3072, context_budget=16384, prompt_tokens=66, allow_reasoning_retry=True)[0m
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_log_lmstudio_response_diagnostics[0m:[36m2156[0m - [1mLM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=length, max_tokens=3072, content_chars=0, reasoning_chars=3194, prompt_tokens=120, completion_tokens=400, reasoning_tokens=3400[0m
+[32m2026-08-27 14:53:54[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_retry_lmstudio_reasoning_only[0m:[36m2015[0m - [33m[1mLM Studio 回應僅含 reasoning（finish_reason=length, reasoning_tokens≈3400），提高 max_tokens 3072→6522 執行恰好一次 semantic retry（model/instance/prompt/temperature 不變）[0m
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_log_lmstudio_response_diagnostics[0m:[36m2156[0m - [1mLM Studio 回應診斷（semantic retry）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=stop, max_tokens=6522, content_chars=0, reasoning_chars=828, prompt_tokens=120, completion_tokens=400, reasoning_tokens=828[0m
+__________ test_initial_stop_reasoning_empty_replays_once_at_same_cap __________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108f51ac0>
+
+    @pytest.mark.asyncio
+    async def test_initial_stop_reasoning_empty_replays_once_at_same_cap(monkeypatch):
+        """initial 即 `stop + reasoning evidence + empty content` → 只做一次同 cap replay。
+    
+        契約：總計兩次 provider calls、replay 不增加 token cap、不接續 growth retry。
+    
+        現行程式（RC-2 缺陷）只認得 `length` 觸發的 retry，stop + empty 直接拋
+        LMSTUDIO_NO_FINAL_CONTENT（僅 1 次呼叫）→ 本測試以該原因失敗。
+        """
+        service = SummarizationService()
+        _recovery_settings(monkeypatch)
+        selection = _one_loaded_selection(service)
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                    _lmstudio_response(finish_reason="stop", content="會議紀錄：結論與待辦如下。"),
+                ]
+            ),
+        )
+    
+        try:
+>           result = await service._summarize_with_lmstudio(
+                "system", "user", max_tokens=INITIAL_CAP, selection=selection,
+            )
+
+tests/test_wave01_recovery_sequence.py:247: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <backend.services.summarization.SummarizationService object at 0x108f529c0>
+system_prompt = 'system', user_message = 'user', progress_callback = None
+temperature = 0.2, max_tokens = 3072, context_window_tokens = None
+selection = LMStudioModelSelection(provider='lmstudio', model_identifier='model-alpha', loaded_instance_id='model-alpha-instance-1', context_length=16384, inventory_timestamp=datetime.datetime(2026, 8, 27, 14, 53, 54, 343456))
+expand_output_budget = True, allow_reasoning_retry = True
+
+    async def _summarize_with_lmstudio(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        selection: Optional[LMStudioModelSelection] = None,
+        expand_output_budget: bool = True,
+        allow_reasoning_retry: bool = True,
+    ) -> str:
+        """
+        使用已選定的 LM Studio loaded instance 生成摘要。
+    
+        selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
+        會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+        load，也不在生成失敗時改選其他 instance。
+    
+        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
+        """
+        selection = selection or self._active_lmstudio_selection
+        if selection is None:
+            selection = await self._resolve_lmstudio_selection()
+    
+        if max_tokens is None:
+            requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        else:
+            try:
+                requested_max_tokens = max(1, int(max_tokens))
+            except (TypeError, ValueError):
+                requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+    
+        # caller temperature/max_tokens 為權威（H-5）：後端不再讀 config*.yaml
+        # 的 llm.lmstudio.*，legacy YAML 僅供舊版 CLI 參考。
+        if selection.context_length:
+            # request/retry headroom 以 selected instance 的 context_length 為準，
+            # 缺失時才退回保守 planning context。
+            context_budget = selection.context_length
+        else:
+            context_budget = self._effective_context_tokens(context_window_tokens)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            # preflight fail loudly：不得把 caller budget 靜默壓成 1（observed log max_tokens=1）
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"LM Studio request budget 不足：caller max_tokens {requested_max_tokens}"
+                f" + prompt {prompt_tokens} tokens 超過 context budget {context_budget}"
+                f"（available output {available_output_tokens}，model={selection.model_identifier}）；"
+                "請縮短輸入或降低 max_tokens",
+            )
+        client = self._get_lmstudio_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+    
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={}, "
+            "context_budget={}, prompt_tokens={}, allow_reasoning_retry={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+            context_budget,
+            prompt_tokens,
+            allow_reasoning_retry and expand_output_budget,
+        )
+    
+        response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, requested_max_tokens
+        )
+    
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        content, reasoning_text, finish_reason, usage_tokens = (
+            self._parse_lmstudio_response_payload(response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, finish_reason, content, reasoning_text,
+            usage_tokens, requested_max_tokens, retry=False,
+        )
+        summary = self._clean_ollama_output(str(content))
+    
+        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+        if not (summary and summary.strip()):
+            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+                summary = await self._retry_lmstudio_reasoning_only(
+                    client, selection, messages, temperature,
+                    requested_max_tokens, context_budget, prompt_tokens,
+                    reasoning_text, usage_tokens, finish_reason,
+                )
+            else:
+                log.warning("LM Studio 摘要生成結果為空")
+>               raise StableServiceError(
+                    LMSTUDIO_NO_FINAL_CONTENT,
+                    self._describe_empty_lmstudio_response(
+                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+                    ),
+                )
+E               backend.core.errors.StableServiceError: LMSTUDIO_NO_FINAL_CONTENT: LM Studio 回應無 final content（finish_reason=stop，無 reasoning 證據）；請確認模型是否正常輸出，或改用其他已載入 LLM
+
+backend/services/summarization.py:1939: StableServiceError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108f51ac0>
+
+    @pytest.mark.asyncio
+    async def test_initial_stop_reasoning_empty_replays_once_at_same_cap(monkeypatch):
+        """initial 即 `stop + reasoning evidence + empty content` → 只做一次同 cap replay。
+    
+        契約：總計兩次 provider calls、replay 不增加 token cap、不接續 growth retry。
+    
+        現行程式（RC-2 缺陷）只認得 `length` 觸發的 retry，stop + empty 直接拋
+        LMSTUDIO_NO_FINAL_CONTENT（僅 1 次呼叫）→ 本測試以該原因失敗。
+        """
+        service = SummarizationService()
+        _recovery_settings(monkeypatch)
+        selection = _one_loaded_selection(service)
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                    _lmstudio_response(finish_reason="stop", content="會議紀錄：結論與待辦如下。"),
+                ]
+            ),
+        )
+    
+        try:
+            result = await service._summarize_with_lmstudio(
+                "system", "user", max_tokens=INITIAL_CAP, selection=selection,
+            )
+        except StableServiceError as exc:
+>           pytest.fail(
+                "現行程式缺陷（RC-2）：initial 直接回應 stop + reasoning + empty content 時拋 "
+                f"{exc.code}，未執行一次同 cap replay（provider 呼叫數 {create.await_count}）：{exc}"
+            )
+E           Failed: 現行程式缺陷（RC-2）：initial 直接回應 stop + reasoning + empty content 時拋 LMSTUDIO_NO_FINAL_CONTENT，未執行一次同 cap replay（provider 呼叫數 1）：LMSTUDIO_NO_FINAL_CONTENT: LM Studio 回應無 final content（finish_reason=stop，無 reasoning 證據）；請確認模型是否正常輸出，或改用其他已載入 LLM
+
+tests/test_wave01_recovery_sequence.py:251: Failed
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_summarize_with_lmstudio[0m:[36m1902[0m - [1m使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.2, max_tokens=3072, context_budget=16384, prompt_tokens=66, allow_reasoning_retry=True)[0m
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_log_lmstudio_response_diagnostics[0m:[36m2156[0m - [1mLM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=stop, max_tokens=3072, content_chars=0, reasoning_chars=828, prompt_tokens=120, completion_tokens=400, reasoning_tokens=828[0m
+[32m2026-08-27 14:53:54[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_summarize_with_lmstudio[0m:[36m1938[0m - [33m[1mLM Studio 摘要生成結果為空[0m
+________ test_stop_replay_still_empty_raises_after_exactly_three_calls _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x108e85eb0>
+
+    @pytest.mark.asyncio
+    async def test_stop_replay_still_empty_raises_after_exactly_three_calls(monkeypatch):
+        """3a：第三次（stop replay）仍空 content → 拋 LMSTUDIO_NO_FINAL_CONTENT。
+    
+        契約：精確三次 calls 後立即拋穩定錯誤，不再有後續 provider 呼叫。
+    
+        現行程式（RC-2 缺陷）在第二次（growth retry stop+empty）就拋錯，只呼叫
+        2 次 → call-count 斷言以「缺 stop replay」為原因失敗。
+        """
+        service = SummarizationService()
+        _recovery_settings(monkeypatch)
+        selection = _one_loaded_selection(service)
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    _lmstudio_response(
+                        finish_reason="length",
+                        content="",
+                        reasoning=_reasoning_text(3194),
+                        reasoning_tokens=OBSERVED_REASONING_TOKENS,
+                    ),
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                    # 第三次 stop replay 仍空 content（含 reasoning 也不得再重試）
+                    _lmstudio_response(
+                        finish_reason="stop",
+                        content="",
+                        reasoning=_reasoning_text(828),
+                        reasoning_tokens=828,
+                    ),
+                ]
+            ),
+        )
+    
+        with pytest.raises(StableServiceError) as exc_info:
+            await service._summarize_with_lmstudio(
+                "system", "user", max_tokens=INITIAL_CAP, selection=selection,
+            )
+    
+        assert exc_info.value.code == LMSTUDIO_NO_FINAL_CONTENT
+>       assert create.await_count == 3, (
+            "stop replay 仍空應在精確三次 provider calls 後拋 LMSTUDIO_NO_FINAL_CONTENT"
+            f"且不再呼叫，實際 {create.await_count} 次（現行程式缺第三次 stop replay）"
+        )
+E       AssertionError: stop replay 仍空應在精確三次 provider calls 後拋 LMSTUDIO_NO_FINAL_CONTENT且不再呼叫，實際 2 次（現行程式缺第三次 stop replay）
+E       assert 2 == 3
+E        +  where 2 = <AsyncMock id='4445114672'>.await_count
+
+tests/test_wave01_recovery_sequence.py:321: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_summarize_with_lmstudio[0m:[36m1902[0m - [1m使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.2, max_tokens=3072, context_budget=16384, prompt_tokens=66, allow_reasoning_retry=True)[0m
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_log_lmstudio_response_diagnostics[0m:[36m2156[0m - [1mLM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=length, max_tokens=3072, content_chars=0, reasoning_chars=3194, prompt_tokens=120, completion_tokens=400, reasoning_tokens=3400[0m
+[32m2026-08-27 14:53:54[0m | [33m[1mWARNING [0m | [36mbackend.services.summarization[0m:[36m_retry_lmstudio_reasoning_only[0m:[36m2015[0m - [33m[1mLM Studio 回應僅含 reasoning（finish_reason=length, reasoning_tokens≈3400），提高 max_tokens 3072→6522 執行恰好一次 semantic retry（model/instance/prompt/temperature 不變）[0m
+[32m2026-08-27 14:53:54[0m | [1mINFO    [0m | [36mbackend.services.summarization[0m:[36m_log_lmstudio_response_diagnostics[0m:[36m2156[0m - [1mLM Studio 回應診斷（semantic retry）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=stop, max_tokens=6522, content_chars=0, reasoning_chars=828, prompt_tokens=120, completion_tokens=400, reasoning_tokens=828[0m
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field "model_info" has conflict with protected namespace "model_".
+  
+  You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_wave01_recovery_sequence.py::test_observed_three_call_sequence_replays_after_growth_stop_empty
+FAILED tests/test_wave01_recovery_sequence.py::test_initial_stop_reasoning_empty_replays_once_at_same_cap
+FAILED tests/test_wave01_recovery_sequence.py::test_stop_replay_still_empty_raises_after_exactly_three_calls
+=================== 3 failed, 4 passed, 2 warnings in 0.46s ====================

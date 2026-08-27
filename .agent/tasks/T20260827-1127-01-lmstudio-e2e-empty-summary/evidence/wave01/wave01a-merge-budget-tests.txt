@@ -1,0 +1,862 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0 -- /Users/hsiaojohnny/dev/convert/.venv/bin/python
+rootdir: /Users/hsiaojohnny/dev/convert
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 4 items
+
+tests/test_wave01_merge_budget_separation.py::test_merge_provider_initial_cap_is_reserved_output_not_visible_target FAILED [ 25%]
+tests/test_wave01_merge_budget_separation.py::test_merge_call_must_not_disable_semantic_recovery FAILED [ 50%]
+tests/test_wave01_merge_budget_separation.py::test_reasoning_only_growth_retry_then_orchestration_convergence FAILED [ 75%]
+tests/test_wave01_merge_budget_separation.py::test_visible_target_must_not_compress_provider_cap_into_reasoning_exhaustion FAILED [100%]
+
+=================================== FAILURES ===================================
+____ test_merge_provider_initial_cap_is_reserved_output_not_visible_target _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d7d9970>
+
+    @pytest.mark.asyncio
+    async def test_merge_provider_initial_cap_is_reserved_output_not_visible_target(monkeypatch):
+        """merge 第一個 provider 呼叫的 max_tokens 必須是 reserved output（3072）。
+    
+        現行 merge_predict_cap = min(3072, max(900, 512)) = 900 →
+        以「收到 900 而非 3072」的行為原因失敗。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        # 兩份 notes 總量 <= visible target，必須落入同一 merge group（一次呼叫）。
+        assert (
+            service._estimate_tokens(note_a) + service._estimate_tokens(note_b)
+            <= VISIBLE_TARGET_TOKENS
+        )
+    
+        merged_note = _note_with_token_size(service, "整合", 400)
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(return_value=_response(merged_note, finish_reason="stop", completion_tokens=500)),
+        )
+    
+        await _merge_notes(service, selection, [note_a, note_b])
+    
+        assert create.await_count >= 1, "merge 必須實際呼叫 provider"
+        first_cap = create.await_args_list[0].kwargs["max_tokens"]
+        reserved_output = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+>       assert first_cap == reserved_output, (
+            f"merge 階段 provider 初始 completion cap 必須是 LOCAL_LLM_RESERVED_OUTPUT_TOKENS"
+            f"（{reserved_output}），實際收到 {first_cap}：visible target {VISIBLE_TARGET_TOKENS} "
+            "被誤當 provider max_tokens，hidden reasoning 會吃光整個 completion 預算"
+        )
+E       AssertionError: merge 階段 provider 初始 completion cap 必須是 LOCAL_LLM_RESERVED_OUTPUT_TOKENS（3072），實際收到 900：visible target 900 被誤當 provider max_tokens，hidden reasoning 會吃光整個 completion 預算
+E       assert 900 == 3072
+
+tests/test_wave01_merge_budget_separation.py:172: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_summarize_with_lmstudio:1902 - 使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.1, max_tokens=900, context_budget=16384, prompt_tokens=1029, allow_reasoning_retry=False)
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_log_lmstudio_response_diagnostics:2156 - LM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=stop, max_tokens=900, content_chars=459, reasoning_chars=0, prompt_tokens=1234, completion_tokens=500, reasoning_tokens=None
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_summarize_with_lmstudio:1946 - LM Studio 摘要生成成功，模型: model-alpha
+______________ test_merge_call_must_not_disable_semantic_recovery ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d7da450>
+
+    @pytest.mark.asyncio
+    async def test_merge_call_must_not_disable_semantic_recovery(monkeypatch):
+        """merge 的 generation 呼叫必須允許 semantic recovery。
+    
+        現行：``reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget``
+        而 merge 以 ``expand_output_budget=False`` 呼叫 → reasoning-only 回應直接
+        拋 LMSTUDIO_NO_FINAL_CONTENT（本測試的預期失敗原因）。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        assert (
+            service._estimate_tokens(note_a) + service._estimate_tokens(note_b)
+            <= VISIBLE_TARGET_TOKENS
+        )
+        merged_note = _note_with_token_size(service, "整合", 400)
+        assert service._estimate_tokens(merged_note) <= VISIBLE_TARGET_TOKENS
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # 第一次回應：finish_reason=length + reasoning + 空 content
+                    _response(
+                        "",
+                        finish_reason="length",
+                        reasoning_text=_reasoning_only_text(),
+                        completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                        reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                    ),
+                    # semantic retry 成功：帶回 final content
+                    _response(merged_note, finish_reason="stop", completion_tokens=500),
+                ]
+            ),
+        )
+    
+        # 記錄 merge 對 generation 入口傳遞的 kwargs（不得設定 allow_reasoning_retry=False）
+        recorded_generation_calls: list[dict] = []
+        real_generate = service._generate_with_local_engine
+    
+        async def recording_generate(engine, system_prompt, user_message, **kwargs):
+            recorded_generation_calls.append(
+                {"system_prompt": system_prompt, "kwargs": dict(kwargs)}
+            )
+            return await real_generate(engine, system_prompt, user_message, **kwargs)
+    
+        monkeypatch.setattr(service, "_generate_with_local_engine", recording_generate)
+    
+        try:
+>           result = await _merge_notes(service, selection, [note_a, note_b])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wave01_merge_budget_separation.py:237: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_wave01_merge_budget_separation.py:127: in _merge_notes
+    return await service._merge_notes_until_fit(
+backend/services/summarization.py:1039: in _merge_notes_until_fit
+    merged = await self._generate_with_local_engine(
+tests/test_wave01_merge_budget_separation.py:232: in recording_generate
+    return await real_generate(engine, system_prompt, user_message, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/services/summarization.py:1349: in _generate_with_local_engine
+    return await self._summarize_with_lmstudio(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <backend.services.summarization.SummarizationService object at 0x10d7fe000>
+system_prompt = '你要合併多份「萃取筆記」，產出一份資訊最完整、去除重複的整合版筆記。\n\n規則：\n- 保留所有明確議題、決議、待辦、數字、日期、責任人。\n- 同一待辦若重複出現可合併，但不同工作項目不可硬併成一列。\n- 若資訊互相矛盾，請保留...原本的「# 萃取筆記」Markdown 結構輸出。\n- 不要寫成最終會議記錄。\n- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。'
+user_message = '以下是第 1 輪整併要處理的 2 份萃取筆記（本輪共 1 組）：\n\n### 筆記 1\n# 萃取筆記\n\n## 2. 議題與決議\n與會單位就甲項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位...設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位就乙項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n\n請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。'
+progress_callback = None, temperature = 0.1, max_tokens = 900
+context_window_tokens = None
+selection = LMStudioModelSelection(provider='lmstudio', model_identifier='model-alpha', loaded_instance_id='model-alpha-instance-1', context_length=16384, inventory_timestamp=datetime.datetime(2026, 8, 27, 14, 57, 57, 873407))
+expand_output_budget = False, allow_reasoning_retry = True
+
+    async def _summarize_with_lmstudio(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        selection: Optional[LMStudioModelSelection] = None,
+        expand_output_budget: bool = True,
+        allow_reasoning_retry: bool = True,
+    ) -> str:
+        """
+        使用已選定的 LM Studio loaded instance 生成摘要。
+    
+        selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
+        會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+        load，也不在生成失敗時改選其他 instance。
+    
+        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
+        """
+        selection = selection or self._active_lmstudio_selection
+        if selection is None:
+            selection = await self._resolve_lmstudio_selection()
+    
+        if max_tokens is None:
+            requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        else:
+            try:
+                requested_max_tokens = max(1, int(max_tokens))
+            except (TypeError, ValueError):
+                requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+    
+        # caller temperature/max_tokens 為權威（H-5）：後端不再讀 config*.yaml
+        # 的 llm.lmstudio.*，legacy YAML 僅供舊版 CLI 參考。
+        if selection.context_length:
+            # request/retry headroom 以 selected instance 的 context_length 為準，
+            # 缺失時才退回保守 planning context。
+            context_budget = selection.context_length
+        else:
+            context_budget = self._effective_context_tokens(context_window_tokens)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            # preflight fail loudly：不得把 caller budget 靜默壓成 1（observed log max_tokens=1）
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"LM Studio request budget 不足：caller max_tokens {requested_max_tokens}"
+                f" + prompt {prompt_tokens} tokens 超過 context budget {context_budget}"
+                f"（available output {available_output_tokens}，model={selection.model_identifier}）；"
+                "請縮短輸入或降低 max_tokens",
+            )
+        client = self._get_lmstudio_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+    
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={}, "
+            "context_budget={}, prompt_tokens={}, allow_reasoning_retry={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+            context_budget,
+            prompt_tokens,
+            allow_reasoning_retry and expand_output_budget,
+        )
+    
+        response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, requested_max_tokens
+        )
+    
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        content, reasoning_text, finish_reason, usage_tokens = (
+            self._parse_lmstudio_response_payload(response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, finish_reason, content, reasoning_text,
+            usage_tokens, requested_max_tokens, retry=False,
+        )
+        summary = self._clean_ollama_output(str(content))
+    
+        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+        if not (summary and summary.strip()):
+            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+                summary = await self._retry_lmstudio_reasoning_only(
+                    client, selection, messages, temperature,
+                    requested_max_tokens, context_budget, prompt_tokens,
+                    reasoning_text, usage_tokens, finish_reason,
+                )
+            else:
+                log.warning("LM Studio 摘要生成結果為空")
+>               raise StableServiceError(
+                    LMSTUDIO_NO_FINAL_CONTENT,
+                    self._describe_empty_lmstudio_response(
+                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+                    ),
+                )
+E               backend.core.errors.StableServiceError: LMSTUDIO_NO_FINAL_CONTENT: LM Studio 僅輸出 reasoning 即達 max_tokens 上限（finish_reason=length），且本次呼叫禁止 reasoning retry（merge/收斂受限呼叫）：請調高 caller max_tokens 或縮短輸入
+
+backend/services/summarization.py:1939: StableServiceError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d7da450>
+
+    @pytest.mark.asyncio
+    async def test_merge_call_must_not_disable_semantic_recovery(monkeypatch):
+        """merge 的 generation 呼叫必須允許 semantic recovery。
+    
+        現行：``reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget``
+        而 merge 以 ``expand_output_budget=False`` 呼叫 → reasoning-only 回應直接
+        拋 LMSTUDIO_NO_FINAL_CONTENT（本測試的預期失敗原因）。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        assert (
+            service._estimate_tokens(note_a) + service._estimate_tokens(note_b)
+            <= VISIBLE_TARGET_TOKENS
+        )
+        merged_note = _note_with_token_size(service, "整合", 400)
+        assert service._estimate_tokens(merged_note) <= VISIBLE_TARGET_TOKENS
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # 第一次回應：finish_reason=length + reasoning + 空 content
+                    _response(
+                        "",
+                        finish_reason="length",
+                        reasoning_text=_reasoning_only_text(),
+                        completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                        reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                    ),
+                    # semantic retry 成功：帶回 final content
+                    _response(merged_note, finish_reason="stop", completion_tokens=500),
+                ]
+            ),
+        )
+    
+        # 記錄 merge 對 generation 入口傳遞的 kwargs（不得設定 allow_reasoning_retry=False）
+        recorded_generation_calls: list[dict] = []
+        real_generate = service._generate_with_local_engine
+    
+        async def recording_generate(engine, system_prompt, user_message, **kwargs):
+            recorded_generation_calls.append(
+                {"system_prompt": system_prompt, "kwargs": dict(kwargs)}
+            )
+            return await real_generate(engine, system_prompt, user_message, **kwargs)
+    
+        monkeypatch.setattr(service, "_generate_with_local_engine", recording_generate)
+    
+        try:
+            result = await _merge_notes(service, selection, [note_a, note_b])
+        except StableServiceError as exc:
+            if exc.code == LMSTUDIO_NO_FINAL_CONTENT:
+>               pytest.fail(
+                    "現行 merge 呼叫以 expand_output_budget=False 使 "
+                    "reasoning_retry_allowed=False，reasoning-only 回應直接拋 "
+                    "LMSTUDIO_NO_FINAL_CONTENT；merge generation 必須允許 "
+                    "semantic recovery（allow_reasoning_retry 單獨決定）"
+                )
+E               Failed: 現行 merge 呼叫以 expand_output_budget=False 使 reasoning_retry_allowed=False，reasoning-only 回應直接拋 LMSTUDIO_NO_FINAL_CONTENT；merge generation 必須允許 semantic recovery（allow_reasoning_retry 單獨決定）
+
+tests/test_wave01_merge_budget_separation.py:240: Failed
+----------------------------- Captured stdout call -----------------------------
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_summarize_with_lmstudio:1902 - 使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.1, max_tokens=900, context_budget=16384, prompt_tokens=1029, allow_reasoning_retry=False)
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_log_lmstudio_response_diagnostics:2156 - LM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=length, max_tokens=900, content_chars=0, reasoning_chars=2778, prompt_tokens=1234, completion_tokens=899, reasoning_tokens=899
+2026-08-27 14:57:57 | WARNING  | backend.services.summarization:_summarize_with_lmstudio:1938 - LM Studio 摘要生成結果為空
+_______ test_reasoning_only_growth_retry_then_orchestration_convergence ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d7fddf0>
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_growth_retry_then_orchestration_convergence(monkeypatch):
+        """重現 task 90fdb193 merge fixture：growth retry 後 orchestration 收斂。
+    
+        call1：finish_reason=length、completion_tokens=899、reasoning_chars=2778、
+               content_chars=0（重現現行 fail-fast 點）
+        call2：growth retry 以更高 cap 帶回 content，但超過 visible target 900
+        call3：orchestration 續壓縮 → 最終 <=900，尾端決議哨兵不得消失
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        assert (
+            service._estimate_tokens(note_a) + service._estimate_tokens(note_b)
+            <= VISIBLE_TARGET_TOKENS
+        )
+    
+        oversized_note = _note_with_token_size(service, "超標", 1200) + "\n" + TAIL_SENTINEL
+        assert service._estimate_tokens(oversized_note) > VISIBLE_TARGET_TOKENS
+        final_note = _note_with_token_size(service, "收斂", 400) + "\n" + TAIL_SENTINEL
+        assert service._estimate_tokens(final_note) <= VISIBLE_TARGET_TOKENS
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # call1：重現 task 90fdb193 的 length/reasoning/empty 回應形狀
+                    _response(
+                        "",
+                        finish_reason="length",
+                        reasoning_text=_reasoning_only_text(),
+                        completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                        reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                    ),
+                    # call2：growth retry 成功，但 content 超過 visible target
+                    _response(
+                        oversized_note, finish_reason="stop", completion_tokens=1300
+                    ),
+                    # call3：orchestration 對超標 note 續壓縮並收斂
+                    _response(final_note, finish_reason="stop", completion_tokens=500),
+                ]
+            ),
+        )
+    
+        try:
+>           result = await _merge_notes(service, selection, [note_a, note_b])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wave01_merge_budget_separation.py:321: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_wave01_merge_budget_separation.py:127: in _merge_notes
+    return await service._merge_notes_until_fit(
+backend/services/summarization.py:1039: in _merge_notes_until_fit
+    merged = await self._generate_with_local_engine(
+backend/services/summarization.py:1349: in _generate_with_local_engine
+    return await self._summarize_with_lmstudio(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <backend.services.summarization.SummarizationService object at 0x10d8737a0>
+system_prompt = '你要合併多份「萃取筆記」，產出一份資訊最完整、去除重複的整合版筆記。\n\n規則：\n- 保留所有明確議題、決議、待辦、數字、日期、責任人。\n- 同一待辦若重複出現可合併，但不同工作項目不可硬併成一列。\n- 若資訊互相矛盾，請保留...原本的「# 萃取筆記」Markdown 結構輸出。\n- 不要寫成最終會議記錄。\n- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。'
+user_message = '以下是第 1 輪整併要處理的 2 份萃取筆記（本輪共 1 組）：\n\n### 筆記 1\n# 萃取筆記\n\n## 2. 議題與決議\n與會單位就甲項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位...設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位就乙項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n\n請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。'
+progress_callback = None, temperature = 0.1, max_tokens = 900
+context_window_tokens = None
+selection = LMStudioModelSelection(provider='lmstudio', model_identifier='model-alpha', loaded_instance_id='model-alpha-instance-1', context_length=16384, inventory_timestamp=datetime.datetime(2026, 8, 27, 14, 57, 57, 904175))
+expand_output_budget = False, allow_reasoning_retry = True
+
+    async def _summarize_with_lmstudio(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        selection: Optional[LMStudioModelSelection] = None,
+        expand_output_budget: bool = True,
+        allow_reasoning_retry: bool = True,
+    ) -> str:
+        """
+        使用已選定的 LM Studio loaded instance 生成摘要。
+    
+        selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
+        會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+        load，也不在生成失敗時改選其他 instance。
+    
+        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
+        """
+        selection = selection or self._active_lmstudio_selection
+        if selection is None:
+            selection = await self._resolve_lmstudio_selection()
+    
+        if max_tokens is None:
+            requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        else:
+            try:
+                requested_max_tokens = max(1, int(max_tokens))
+            except (TypeError, ValueError):
+                requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+    
+        # caller temperature/max_tokens 為權威（H-5）：後端不再讀 config*.yaml
+        # 的 llm.lmstudio.*，legacy YAML 僅供舊版 CLI 參考。
+        if selection.context_length:
+            # request/retry headroom 以 selected instance 的 context_length 為準，
+            # 缺失時才退回保守 planning context。
+            context_budget = selection.context_length
+        else:
+            context_budget = self._effective_context_tokens(context_window_tokens)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            # preflight fail loudly：不得把 caller budget 靜默壓成 1（observed log max_tokens=1）
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"LM Studio request budget 不足：caller max_tokens {requested_max_tokens}"
+                f" + prompt {prompt_tokens} tokens 超過 context budget {context_budget}"
+                f"（available output {available_output_tokens}，model={selection.model_identifier}）；"
+                "請縮短輸入或降低 max_tokens",
+            )
+        client = self._get_lmstudio_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+    
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={}, "
+            "context_budget={}, prompt_tokens={}, allow_reasoning_retry={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+            context_budget,
+            prompt_tokens,
+            allow_reasoning_retry and expand_output_budget,
+        )
+    
+        response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, requested_max_tokens
+        )
+    
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        content, reasoning_text, finish_reason, usage_tokens = (
+            self._parse_lmstudio_response_payload(response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, finish_reason, content, reasoning_text,
+            usage_tokens, requested_max_tokens, retry=False,
+        )
+        summary = self._clean_ollama_output(str(content))
+    
+        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+        if not (summary and summary.strip()):
+            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+                summary = await self._retry_lmstudio_reasoning_only(
+                    client, selection, messages, temperature,
+                    requested_max_tokens, context_budget, prompt_tokens,
+                    reasoning_text, usage_tokens, finish_reason,
+                )
+            else:
+                log.warning("LM Studio 摘要生成結果為空")
+>               raise StableServiceError(
+                    LMSTUDIO_NO_FINAL_CONTENT,
+                    self._describe_empty_lmstudio_response(
+                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+                    ),
+                )
+E               backend.core.errors.StableServiceError: LMSTUDIO_NO_FINAL_CONTENT: LM Studio 僅輸出 reasoning 即達 max_tokens 上限（finish_reason=length），且本次呼叫禁止 reasoning retry（merge/收斂受限呼叫）：請調高 caller max_tokens 或縮短輸入
+
+backend/services/summarization.py:1939: StableServiceError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d7fddf0>
+
+    @pytest.mark.asyncio
+    async def test_reasoning_only_growth_retry_then_orchestration_convergence(monkeypatch):
+        """重現 task 90fdb193 merge fixture：growth retry 後 orchestration 收斂。
+    
+        call1：finish_reason=length、completion_tokens=899、reasoning_chars=2778、
+               content_chars=0（重現現行 fail-fast 點）
+        call2：growth retry 以更高 cap 帶回 content，但超過 visible target 900
+        call3：orchestration 續壓縮 → 最終 <=900，尾端決議哨兵不得消失
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        assert (
+            service._estimate_tokens(note_a) + service._estimate_tokens(note_b)
+            <= VISIBLE_TARGET_TOKENS
+        )
+    
+        oversized_note = _note_with_token_size(service, "超標", 1200) + "\n" + TAIL_SENTINEL
+        assert service._estimate_tokens(oversized_note) > VISIBLE_TARGET_TOKENS
+        final_note = _note_with_token_size(service, "收斂", 400) + "\n" + TAIL_SENTINEL
+        assert service._estimate_tokens(final_note) <= VISIBLE_TARGET_TOKENS
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=[
+                    # call1：重現 task 90fdb193 的 length/reasoning/empty 回應形狀
+                    _response(
+                        "",
+                        finish_reason="length",
+                        reasoning_text=_reasoning_only_text(),
+                        completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                        reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                    ),
+                    # call2：growth retry 成功，但 content 超過 visible target
+                    _response(
+                        oversized_note, finish_reason="stop", completion_tokens=1300
+                    ),
+                    # call3：orchestration 對超標 note 續壓縮並收斂
+                    _response(final_note, finish_reason="stop", completion_tokens=500),
+                ]
+            ),
+        )
+    
+        try:
+            result = await _merge_notes(service, selection, [note_a, note_b])
+        except StableServiceError as exc:
+            if exc.code == LMSTUDIO_NO_FINAL_CONTENT:
+>               pytest.fail(
+                    "現行程式在第一次 length/reasoning/empty 回應即拋 "
+                    "LMSTUDIO_NO_FINAL_CONTENT（merge 以 expand_output_budget=False "
+                    "禁用 growth retry）；正確行為：growth retry 以更高 cap 取得 "
+                    "content 後由 orchestration 續壓縮收斂到 <=900"
+                )
+E               Failed: 現行程式在第一次 length/reasoning/empty 回應即拋 LMSTUDIO_NO_FINAL_CONTENT（merge 以 expand_output_budget=False 禁用 growth retry）；正確行為：growth retry 以更高 cap 取得 content 後由 orchestration 續壓縮收斂到 <=900
+
+tests/test_wave01_merge_budget_separation.py:324: Failed
+----------------------------- Captured stdout call -----------------------------
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_summarize_with_lmstudio:1902 - 使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.1, max_tokens=900, context_budget=16384, prompt_tokens=1029, allow_reasoning_retry=False)
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_log_lmstudio_response_diagnostics:2156 - LM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=length, max_tokens=900, content_chars=0, reasoning_chars=2778, prompt_tokens=1234, completion_tokens=899, reasoning_tokens=899
+2026-08-27 14:57:57 | WARNING  | backend.services.summarization:_summarize_with_lmstudio:1938 - LM Studio 摘要生成結果為空
+_ test_visible_target_must_not_compress_provider_cap_into_reasoning_exhaustion _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d871e80>
+
+    @pytest.mark.asyncio
+    async def test_visible_target_must_not_compress_provider_cap_into_reasoning_exhaustion(monkeypatch):
+        """visible target 900 不得使 merge 第一次呼叫的 cap 壓到 900。
+    
+        cap-dependent mock 忠實重現觀察到的模型行為：hidden reasoning 約消耗
+        900+ tokens，因此 cap<=900 時 reasoning 吃光預算（length + 空 content）、
+        cap>900 時留有正文空間。merge 若把第一次呼叫 cap 壓到 900，必然
+        fail-fast（現行行為，即本測試的預期失敗原因）；cap 使用 reserved output
+        時 merge 應直接成功收斂。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        merged_note = _note_with_token_size(service, "整合", 400)
+        assert service._estimate_tokens(merged_note) <= VISIBLE_TARGET_TOKENS
+    
+        def cap_dependent_response(max_tokens: int) -> SimpleNamespace:
+            if max_tokens <= VISIBLE_TARGET_TOKENS:
+                # reasoning 約 900+ tokens 吃光 cap=900 的預算 → 無正文空間
+                return _response(
+                    "",
+                    finish_reason="length",
+                    reasoning_text=_reasoning_only_text(),
+                    completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                    reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                )
+            return _response(merged_note, finish_reason="stop", completion_tokens=500)
+    
+        # 因果探針（fixture 自檢，非 production 行為斷言）：cap=900 必然
+        # reasoning-only、cap=3072 必然有正文，證明 mock 的因果成立。
+        probe_900 = cap_dependent_response(VISIBLE_TARGET_TOKENS)
+        probe_reserved = cap_dependent_response(settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS)
+        assert probe_900.choices[0].finish_reason == "length"
+        assert not probe_900.choices[0].message.content
+        assert probe_900.choices[0].message.reasoning_content
+        assert probe_reserved.choices[0].finish_reason == "stop"
+        assert probe_reserved.choices[0].message.content.strip()
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=lambda **kwargs: cap_dependent_response(int(kwargs["max_tokens"]))
+            ),
+        )
+    
+        try:
+>           result = await _merge_notes(service, selection, [note_a, note_b])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_wave01_merge_budget_separation.py:404: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_wave01_merge_budget_separation.py:127: in _merge_notes
+    return await service._merge_notes_until_fit(
+backend/services/summarization.py:1039: in _merge_notes_until_fit
+    merged = await self._generate_with_local_engine(
+backend/services/summarization.py:1349: in _generate_with_local_engine
+    return await self._summarize_with_lmstudio(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <backend.services.summarization.SummarizationService object at 0x10d873b00>
+system_prompt = '你要合併多份「萃取筆記」，產出一份資訊最完整、去除重複的整合版筆記。\n\n規則：\n- 保留所有明確議題、決議、待辦、數字、日期、責任人。\n- 同一待辦若重複出現可合併，但不同工作項目不可硬併成一列。\n- 若資訊互相矛盾，請保留...原本的「# 萃取筆記」Markdown 結構輸出。\n- 不要寫成最終會議記錄。\n- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。'
+user_message = '以下是第 1 輪整併要處理的 2 份萃取筆記（本輪共 1 組）：\n\n### 筆記 1\n# 萃取筆記\n\n## 2. 議題與決議\n與會單位就甲項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位...設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n與會單位就乙項議題確認設備採購、場地佈置與新聞稿發布的分工，並決議下週五前完成簽核。\n\n請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。'
+progress_callback = None, temperature = 0.1, max_tokens = 900
+context_window_tokens = None
+selection = LMStudioModelSelection(provider='lmstudio', model_identifier='model-alpha', loaded_instance_id='model-alpha-instance-1', context_length=16384, inventory_timestamp=datetime.datetime(2026, 8, 27, 14, 57, 57, 935122))
+expand_output_budget = False, allow_reasoning_retry = True
+
+    async def _summarize_with_lmstudio(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        selection: Optional[LMStudioModelSelection] = None,
+        expand_output_budget: bool = True,
+        allow_reasoning_retry: bool = True,
+    ) -> str:
+        """
+        使用已選定的 LM Studio loaded instance 生成摘要。
+    
+        selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
+        會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+        load，也不在生成失敗時改選其他 instance。
+    
+        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
+        """
+        selection = selection or self._active_lmstudio_selection
+        if selection is None:
+            selection = await self._resolve_lmstudio_selection()
+    
+        if max_tokens is None:
+            requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        else:
+            try:
+                requested_max_tokens = max(1, int(max_tokens))
+            except (TypeError, ValueError):
+                requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+    
+        # caller temperature/max_tokens 為權威（H-5）：後端不再讀 config*.yaml
+        # 的 llm.lmstudio.*，legacy YAML 僅供舊版 CLI 參考。
+        if selection.context_length:
+            # request/retry headroom 以 selected instance 的 context_length 為準，
+            # 缺失時才退回保守 planning context。
+            context_budget = selection.context_length
+        else:
+            context_budget = self._effective_context_tokens(context_window_tokens)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            # preflight fail loudly：不得把 caller budget 靜默壓成 1（observed log max_tokens=1）
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"LM Studio request budget 不足：caller max_tokens {requested_max_tokens}"
+                f" + prompt {prompt_tokens} tokens 超過 context budget {context_budget}"
+                f"（available output {available_output_tokens}，model={selection.model_identifier}）；"
+                "請縮短輸入或降低 max_tokens",
+            )
+        client = self._get_lmstudio_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+    
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={}, "
+            "context_budget={}, prompt_tokens={}, allow_reasoning_retry={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+            context_budget,
+            prompt_tokens,
+            allow_reasoning_retry and expand_output_budget,
+        )
+    
+        response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, requested_max_tokens
+        )
+    
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        content, reasoning_text, finish_reason, usage_tokens = (
+            self._parse_lmstudio_response_payload(response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, finish_reason, content, reasoning_text,
+            usage_tokens, requested_max_tokens, retry=False,
+        )
+        summary = self._clean_ollama_output(str(content))
+    
+        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+        if not (summary and summary.strip()):
+            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+                summary = await self._retry_lmstudio_reasoning_only(
+                    client, selection, messages, temperature,
+                    requested_max_tokens, context_budget, prompt_tokens,
+                    reasoning_text, usage_tokens, finish_reason,
+                )
+            else:
+                log.warning("LM Studio 摘要生成結果為空")
+>               raise StableServiceError(
+                    LMSTUDIO_NO_FINAL_CONTENT,
+                    self._describe_empty_lmstudio_response(
+                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+                    ),
+                )
+E               backend.core.errors.StableServiceError: LMSTUDIO_NO_FINAL_CONTENT: LM Studio 僅輸出 reasoning 即達 max_tokens 上限（finish_reason=length），且本次呼叫禁止 reasoning retry（merge/收斂受限呼叫）：請調高 caller max_tokens 或縮短輸入
+
+backend/services/summarization.py:1939: StableServiceError
+
+During handling of the above exception, another exception occurred:
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d871e80>
+
+    @pytest.mark.asyncio
+    async def test_visible_target_must_not_compress_provider_cap_into_reasoning_exhaustion(monkeypatch):
+        """visible target 900 不得使 merge 第一次呼叫的 cap 壓到 900。
+    
+        cap-dependent mock 忠實重現觀察到的模型行為：hidden reasoning 約消耗
+        900+ tokens，因此 cap<=900 時 reasoning 吃光預算（length + 空 content）、
+        cap>900 時留有正文空間。merge 若把第一次呼叫 cap 壓到 900，必然
+        fail-fast（現行行為，即本測試的預期失敗原因）；cap 使用 reserved output
+        時 merge 應直接成功收斂。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_PROVIDER", "lmstudio")
+        monkeypatch.setattr(settings, "LOCAL_LLM_TRANSIENT_RETRIES", 0)
+        selection = _one_loaded_selection(service)
+    
+        note_a = _note_with_token_size(service, "甲", 350)
+        note_b = _note_with_token_size(service, "乙", 350)
+        merged_note = _note_with_token_size(service, "整合", 400)
+        assert service._estimate_tokens(merged_note) <= VISIBLE_TARGET_TOKENS
+    
+        def cap_dependent_response(max_tokens: int) -> SimpleNamespace:
+            if max_tokens <= VISIBLE_TARGET_TOKENS:
+                # reasoning 約 900+ tokens 吃光 cap=900 的預算 → 無正文空間
+                return _response(
+                    "",
+                    finish_reason="length",
+                    reasoning_text=_reasoning_only_text(),
+                    completion_tokens=OBSERVED_COMPLETION_TOKENS,
+                    reasoning_tokens=OBSERVED_COMPLETION_TOKENS,
+                )
+            return _response(merged_note, finish_reason="stop", completion_tokens=500)
+    
+        # 因果探針（fixture 自檢，非 production 行為斷言）：cap=900 必然
+        # reasoning-only、cap=3072 必然有正文，證明 mock 的因果成立。
+        probe_900 = cap_dependent_response(VISIBLE_TARGET_TOKENS)
+        probe_reserved = cap_dependent_response(settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS)
+        assert probe_900.choices[0].finish_reason == "length"
+        assert not probe_900.choices[0].message.content
+        assert probe_900.choices[0].message.reasoning_content
+        assert probe_reserved.choices[0].finish_reason == "stop"
+        assert probe_reserved.choices[0].message.content.strip()
+    
+        create = _mock_create(
+            monkeypatch,
+            service,
+            AsyncMock(
+                side_effect=lambda **kwargs: cap_dependent_response(int(kwargs["max_tokens"]))
+            ),
+        )
+    
+        try:
+            result = await _merge_notes(service, selection, [note_a, note_b])
+        except StableServiceError as exc:
+            if exc.code == LMSTUDIO_NO_FINAL_CONTENT:
+>               pytest.fail(
+                    f"visible target {VISIBLE_TARGET_TOKENS} 使 merge 第一次呼叫的 "
+                    "provider cap 被壓到 900，hidden reasoning 吃光預算後直接 "
+                    "fail-fast（LMSTUDIO_NO_FINAL_CONTENT）；provider 初始 completion "
+                    "cap 必須使用 LOCAL_LLM_RESERVED_OUTPUT_TOKENS（3072）"
+                )
+E               Failed: visible target 900 使 merge 第一次呼叫的 provider cap 被壓到 900，hidden reasoning 吃光預算後直接 fail-fast（LMSTUDIO_NO_FINAL_CONTENT）；provider 初始 completion cap 必須使用 LOCAL_LLM_RESERVED_OUTPUT_TOKENS（3072）
+
+tests/test_wave01_merge_budget_separation.py:407: Failed
+----------------------------- Captured stdout call -----------------------------
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_summarize_with_lmstudio:1902 - 使用 LM Studio 生成摘要 (model=model-alpha, instance=model-alpha-instance-1, temperature=0.1, max_tokens=900, context_budget=16384, prompt_tokens=1029, allow_reasoning_retry=False)
+2026-08-27 14:57:57 | INFO     | backend.services.summarization:_log_lmstudio_response_diagnostics:2156 - LM Studio 回應診斷（initial）：model=model-alpha, instance=model-alpha-instance-1, finish_reason=length, max_tokens=900, content_chars=0, reasoning_chars=2778, prompt_tokens=1234, completion_tokens=899, reasoning_tokens=899
+2026-08-27 14:57:57 | WARNING  | backend.services.summarization:_summarize_with_lmstudio:1938 - LM Studio 摘要生成結果為空
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field "model_info" has conflict with protected namespace "model_".
+  
+  You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_wave01_merge_budget_separation.py::test_merge_provider_initial_cap_is_reserved_output_not_visible_target
+FAILED tests/test_wave01_merge_budget_separation.py::test_merge_call_must_not_disable_semantic_recovery
+FAILED tests/test_wave01_merge_budget_separation.py::test_reasoning_only_growth_retry_then_orchestration_convergence
+FAILED tests/test_wave01_merge_budget_separation.py::test_visible_target_must_not_compress_provider_cap_into_reasoning_exhaustion
+======================== 4 failed, 2 warnings in 0.48s =========================

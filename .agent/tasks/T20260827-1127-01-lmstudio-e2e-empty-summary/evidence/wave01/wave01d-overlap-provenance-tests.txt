@@ -1,0 +1,164 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0 -- /Users/hsiaojohnny/dev/convert/.venv/bin/python
+rootdir: /Users/hsiaojohnny/dev/convert
+configfile: pyproject.toml
+plugins: anyio-4.14.1, asyncio-1.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 6 items
+
+tests/test_wave01_overlap_provenance.py::TestChunkOverlapBound::test_chunk_boundary_carry_tokens_within_220_token_budget FAILED [ 16%]
+tests/test_wave01_overlap_provenance.py::TestChunkOverlapBound::test_chunk_boundary_carry_respects_configured_line_cap PASSED [ 33%]
+tests/test_wave01_overlap_provenance.py::TestChunkContentCoverage::test_chunk_content_coverage_preserves_order_and_sentinels PASSED [ 50%]
+tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_defaults_to_null_without_env FAILED [ 66%]
+tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_returns_configured_value FAILED [ 83%]
+tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_response_model_declares_nullable_build_revision FAILED [100%]
+
+=================================== FAILURES ===================================
+_ TestChunkOverlapBound.test_chunk_boundary_carry_tokens_within_220_token_budget _
+
+self = <tests.test_wave01_overlap_provenance.TestChunkOverlapBound object at 0x109469610>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1094d4a70>
+
+    def test_chunk_boundary_carry_tokens_within_220_token_budget(self, monkeypatch):
+        """每個 boundary 的重複 carry estimated tokens <= 220。
+    
+        修復前：carry 以 `max(12, max_input_tokens // 2)` 封頂（半個 chunk），
+        在 production budget（>=1200）下 4 行 overlap 可達 272 tokens > 220。
+        """
+        service = SummarizationService()
+        monkeypatch.setattr(settings, "LOCAL_LLM_CHUNK_OVERLAP_LINES", 4)
+    
+        lines = [_overlap_probe_line(i) for i in range(120)]
+    
+        # fixture sanity：預設 4 行 carry 必須足以超過 220 tokens，
+        # 否則本測試無法暴露「carry 超過 220」的缺陷。
+        overlap_lines = max(1, settings.LOCAL_LLM_CHUNK_OVERLAP_LINES)
+        four_line_carry = sum(
+            service._estimate_tokens(line) + 1 for line in lines[-overlap_lines:]
+        )
+        assert four_line_carry > EXPECTED_CHUNK_OVERLAP_BUDGET_TOKENS, (
+            "fixture sanity：4 行 carry 應超過 220 tokens（實得 "
+            f"{four_line_carry}），測試 fixture 設計錯誤"
+        )
+    
+        # production planner 推導的 chunk input budget（production 上下限 [1200, 3200]）
+        plan = service._build_local_context_plan("\n".join(lines), settings.DEFAULT_SYSTEM_PROMPT)
+        budget = plan.chunk_input_budget_tokens
+        assert 1200 <= budget <= 3200, (
+            f"fixture sanity：production chunk input budget 應落在 [1200, 3200]，實得 {budget}"
+        )
+    
+        transcript, chunks, overlaps = _chunk_via_production_splitter(
+            service, lines, budget, overlap_lines=max(1, settings.LOCAL_LLM_CHUNK_OVERLAP_LINES)
+        )
+    
+        assert len(chunks) >= 2, "fixture sanity：逐字稿應觸發 chunking 以產生 boundary"
+        assert transcript.strip()  # 非空輸入
+    
+        carries = _boundary_carry_tokens(service, chunks, overlaps)
+        boundary_carries = [
+            (index, carry) for index, carry in enumerate(carries) if overlaps[index] > 0
+        ]
+        assert boundary_carries, "fixture sanity：應存在帶 overlap 的 boundary"
+    
+        for index, carry_tokens in boundary_carries:
+>           assert carry_tokens <= EXPECTED_CHUNK_OVERLAP_BUDGET_TOKENS, (
+                f"chunk boundary {index} 的 carry 估計 {carry_tokens} tokens，"
+                f"超過 planner 的 220-token overlap 假設（RC-4：assembler 以 "
+                f"max(12, budget // 2) 封頂，可達半個 chunk）"
+            )
+E           AssertionError: chunk boundary 1 的 carry 估計 272 tokens，超過 planner 的 220-token overlap 假設（RC-4：assembler 以 max(12, budget // 2) 封頂，可達半個 chunk）
+E           assert 272 <= 220
+
+tests/test_wave01_overlap_provenance.py:182: AssertionError
+_ TestHealthBuildRevision.test_health_build_revision_defaults_to_null_without_env _
+
+self = <tests.test_wave01_overlap_provenance.TestHealthBuildRevision object at 0x10948ade0>
+build_revision_env = <_pytest.monkeypatch.MonkeyPatch object at 0x10953b680>
+health_client = <starlette.testclient.TestClient object at 0x109549f40>
+
+    def test_health_build_revision_defaults_to_null_without_env(
+        self, build_revision_env, health_client
+    ):
+        """未設定 MEETINGSCRIBE_BUILD_REVISION 時 build_revision 為 null，
+        既有欄位與狀態碼完全不變。"""
+        response = health_client.get("/api/health")
+    
+        assert response.status_code == 200
+        data = response.json()
+    
+        # 既有欄位與狀態碼不得改變（向後相容）
+        assert data["status"] == "healthy"
+        assert data["version"] == __version__
+        assert data["ollama_available"] is True
+        assert data["lmstudio_available"] is False
+        assert data["gemini_available"] is False
+        assert "queue_status" in data
+        assert "device_info" in data
+    
+        # RC-5：未設定時必須以 null 呈現
+>       assert "build_revision" in data, (
+            "/api/health response 缺少向後相容的 nullable build_revision 欄位"
+            "（RC-5：無法區分新舊服務的 runtime provenance）"
+        )
+E       AssertionError: /api/health response 缺少向後相容的 nullable build_revision 欄位（RC-5：無法區分新舊服務的 runtime provenance）
+E       assert 'build_revision' in {'status': 'healthy', 'version': '4.7.2', 'gpu_available': False, 'gpu_name': None, ...}
+
+tests/test_wave01_overlap_provenance.py:383: AssertionError
+_ TestHealthBuildRevision.test_health_build_revision_returns_configured_value __
+
+self = <tests.test_wave01_overlap_provenance.TestHealthBuildRevision object at 0x1094d5430>
+build_revision_env = <_pytest.monkeypatch.MonkeyPatch object at 0x109538140>
+health_client = <starlette.testclient.TestClient object at 0x1095946e0>
+
+    def test_health_build_revision_returns_configured_value(
+        self, build_revision_env, health_client
+    ):
+        """設定 MEETINGSCRIBE_BUILD_REVISION 時，response 必須回傳該值。"""
+        _set_build_revision(build_revision_env, "wave03-test-revision-abc")
+    
+        response = health_client.get("/api/health")
+    
+        assert response.status_code == 200
+        data = response.json()
+>       assert "build_revision" in data, (
+            "/api/health response 缺少 build_revision 欄位"
+            "（RC-5：MEETINGSCRIBE_BUILD_REVISION 應成為執行期來源）"
+        )
+E       AssertionError: /api/health response 缺少 build_revision 欄位（RC-5：MEETINGSCRIBE_BUILD_REVISION 應成為執行期來源）
+E       assert 'build_revision' in {'status': 'healthy', 'version': '4.7.2', 'gpu_available': False, 'gpu_name': None, ...}
+
+tests/test_wave01_overlap_provenance.py:399: AssertionError
+_ TestHealthBuildRevision.test_health_response_model_declares_nullable_build_revision _
+
+self = <tests.test_wave01_overlap_provenance.TestHealthBuildRevision object at 0x1094d50a0>
+
+    def test_health_response_model_declares_nullable_build_revision(self):
+        """HealthStatus response model 必須宣告 nullable 的 build_revision 欄位。"""
+        field = HealthStatus.model_fields.get("build_revision")
+>       assert field is not None, (
+            "HealthStatus response model 缺少 build_revision 欄位"
+            "（RC-5：runtime provenance 無法區分 stale 與 current 服務）"
+        )
+E       AssertionError: HealthStatus response model 缺少 build_revision 欄位（RC-5：runtime provenance 無法區分 stale 與 current 服務）
+E       assert None is not None
+
+tests/test_wave01_overlap_provenance.py:408: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field "model_info" has conflict with protected namespace "model_".
+  
+  You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_wave01_overlap_provenance.py::TestChunkOverlapBound::test_chunk_boundary_carry_tokens_within_220_token_budget
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_defaults_to_null_without_env
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_build_revision_returns_configured_value
+FAILED tests/test_wave01_overlap_provenance.py::TestHealthBuildRevision::test_health_response_model_declares_nullable_build_revision
+=================== 4 failed, 2 passed, 2 warnings in 0.42s ====================
