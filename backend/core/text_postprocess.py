@@ -145,6 +145,46 @@ def dedup_consecutive_sentences(text: str, min_len: int = 4, max_repeats: int = 
 
 
 # ---------------------------------------------------------------------------
+# 連續重複迴圈壓縮（generic，無特定詞黑名單）
+# ---------------------------------------------------------------------------
+
+# 迴圈單元之間僅允許空白或輕標點
+_REP_LOOP_SEP = r"[、，,。\s]*"
+# 1 字 primitive unit：連續 >= 8 次才視為迴圈（保留自然強調）
+_REP_LOOP_SINGLE_RE = re.compile(r"([^\s、，,。])(?:" + _REP_LOOP_SEP + r"\1){7,}")
+# 2–20 字 primitive unit：連續 >= 4 次才視為迴圈
+_REP_LOOP_MULTI_RE = re.compile(r"(\S{2,20}?)(?:" + _REP_LOOP_SEP + r"\1){3,}")
+
+
+def collapse_repetition_loops(text: str) -> tuple[str, int]:
+    """壓縮無句界的連續重複迴圈，回傳（清理後文字, 壓縮的迴圈數）。
+
+    針對 ASR decoder 進入重複迴圈時產生的「請看影片 請看影片 請看影片…」
+    或「對對對對…」等病理模式：以 primitive unit 的連續重複次數判定
+    （1 字單元 >= 8 次；2–20 字單元 >= 4 次），單元之間僅允許空白或輕標點，
+    觸發後保留兩次以避免刪除自然強調。刻意不使用特定詞黑名單，保持
+    provider 無關；低於 threshold 的自然重複完全不會被改動。
+    """
+    if not text:
+        return text, 0
+
+    collapsed = 0
+
+    def _keep_two(match: re.Match) -> str:
+        nonlocal collapsed
+        unit = match.group(1)
+        pairs = re.findall(_REP_LOOP_SEP + re.escape(unit), match.group(0)[len(unit):])
+        collapsed += 1
+        return unit + "".join(pairs[:1])
+
+    # 先處理 1 字單元（threshold 8），再處理 2–20 字單元（threshold 4），
+    # 避免長單字迴圈被誤當成 2 字單元迴圈而保留過多
+    result = _REP_LOOP_SINGLE_RE.sub(_keep_two, text)
+    result = _REP_LOOP_MULTI_RE.sub(_keep_two, result)
+    return result, collapsed
+
+
+# ---------------------------------------------------------------------------
 # 公務用字白名單（高頻固定錯誤的確定性替換）
 # ---------------------------------------------------------------------------
 
@@ -178,7 +218,13 @@ def apply_official_term_fixes(text: str) -> tuple[str, list[tuple[str, str]]]:
 
 def clean_transcript(text: str) -> tuple[str, dict]:
     """對 ASR 逐字稿執行完整的確定性清理，回傳（清理後文字, 統計）。"""
-    stats: dict = {"opencc": False, "hallucinations_removed": 0, "dedup_removed": 0, "term_fixes": []}
+    stats: dict = {
+        "opencc": False,
+        "hallucinations_removed": 0,
+        "repetition_loops_collapsed": 0,
+        "dedup_removed": 0,
+        "term_fixes": [],
+    }
     if not text:
         return text, stats
 
@@ -187,6 +233,11 @@ def clean_transcript(text: str) -> tuple[str, dict]:
 
     cleaned, hallucinated = remove_hallucination_lines(converted)
     stats["hallucinations_removed"] = hallucinated
+
+    cleaned, loops_collapsed = collapse_repetition_loops(cleaned)
+    stats["repetition_loops_collapsed"] = loops_collapsed
+    if loops_collapsed:
+        log.warning("[清理] 壓縮連續重複迴圈 {} 處（保留兩次）", loops_collapsed)
 
     cleaned, deduped = dedup_consecutive_sentences(cleaned)
     stats["dedup_removed"] = deduped

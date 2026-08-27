@@ -156,7 +156,7 @@ class TaskProcessor:
             corrected, report = await transcript_correction_service.correct_transcript(
                 cleaned,
                 lambda system_prompt, user_message: summarization_service.generate_local(
-                    system_prompt, user_message, temperature=0.0
+                    system_prompt, user_message, temperature=0.0, allow_reasoning_retry=False
                 ),
                 extra_glossary_block=template_glossary_block(task.template_id),
             )

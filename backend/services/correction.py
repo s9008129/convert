@@ -18,6 +18,7 @@ from difflib import SequenceMatcher
 from typing import Optional
 
 from backend.core.config import settings
+from backend.core.errors import StableServiceError, describe_exception
 from backend.core.glossary import glossary_prompt_block
 from backend.core.logger import log
 from backend.core.prompts import TRANSCRIPT_CORRECTION_SYSTEM_PROMPT, build_correction_user_message
@@ -302,6 +303,19 @@ class TranscriptCorrectionService:
                     TRANSCRIPT_CORRECTION_SYSTEM_PROMPT,
                     build_correction_user_message(segment.strip(), context_before.strip(), glossary_block),
                 )
+            except StableServiceError as exc:
+                # provider-level 穩定失敗（如 LMSTUDIO_UNREACHABLE）：BEST_EFFORT
+                # 校正不得放大呼叫。熔斷後續所有段落的 LLM 呼叫，
+                # 保留當段與所有剩餘段落原文。
+                log.warning(
+                    "校正遇 provider 穩定失敗（{}），熔斷後續 LLM 校正，剩餘段落保留原文: {}",
+                    exc.code,
+                    describe_exception(exc),
+                )
+                corrected_segments.append(segment)
+                corrected_segments.extend(segments[index + 1:])
+                report.error = describe_exception(exc)
+                break
             except Exception as exc:  # noqa: BLE001
                 log.warning("校正第 {}/{} 段失敗，保留原文: {}", index + 1, len(segments), exc)
                 corrected_segments.append(segment)

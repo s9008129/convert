@@ -150,6 +150,12 @@ class Settings(BaseSettings):
         default=3,
         description="萃取筆記整併的最大輪數；超過或縮減停滯即停止整併改用硬截斷，防止無窮迴圈"
     )
+    # LM Studio reasoning-only 空回應（content 空 + finish_reason=length）允許
+    # 恰好一次 semantic retry 的 max_tokens 上限（T20260827-1127-01 H-2）
+    LMSTUDIO_REASONING_RETRY_MAX_TOKENS: int = Field(
+        default=8192,
+        description="LM Studio reasoning-only 空回應允許一次 semantic retry 的 max_tokens 上限"
+    )
     LOCAL_LLM_DISABLE_THINKING: bool = Field(
         default=True,
         description="關閉思考型模型（如 gemma4）的 thinking 輸出；否則 num_predict 預算會被思考耗盡導致正文極短或為空（E2E 實測根因）"

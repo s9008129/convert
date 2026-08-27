@@ -23,15 +23,15 @@ from backend.core.config import settings
 from backend.core.errors import (
     LMSTUDIO_MODEL_NOT_LOADED,
     LMSTUDIO_MULTIPLE_LOADED_LLMS,
+    LMSTUDIO_NO_FINAL_CONTENT,
     LMSTUDIO_NO_LOADED_LLM,
     LMSTUDIO_UNREACHABLE,
+    LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
     StableServiceError,
     describe_exception,
 )
 from backend.core.logger import log
 from backend.core.platform_config import (
-    get_global_config,
-    get_config_value,
     get_lmstudio_openai_base_url,
     normalize_lmstudio_base_url,
     resolve_local_llm_provider,
@@ -412,40 +412,144 @@ class SummarizationService:
             estimated_chunk_count=estimated_chunk_count,
         )
 
+    # 單行逐字稿超過此字數時，先插入段落換行（只改 whitespace）
+    PARAGRAPH_LINE_MAX_CHARS = 600
+    _SENTENCE_BOUNDARY_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
+    # fragment 內回退切點可用的標點與空白界線
+    _FRAGMENT_BOUNDARY_CHARS = "。！？!?；;，、, \t\n"
+
+    def _insert_paragraph_breaks(self, line: str) -> str:
+        """對超長單行逐字稿插入段落換行：優先句尾標點、其次空白、最後硬界線。
+
+        只插入換行符（whitespace），不改任何非空白內容。此為 best-effort
+        可讀性處理，即使無法理想切分也會以硬界線收斂，不得成為 gate。
+        """
+        if len(line) <= self.PARAGRAPH_LINE_MAX_CHARS:
+            return line
+
+        max_chars = self.PARAGRAPH_LINE_MAX_CHARS
+
+        def _wrap_segment(segment: str) -> list[str]:
+            parts: list[str] = []
+            rest = segment
+            while len(rest) > max_chars:
+                window = rest[:max_chars]
+                boundary = max(window.rfind(" "), window.rfind("\t"))
+                if boundary <= 0:
+                    parts.append(rest[:max_chars])
+                    rest = rest[max_chars:]
+                else:
+                    parts.append(rest[:boundary])
+                    rest = rest[boundary + 1 :]
+            parts.append(rest)
+            return [part for part in parts if part]
+
+        wrapped: list[str] = []
+        for segment in self._SENTENCE_BOUNDARY_SPLIT_RE.split(line):
+            if not segment:
+                continue
+            if len(segment) <= max_chars:
+                wrapped.append(segment)
+            else:
+                wrapped.extend(_wrap_segment(segment))
+        return "\n".join(wrapped)
+
+    def _largest_prefix_index_within_budget(self, text: str, max_input_tokens: int) -> int:
+        """二分搜尋最大的 index c，使 estimated_tokens(text[:c]) <= max_input_tokens。"""
+        lo, hi = 1, len(text)
+        best = 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if self._estimate_tokens(text[:mid]) <= max_input_tokens:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return best
+
+    def _latest_boundary_cut(self, text: str, limit: int) -> Optional[int]:
+        """找出 text[:limit] 內最後一個標點／空白界線，回傳界線字元之後的切點。"""
+        latest = -1
+        for char in self._FRAGMENT_BOUNDARY_CHARS:
+            index = text.rfind(char, 0, limit)
+            if index > latest:
+                latest = index
+        if latest < 0:
+            return None
+        return latest + 1
+
+    def _split_oversized_fragment(self, fragment: str, max_input_tokens: int) -> list[str]:
+        """將超過 token 預算的 fragment 以二分搜尋切到合法大小。
+
+        超過 max_input_tokens 時以二分搜尋找出最大合法 prefix；當該 prefix
+        仍至少保留 60% budget 時，優先回退到最近的標點／空白界線切（避免
+        切半個詞）；否則硬切。每個產出 fragment 都保證 <= max_input_tokens。
+        """
+        results: list[str] = []
+        rest = fragment
+        while rest:
+            if self._estimate_tokens(rest) <= max_input_tokens:
+                results.append(rest)
+                break
+            cut = self._largest_prefix_index_within_budget(rest, max(1, max_input_tokens - 1))
+            if cut <= 0:
+                # 單一字元即超過預算（極小 max_input_tokens）——硬切 1 字避免死迴圈
+                results.append(rest[:1])
+                rest = rest[1:]
+                continue
+            if self._estimate_tokens(rest[:cut]) >= int(max_input_tokens * 0.6):
+                boundary = self._latest_boundary_cut(rest, cut)
+                if boundary is not None and 0 < boundary < cut:
+                    cut = boundary
+            results.append(rest[:cut].strip())
+            rest = rest[cut:]
+        return [part for part in results if part]
+
     def _split_oversized_line(self, line: str, max_input_tokens: int) -> list[str]:
-        """將單行過長的逐字稿切成較小片段。"""
+        """將單行過長的逐字稿切成較小片段（token-aware）。
+
+        先依句尾標點切句，每個 fragment 再重新檢查 estimated tokens；
+        超過 max_input_tokens 的 fragment 交給 _split_oversized_fragment
+        以二分搜尋切分，確保每個片段都在 input budget 內。
+        """
         fragments = [
             fragment.strip()
             for fragment in re.split(r"(?<=[。！？!?；;])\s*", line)
             if fragment.strip()
         ]
         if len(fragments) <= 1:
-            max_chars = max(200, max_input_tokens * 2)
-            return [line[index:index + max_chars].strip() for index in range(0, len(line), max_chars) if line[index:index + max_chars].strip()]
-        return fragments
-
-    def _split_transcript_into_chunks(self, transcript: str, max_input_tokens: int) -> list[str]:
-        """依 speaker line 與自然斷點切塊，並保留少量重疊內容。"""
-        raw_lines = [line.strip() for line in transcript.splitlines() if line.strip()]
-        if not raw_lines:
-            return []
-
-        normalized_lines: list[str] = []
-        for line in raw_lines:
-            if self._estimate_tokens(line) <= max_input_tokens:
-                normalized_lines.append(line)
+            fragments = [line.strip()] if line.strip() else []
+        results: list[str] = []
+        for fragment in fragments:
+            if self._estimate_tokens(fragment) <= max_input_tokens:
+                results.append(fragment)
             else:
-                normalized_lines.extend(self._split_oversized_line(line, max_input_tokens))
+                results.extend(self._split_oversized_fragment(fragment, max_input_tokens))
+        return [fragment for fragment in results if fragment]
 
+    def _assemble_chunks_from_lines(
+        self, lines: list[str], max_input_tokens: int, overlap_lines: int
+    ) -> tuple[list[str], list[int]]:
+        """將已合法化的 lines 依序組成 chunks，並以 overlap 豐富上下文。
+
+        Invariant：每個 chunk 的 estimated tokens 不得超過 max_input_tokens。
+        overlap 是 best-effort：先以 budget 一半封頂，再持續移除最舊 carry
+        line 直到 `carry_tokens + next_line_tokens <= max_input_tokens`；
+        overlap 可降為零，絕不保留會讓 chunk 超出預算的超大 carry。
+
+        回傳（chunks, 每個 chunk 與前一 chunk 共用的重疊行數）。
+        """
         chunks: list[str] = []
+        overlaps: list[int] = []
         current_lines: list[str] = []
         current_tokens = 0
-        overlap_lines = max(1, settings.LOCAL_LLM_CHUNK_OVERLAP_LINES)
+        current_overlap = 0
 
-        for line in normalized_lines:
+        for line in lines:
             line_tokens = self._estimate_tokens(line) + 1
             if current_lines and current_tokens + line_tokens > max_input_tokens:
                 chunks.append("\n".join(current_lines).strip())
+                overlaps.append(current_overlap)
 
                 carry_lines = current_lines[-overlap_lines:]
                 carry_tokens = sum(self._estimate_tokens(item) + 1 for item in carry_lines)
@@ -453,16 +557,107 @@ class SummarizationService:
                 while len(carry_lines) > 1 and carry_tokens > max_overlap_tokens:
                     removed = carry_lines.pop(0)
                     carry_tokens -= self._estimate_tokens(removed) + 1
+                while carry_lines and carry_tokens + line_tokens > max_input_tokens:
+                    removed = carry_lines.pop(0)
+                    carry_tokens -= self._estimate_tokens(removed) + 1
 
                 current_lines = carry_lines[:]
                 current_tokens = carry_tokens
+                current_overlap = len(carry_lines)
 
             current_lines.append(line)
             current_tokens += line_tokens
 
         if current_lines:
             chunks.append("\n".join(current_lines).strip())
+            overlaps.append(current_overlap)
 
+        return chunks, overlaps
+
+    def _validate_chunk_postcondition(
+        self,
+        transcript: str,
+        chunks: list[str],
+        chunk_overlaps: list[int],
+        max_input_tokens: int,
+    ) -> None:
+        """chunking postcondition（provider I/O 前檢查，違反即 fail loudly）。
+
+        檢查：chunks 非空、每塊 estimated tokens <= max_input_tokens、
+        去除重疊後串接等於原文的 whitespace 正規化版本（順序涵蓋、不遺失內容）。
+        違反時在 provider I/O 前拋出穩定的 context budget 錯誤碼，
+        讓 task fallback 以可診斷方式呈現（T20260827-1127-01）。
+        """
+
+        def _norm(text: str) -> str:
+            return re.sub(r"\s+", "", text)
+
+        if not chunks:
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                "chunking 後無任何區塊（輸入非空）",
+            )
+
+        for index, chunk in enumerate(chunks):
+            chunk_tokens = self._estimate_tokens(chunk)
+            if chunk_tokens > max_input_tokens:
+                raise StableServiceError(
+                    LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                    f"chunk {index} estimated tokens {chunk_tokens} "
+                    f"超過 input budget {max_input_tokens}",
+                )
+
+        merged: list[str] = []
+        for chunk, overlap in zip(chunks, chunk_overlaps):
+            chunk_lines = [line.strip() for line in chunk.split("\n") if line.strip()]
+            skip = min(overlap, len(chunk_lines) - 1, len(merged))
+            if skip > 0 and merged[-skip:] != chunk_lines[:skip]:
+                raise StableServiceError(
+                    LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                    "chunk 重疊行與前一 chunk 尾端不一致",
+                )
+            merged.extend(chunk_lines[skip:])
+
+        if "".join(_norm(line) for line in merged) != _norm(transcript):
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                "chunk 切塊未完整涵蓋原始逐字稿（遺失或改動內容）",
+            )
+
+    def _split_transcript_into_chunks(self, transcript: str, max_input_tokens: int) -> list[str]:
+        """依 speaker line 與自然斷點切塊，並保留少量重疊內容。
+
+        Invariant（provider 呼叫前強制）：chunks 非空、每塊
+        estimated tokens <= max_input_tokens、順序涵蓋原始內容。
+        段落換行只改 whitespace 且不構成 gate（失敗退回硬切）。
+        """
+        raw_lines = [line.strip() for line in transcript.splitlines() if line.strip()]
+        if not raw_lines:
+            return []
+
+        normalized_lines: list[str] = []
+        for raw_line in raw_lines:
+            if len(raw_line) > self.PARAGRAPH_LINE_MAX_CHARS:
+                candidate_lines = [
+                    part
+                    for part in self._insert_paragraph_breaks(raw_line).split("\n")
+                    if part.strip()
+                ]
+            else:
+                candidate_lines = [raw_line]
+            for line in candidate_lines:
+                if self._estimate_tokens(line) <= max_input_tokens:
+                    normalized_lines.append(line)
+                else:
+                    normalized_lines.extend(self._split_oversized_line(line, max_input_tokens))
+
+        overlap_lines = max(1, settings.LOCAL_LLM_CHUNK_OVERLAP_LINES)
+        chunks, chunk_overlaps = self._assemble_chunks_from_lines(
+            normalized_lines, max_input_tokens, overlap_lines
+        )
+        self._validate_chunk_postcondition(
+            transcript, chunks, chunk_overlaps, max_input_tokens
+        )
         return chunks
 
     @staticmethod
@@ -1131,8 +1326,14 @@ class SummarizationService:
         context_window_tokens: Optional[int] = None,
         expand_output_budget: bool = True,
         lmstudio_selection: Optional[LMStudioModelSelection] = None,
+        allow_reasoning_retry: bool = True,
     ) -> str:
-        """對選定的本地引擎執行一次生成。"""
+        """對選定的本地引擎執行一次生成。
+
+        allow_reasoning_retry 僅作用於 LM Studio 路徑（Ollama 路徑忽略此
+        參數，維持既有行為）；merge call（expand_output_budget=False）一律
+        禁止 reasoning retry，維持整併輸出的物理上限＝caller cap（ADR-7/8）。
+        """
         if engine == "ollama":
             return await self._summarize_with_ollama(
                 system_prompt,
@@ -1153,6 +1354,8 @@ class SummarizationService:
                 max_tokens=num_predict,
                 context_window_tokens=context_window_tokens,
                 selection=lmstudio_selection,
+                expand_output_budget=expand_output_budget,
+                allow_reasoning_retry=allow_reasoning_retry,
             )
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
@@ -1274,8 +1477,13 @@ class SummarizationService:
         user_message: str,
         temperature: float = 0.0,
         num_predict: Optional[int] = None,
+        allow_reasoning_retry: bool = True,
     ) -> str:
-        """以本地引擎執行單次生成（供逐字稿語意校正等模組共用，P1-3）。"""
+        """以本地引擎執行單次生成（供逐字稿語意校正等模組共用，P1-3）。
+
+        allow_reasoning_retry 僅作用於 LM Studio 路徑；correction 呼叫端
+        （WAVE-04）會明確傳 False。
+        """
         engine = await self._select_local_engine()
         lmstudio_selection = self._active_lmstudio_selection
         return await self._generate_with_local_engine(
@@ -1285,6 +1493,7 @@ class SummarizationService:
             temperature=temperature,
             num_predict=num_predict,
             lmstudio_selection=lmstudio_selection,
+            allow_reasoning_retry=allow_reasoning_retry,
         )
 
     async def _stream_ollama_chat_once(
@@ -1635,6 +1844,8 @@ class SummarizationService:
         max_tokens: Optional[int] = None,
         context_window_tokens: Optional[int] = None,
         selection: Optional[LMStudioModelSelection] = None,
+        expand_output_budget: bool = True,
+        allow_reasoning_retry: bool = True,
     ) -> str:
         """
         使用已選定的 LM Studio loaded instance 生成摘要。
@@ -1642,30 +1853,205 @@ class SummarizationService:
         selection 必須由摘要工作開始時建立；直接呼叫此方法的舊呼叫端則
         會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
         load，也不在生成失敗時改選其他 instance。
+
+        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
         """
         selection = selection or self._active_lmstudio_selection
         if selection is None:
             selection = await self._resolve_lmstudio_selection()
 
-        config = get_global_config()
-        temperature = get_config_value(config, 'llm.lmstudio.temperature', temperature)
-        configured_max_tokens = get_config_value(
-            config,
-            'llm.lmstudio.max_tokens',
-            max_tokens if max_tokens is not None else settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-        )
-        try:
-            requested_max_tokens = max(1, int(configured_max_tokens))
-        except (TypeError, ValueError):
+        if max_tokens is None:
             requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        else:
+            try:
+                requested_max_tokens = max(1, int(max_tokens))
+            except (TypeError, ValueError):
+                requested_max_tokens = settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
 
-        context_budget = self._effective_context_tokens(context_window_tokens)
+        # caller temperature/max_tokens 為權威（H-5）：後端不再讀 config*.yaml
+        # 的 llm.lmstudio.*，legacy YAML 僅供舊版 CLI 參考。
         if selection.context_length:
-            context_budget = min(context_budget, selection.context_length)
+            # request/retry headroom 以 selected instance 的 context_length 為準，
+            # 缺失時才退回保守 planning context。
+            context_budget = selection.context_length
+        else:
+            context_budget = self._effective_context_tokens(context_window_tokens)
         prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
-        available_output_tokens = max(1, context_budget - prompt_tokens - 64)
-        requested_max_tokens = min(requested_max_tokens, available_output_tokens)
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            # preflight fail loudly：不得把 caller budget 靜默壓成 1（observed log max_tokens=1）
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"LM Studio request budget 不足：caller max_tokens {requested_max_tokens}"
+                f" + prompt {prompt_tokens} tokens 超過 context budget {context_budget}"
+                f"（available output {available_output_tokens}，model={selection.model_identifier}）；"
+                "請縮短輸入或降低 max_tokens",
+            )
         client = self._get_lmstudio_client()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        self._emit_progress(
+            progress_callback,
+            65.0,
+            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
+        )
+        log.info(
+            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={}, "
+            "context_budget={}, prompt_tokens={}, allow_reasoning_retry={})",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            temperature,
+            requested_max_tokens,
+            context_budget,
+            prompt_tokens,
+            allow_reasoning_retry and expand_output_budget,
+        )
+
+        response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, requested_max_tokens
+        )
+
+        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+        content, reasoning_text, finish_reason, usage_tokens = (
+            self._parse_lmstudio_response_payload(response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, finish_reason, content, reasoning_text,
+            usage_tokens, requested_max_tokens, retry=False,
+        )
+        summary = self._clean_ollama_output(str(content))
+
+        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+        if not (summary and summary.strip()):
+            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+                summary = await self._retry_lmstudio_reasoning_only(
+                    client, selection, messages, temperature,
+                    requested_max_tokens, context_budget, prompt_tokens,
+                    reasoning_text, usage_tokens, finish_reason,
+                )
+            else:
+                log.warning("LM Studio 摘要生成結果為空")
+                raise StableServiceError(
+                    LMSTUDIO_NO_FINAL_CONTENT,
+                    self._describe_empty_lmstudio_response(
+                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+                    ),
+                )
+
+        log.info("LM Studio 摘要生成成功，模型: {}", selection.model_identifier)
+        return summary.strip()
+
+    def _describe_empty_lmstudio_response(
+        self,
+        finish_reason: Optional[str],
+        reasoning_evidence: bool,
+        reasoning_retry_allowed: bool,
+    ) -> str:
+        """空回應的 actionable detail（只含狀態與對策，不含回應內容）。"""
+        if finish_reason == "length" and reasoning_evidence:
+            if not reasoning_retry_allowed:
+                return (
+                    "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+                    "（finish_reason=length），且本次呼叫禁止 reasoning retry"
+                    "（merge/收斂受限呼叫）：請調高 caller max_tokens 或縮短輸入"
+                )
+            return (
+                "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+                "（finish_reason=length），且 retry headroom 不足以提高 max_tokens；"
+                "請調高 caller max_tokens 或 LMSTUDIO_REASONING_RETRY_MAX_TOKENS"
+            )
+        return (
+            f"LM Studio 回應無 final content（finish_reason={finish_reason}，"
+            "無 reasoning 證據）；請確認模型是否正常輸出，或改用其他已載入 LLM"
+        )
+
+    async def _retry_lmstudio_reasoning_only(
+        self,
+        client,
+        selection: LMStudioModelSelection,
+        messages: list[dict],
+        temperature: float,
+        initial_max_tokens: int,
+        context_budget: int,
+        prompt_tokens: int,
+        reasoning_text: Optional[str],
+        usage_tokens: dict,
+        finish_reason: Optional[str],
+    ) -> str:
+        """reasoning-only 空回應的 semantic retry：恰好一次、同一 selection/prompt/temperature。
+
+        retry_cap = min(provider_headroom, configured_cap,
+                        max(initial * 2, observed_reasoning + initial + 256))；
+        cap 無法增加或 retry 仍空 → LMSTUDIO_NO_FINAL_CONTENT。
+        """
+        observed_reasoning_tokens = usage_tokens.get("reasoning_tokens")
+        if not observed_reasoning_tokens and reasoning_text:
+            # usage 未提供 reasoning tokens 時以文字 token 估算代替（不記錄文字）
+            observed_reasoning_tokens = self._estimate_tokens(reasoning_text)
+        observed_reasoning_tokens = int(observed_reasoning_tokens or 0)
+
+        configured_cap = max(1, int(settings.LMSTUDIO_REASONING_RETRY_MAX_TOKENS))
+        provider_headroom = context_budget - prompt_tokens - 64
+        retry_cap = min(
+            provider_headroom,
+            configured_cap,
+            max(initial_max_tokens * 2, observed_reasoning_tokens + initial_max_tokens + 256),
+        )
+        retry_cap = max(1, int(retry_cap))
+        if retry_cap <= initial_max_tokens:
+            raise StableServiceError(
+                LMSTUDIO_NO_FINAL_CONTENT,
+                "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+                f"（finish_reason={finish_reason}, reasoning_tokens≈{observed_reasoning_tokens}），"
+                f"且 provider headroom 無法提高 max_tokens（{initial_max_tokens}→{retry_cap}）；"
+                "請縮短輸入或調低 max_tokens",
+            )
+
+        log.warning(
+            "LM Studio 回應僅含 reasoning（finish_reason={}, reasoning_tokens≈{}），"
+            "提高 max_tokens {}→{} 執行恰好一次 semantic retry（model/instance/prompt/temperature 不變）",
+            finish_reason,
+            observed_reasoning_tokens,
+            initial_max_tokens,
+            retry_cap,
+        )
+        retry_response = await self._lmstudio_chat_request(
+            client, selection, messages, temperature, retry_cap
+        )
+        retry_content, retry_reasoning, retry_finish_reason, retry_usage = (
+            self._parse_lmstudio_response_payload(retry_response)
+        )
+        self._log_lmstudio_response_diagnostics(
+            selection, retry_finish_reason, retry_content, retry_reasoning,
+            retry_usage, retry_cap, retry=True,
+        )
+        summary = self._clean_ollama_output(str(retry_content))
+        if not (summary and summary.strip()):
+            raise StableServiceError(
+                LMSTUDIO_NO_FINAL_CONTENT,
+                f"LM Studio semantic retry（max_tokens={retry_cap}）後仍無 final content"
+                f"（finish_reason={retry_finish_reason}）",
+            )
+        return summary
+
+    async def _lmstudio_chat_request(
+        self,
+        client,
+        selection: LMStudioModelSelection,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+    ) -> object:
+        """單次 chat.completions.create（含既有 transient/HTTP 錯誤映射）。
+
+        network transient retry 維持既有 LOCAL_LLM_TRANSIENT_RETRIES 上限；
+        semantic（reasoning）retry 由呼叫端另行計數，兩者分開、各自有界。
+        """
         retries = max(int(settings.LOCAL_LLM_TRANSIENT_RETRIES), 0)
         transient_errors = (
             APIConnectionError,
@@ -1674,32 +2060,14 @@ class SummarizationService:
             httpx.ConnectError,
             httpx.RemoteProtocolError,
         )
-
-        self._emit_progress(
-            progress_callback,
-            65.0,
-            f"使用已載入 LM Studio 模型（{selection.model_identifier}）...",
-        )
-        log.info(
-            "使用 LM Studio 生成摘要 (model={}, instance={}, temperature={}, max_tokens={})",
-            selection.model_identifier,
-            selection.loaded_instance_id,
-            temperature,
-            requested_max_tokens,
-        )
-
         for attempt in range(retries + 1):
             try:
-                response = await client.chat.completions.create(
+                return await client.chat.completions.create(
                     model=selection.model_identifier,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message},
-                    ],
+                    messages=messages,
                     temperature=temperature,
-                    max_tokens=requested_max_tokens,
+                    max_tokens=max_tokens,
                 )
-                break
             except transient_errors as exc:
                 if attempt >= retries:
                     raise StableServiceError(
@@ -1740,22 +2108,66 @@ class SummarizationService:
                     ) from exc
                 log.exception("LM Studio 摘要生成失敗: %s", describe_exception(exc))
                 raise
-        else:
-            raise StableServiceError(LMSTUDIO_UNREACHABLE, "LM Studio chat 重試邏輯異常")
+        raise StableServiceError(LMSTUDIO_UNREACHABLE, "LM Studio chat 重試邏輯異常")
 
-        self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
+    @staticmethod
+    def _parse_lmstudio_response_payload(
+        response: object,
+    ) -> tuple[str, Optional[str], Optional[str], dict]:
+        """解析 chat 回應：final content、reasoning 證據、finish_reason、usage token counts。
+
+        只回傳數值與狀態；reasoning 文字與 prompt 內容不得進入 log（呼叫端
+        僅記錄字元數）。
+        """
         try:
-            content = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            message = choice.message
+            content = message.content or ""
+            reasoning = getattr(message, "reasoning_content", None)
+            if reasoning is None:
+                reasoning = getattr(message, "reasoning", None)
+            finish_reason = getattr(choice, "finish_reason", None)
         except (AttributeError, IndexError, TypeError) as exc:
             raise RuntimeError("LM Studio 摘要生成失敗：回應格式無法解析") from exc
-        summary = self._clean_ollama_output(str(content))
 
-        if not summary or not summary.strip():
-            log.warning("LM Studio 摘要生成結果為空")
-            raise RuntimeError("摘要生成失敗：結果為空")
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
+        usage_tokens: dict = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", None),
+            "completion_tokens": getattr(usage, "completion_tokens", None),
+            "reasoning_tokens": (
+                getattr(details, "reasoning_tokens", None) if details is not None else None
+            ),
+        }
+        reasoning_text = str(reasoning) if reasoning is not None else None
+        return str(content), reasoning_text, finish_reason, usage_tokens
 
-        log.info("LM Studio 摘要生成成功，模型: {}", selection.model_identifier)
-        return summary.strip()
+    def _log_lmstudio_response_diagnostics(
+        self,
+        selection: LMStudioModelSelection,
+        finish_reason: Optional[str],
+        content: str,
+        reasoning_text: Optional[str],
+        usage_tokens: dict,
+        max_tokens: int,
+        retry: bool,
+    ) -> None:
+        """記錄回應診斷（只記 counts，禁止記錄 reasoning 文字或 prompt 內容）。"""
+        log.info(
+            "LM Studio 回應診斷（{}）：model={}, instance={}, finish_reason={}, "
+            "max_tokens={}, content_chars={}, reasoning_chars={}, "
+            "prompt_tokens={}, completion_tokens={}, reasoning_tokens={}",
+            "semantic retry" if retry else "initial",
+            selection.model_identifier,
+            selection.loaded_instance_id,
+            finish_reason,
+            max_tokens,
+            len(content),
+            len(reasoning_text) if reasoning_text else 0,
+            usage_tokens.get("prompt_tokens"),
+            usage_tokens.get("completion_tokens"),
+            usage_tokens.get("reasoning_tokens"),
+        )
 
     def _estimate_cloud_min_summary_chars(self, transcript: str) -> int:
         """依逐字稿規模估算雲端紀錄的動態長度下限（v4.3.3 豐富度閘門）。
