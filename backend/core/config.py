@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     )
     LOCAL_LLM_MAX_MERGE_ROUNDS: int = Field(
         default=3,
-        description="萃取筆記整併的最大輪數；超過或縮減停滯即停止整併改用硬截斷，防止無窮迴圈"
+        description="萃取筆記整併的最大輪數；超過或單輪無實質進度即拋 LOCAL_LLM_MERGE_NOT_CONVERGED（保留全部來源事實，不硬截斷），防止無窮迴圈"
     )
     # LM Studio reasoning-only 空回應（content 空 + finish_reason=length）允許
     # 恰好一次 semantic retry 的 max_tokens 上限（T20260827-1127-01 H-2）

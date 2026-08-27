@@ -1,0 +1,546 @@
+diff --git a/backend/core/errors.py b/backend/core/errors.py
+index 375a54f..bd66e2d 100644
+--- a/backend/core/errors.py
++++ b/backend/core/errors.py
+@@ -16,6 +16,7 @@ LMSTUDIO_NO_LOADED_LLM = "LMSTUDIO_NO_LOADED_LLM"
+ LMSTUDIO_MULTIPLE_LOADED_LLMS = "LMSTUDIO_MULTIPLE_LOADED_LLMS"
+ LMSTUDIO_MODEL_NOT_LOADED = "LMSTUDIO_MODEL_NOT_LOADED"
+ LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED = "LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED"
++LOCAL_LLM_MERGE_NOT_CONVERGED = "LOCAL_LLM_MERGE_NOT_CONVERGED"
+ LMSTUDIO_NO_FINAL_CONTENT = "LMSTUDIO_NO_FINAL_CONTENT"
+ 
+ 
+diff --git a/backend/services/summarization.py b/backend/services/summarization.py
+index 53b1dc7..b8cfbbb 100644
+--- a/backend/services/summarization.py
++++ b/backend/services/summarization.py
+@@ -27,6 +27,7 @@ from backend.core.errors import (
+     LMSTUDIO_NO_LOADED_LLM,
+     LMSTUDIO_UNREACHABLE,
+     LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
++    LOCAL_LLM_MERGE_NOT_CONVERGED,
+     StableServiceError,
+     describe_exception,
+ )
+@@ -61,7 +62,13 @@ class LocalContextPlan:
+     context_window_tokens: int
+     estimated_transcript_tokens: int
+     chunk_input_budget_tokens: int
+-    notes_merge_budget_tokens: int
++    # T20260827-1127-01 RC-1：merge 預算語意分離——「來源分組上限」「合併後
++    # 可見目標」「provider completion cap」是三個不同契約，不得共用單一欄位
++    # （舊 notes_merge_budget_tokens 同時承擔三種語意，使 hidden reasoning
++    # 吃光 provider completion 預算後無法產出 final content）。
++    merge_input_budget_tokens: int
++    merge_visible_target_tokens: int
++    merge_provider_output_tokens: int
+     needs_chunking: bool
+     estimated_chunk_count: int
+ 
+@@ -145,6 +152,12 @@ class SummarizationService:
+ - 不要寫成最終會議記錄。
+ - 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
+ 
++    # T20260827-1127-01 RC-1：合併後 notes 的可見收斂目標（final-stage fit）。
++    # 這是「orchestration 可見輸出」契約，與 provider completion cap 是不同
++    # 預算；超出可見目標的回應交由下一輪 compaction 處理，不得壓縮 provider
++    # max_tokens，也不得用字串截斷修正。
++    LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS = 900
++
+     def __init__(self):
+         """準備各種 LLM 客戶端與健康檢查快取，減少重複連線成本。"""
+         self._ollama_client: Optional[httpx.AsyncClient] = None
+@@ -385,20 +398,36 @@ class SummarizationService:
+         )
+         chunk_input_budget = max(1200, context_window - output_budget - extraction_overhead)
+         chunk_input_budget = min(chunk_input_budget, 3200)
+-        # P0-6：合併後筆記會進入「最終生成」步驟，該步驟使用完整公務紀錄
+-        # System Prompt（約 1,200 tokens）＋補強重寫時還會再附一份當前摘要。
+-        # 預算必須以「合併 prompt」與「最終生成（含補強）」兩者中較大的
+-        # 開銷計算，否則最終步驟輸入會超過 num_ctx 被 Ollama 靜默截斷。
++        # P0-6：合併後筆記會進入「最終生成」步驟；merge 可見目標（約 900 tokens）
++        # 保證最終步驟輸入（完整公務紀錄 System Prompt 約 1,200 tokens＋補強輪
++        # 附帶的當前摘要）遠低於 context window，不會被 num_ctx 靜默截斷。
+         merge_overhead = self._estimate_tokens(self.LOCAL_NOTES_MERGE_PROMPT) + 250
+-        final_overhead = (
+-            self._estimate_tokens(system_prompt)
+-            + output_budget  # 補強輪會把當前摘要附進輸入，以輸出預算上限估計
+-            + 400  # 最終生成模板與問題清單
+-            + (self._estimate_tokens(template.generation_message_extra) if template else 0)
+-        )
+-        notes_merge_budget = max(
+-            900,
+-            context_window - output_budget - max(merge_overhead, final_overhead),
++        # T20260827-1127-01 RC-1：merge 預算語意分離（CHANGE_MAP 1）。
++        # - merge_provider_output_tokens：LM Studio 初始 completion cap，使用
++        #   既有 LOCAL_LLM_RESERVED_OUTPUT_TOKENS；hidden reasoning 吃掉預算時
++        #   由有界 semantic recovery 依 headroom/configured-cap 公式有限增加，
++        #   不以可見目標壓縮 provider cap。
++        # - merge_visible_target_tokens：合併後 notes 的可見收斂目標（約 900，
++        #   final-stage fit 目的），只在 merge prompt 明示，不進入 max_tokens。
++        # - merge_input_budget_tokens：一組來源 notes 的上限，由 context window
++        #   扣除 merge prompt overhead 與 provider completion reserve 計算。
++        merge_provider_output_tokens = output_budget
++        merge_visible_target_tokens = self.LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS
++        merge_feasible_input = context_window - merge_provider_output_tokens - merge_overhead
++        # Preflight：context 必須同時容納 merge prompt、至少兩份目標大小 notes
++        # 與 provider completion reserve；不可行時在 provider I/O 前 fail loudly。
++        if merge_feasible_input < 2 * merge_visible_target_tokens:
++            raise StableServiceError(
++                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
++                f"merge 階段 context 預算不足：context window {context_window} tokens 無法"
++                f"同時容納 merge prompt 開銷（約 {merge_overhead} tokens）、兩份目標大小"
++                f"notes（{2 * merge_visible_target_tokens} tokens）與 provider completion "
++                f"reserve（{merge_provider_output_tokens} tokens）；請調大 context window"
++                "或降低 LOCAL_LLM_RESERVED_OUTPUT_TOKENS",
++            )
++        merge_input_budget_tokens = max(
++            merge_visible_target_tokens,
++            merge_feasible_input,
+         )
+         effective_chunk_step = max(chunk_input_budget - 220, 1)
+         estimated_chunk_count = max(1, (transcript_tokens + effective_chunk_step - 1) // effective_chunk_step)
+@@ -407,7 +436,9 @@ class SummarizationService:
+             context_window_tokens=context_window,
+             estimated_transcript_tokens=transcript_tokens,
+             chunk_input_budget_tokens=chunk_input_budget,
+-            notes_merge_budget_tokens=notes_merge_budget,
++            merge_input_budget_tokens=merge_input_budget_tokens,
++            merge_visible_target_tokens=merge_visible_target_tokens,
++            merge_provider_output_tokens=merge_provider_output_tokens,
+             needs_chunking=transcript_tokens > chunk_input_budget,
+             estimated_chunk_count=estimated_chunk_count,
+         )
+@@ -857,17 +888,29 @@ class SummarizationService:
+ 逐字稿內容：
+ {chunk}"""
+ 
+-    def _build_notes_merge_message(self, notes_group: list[str], round_index: int, total_groups: int) -> str:
+-        """建立多份萃取筆記的合併訊息。"""
++    def _build_notes_merge_message(
++        self,
++        notes_group: list[str],
++        round_index: int,
++        total_groups: int,
++        visible_target_tokens: Optional[int] = None,
++    ) -> str:
++        """建立多份萃取筆記的合併訊息（明示 merge 可見 token 目標，RC-1）。"""
+         combined = "\n\n---\n\n".join(
+             f"### 筆記 {index}\n{notes}"
+             for index, notes in enumerate(notes_group, start=1)
+         )
++        target_line = (
++            f"\n本次整併的可見長度目標：整合結果約 {visible_target_tokens} tokens 以內，"
++            "請在不遺漏任何決議／待辦的前提下壓縮重複內容。"
++            if visible_target_tokens
++            else ""
++        )
+         return f"""以下是第 {round_index} 輪整併要處理的 {len(notes_group)} 份萃取筆記（本輪共 {total_groups} 組）：
+ 
+ {combined}
+ 
+-請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。"""
++請輸出單一份整合後的「# 萃取筆記」Markdown，保留所有重要待辦與決議。{target_line}"""
+ 
+     @staticmethod
+     def _template_generation_extra(template: Optional[MeetingTemplate]) -> str:
+@@ -991,44 +1034,76 @@ class SummarizationService:
+         self,
+         engine: str,
+         extracted_notes: list[str],
+-        notes_merge_budget_tokens: int,
++        merge_visible_target_tokens: int,
+         progress_callback: Optional[callable] = None,
+         context_window_tokens: Optional[int] = None,
+         lmstudio_selection: Optional[LMStudioModelSelection] = None,
++        merge_input_budget_tokens: Optional[int] = None,
++        merge_provider_output_tokens: Optional[int] = None,
+     ) -> str:
+-        """反覆整併 chunk 筆記，直到可被最終摘要步驟安全承接。"""
++        """反覆整併 chunk 筆記，直到可被最終摘要步驟安全承接（RC-1/RC-3）。
++
++        merge 預算語意分離（CHANGE_MAP 1）：
++        - ``merge_input_budget_tokens``：一組可攜帶的來源 notes 上限（分組用）。
++        - ``merge_visible_target_tokens``：合併後 notes 必須收斂到的可見目標；
++          merge prompt 明示此目標，provider ``max_tokens`` 不使用它。
++        - ``merge_provider_output_tokens``：provider 初始 completion cap；
++          hidden reasoning 吃掉預算時由有界 semantic recovery 依
++          headroom/configured-cap 公式有限增加（allow_reasoning_retry 單獨決定）。
++
++        回應超過可見目標時視為下一輪待壓縮 note（單份 oversized note 允許單獨
++        compaction）；每輪必須減少 note 數或 estimated total tokens；達輪數上限
++        或無實質進度時拋 ``LOCAL_LLM_MERGE_NOT_CONVERGED``。CORE merge path
++        不使用 hard truncation——不得省略尾端來源內容偽造成功。
++        """
+         current_notes = [self._clean_ollama_output(note) for note in extracted_notes if note and note.strip()]
+         if not current_notes:
+             return self._empty_extraction_notes()
+ 
+-        # 收斂保護（v4.2）：整併輸出若無法縮到預算內，舊邏輯會無限重壓縮。
+-        # 三重防線：輪數上限、縮減停滯偵測、最終硬截斷保底。
++        provider_output_cap = merge_provider_output_tokens or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
++        if merge_input_budget_tokens is None:
++            context_budget = context_window_tokens or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
++            merge_input_budget_tokens = max(
++                merge_visible_target_tokens,
++                context_budget
++                - provider_output_cap
++                - (self._estimate_tokens(self.LOCAL_NOTES_MERGE_PROMPT) + 250),
++            )
++
++        # 收斂保護（RC-3）：整併必須確定性收斂。三重防線：輪數上限、
++        # 「note 數或總 tokens 必須減少」的進度證明、非收斂時拋 stable error
++        # 走既有逐字稿 fallback。禁止以 hard truncation 偽造成功。
+         round_index = 1
+         previous_total_tokens: Optional[int] = None
+-        merge_predict_cap = min(
+-            settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+-            max(notes_merge_budget_tokens, 512),
+-        )
+-        while len(current_notes) > 1 or self._estimate_tokens(current_notes[0]) > notes_merge_budget_tokens:
++        previous_note_count: Optional[int] = None
++        while len(current_notes) > 1 or self._estimate_tokens(current_notes[0]) > merge_visible_target_tokens:
+             total_tokens = sum(self._estimate_tokens(note) for note in current_notes)
+             if round_index > settings.LOCAL_LLM_MAX_MERGE_ROUNDS:
+-                log.warning(
+-                    "筆記整併達輪數上限（{} 輪）仍超出預算（{} tokens > {}），改用硬截斷",
+-                    settings.LOCAL_LLM_MAX_MERGE_ROUNDS, total_tokens, notes_merge_budget_tokens,
++                raise StableServiceError(
++                    LOCAL_LLM_MERGE_NOT_CONVERGED,
++                    f"萃取筆記整併在 {settings.LOCAL_LLM_MAX_MERGE_ROUNDS} 輪內未收斂到可見目標"
++                    f"（目前 {len(current_notes)} 份筆記、{total_tokens} tokens > 目標 "
++                    f"{merge_visible_target_tokens} tokens）。為保留全部來源事實（含尾端決議／"
++                    "待辦），已停止整併並回退為明示逐字稿 fallback；請調大 context window"
++                    "或提高 LOCAL_LLM_MAX_MERGE_ROUNDS 後重試",
+                 )
+-                break
+-            if previous_total_tokens is not None and total_tokens >= previous_total_tokens * 0.9:
+-                log.warning(
+-                    "筆記整併縮減停滯（{} → {} tokens），停止整併改用硬截斷",
+-                    previous_total_tokens, total_tokens,
++            if previous_total_tokens is not None:
++                notes_reduced = (
++                    previous_note_count is not None and len(current_notes) < previous_note_count
+                 )
+-                break
++                tokens_reduced = total_tokens < previous_total_tokens
++                if not notes_reduced and not tokens_reduced:
++                    raise StableServiceError(
++                        LOCAL_LLM_MERGE_NOT_CONVERGED,
++                        f"萃取筆記整併無實質進度（{previous_total_tokens} → {total_tokens} tokens，"
++                        f"{previous_note_count} → {len(current_notes)} 份），於第 {round_index} 輪前"
++                        "停止。為保留全部來源事實（含尾端決議／待辦），已回退為明示逐字稿 "
++                        "fallback；請確認模型輸出品質或調大 context window",
++                    )
+             previous_total_tokens = total_tokens
++            previous_note_count = len(current_notes)
+ 
+-            note_groups = self._group_texts_by_budget(current_notes, notes_merge_budget_tokens)
+-            if len(note_groups) == 1 and len(current_notes) == 1:
+-                break
+-
++            note_groups = self._group_texts_by_budget(current_notes, merge_input_budget_tokens)
+             merged_round: list[str] = []
+             for group_index, note_group in enumerate(note_groups, start=1):
+                 self._emit_progress(
+@@ -1039,15 +1114,21 @@ class SummarizationService:
+                 merged = await self._generate_with_local_engine(
+                     engine,
+                     self.LOCAL_NOTES_MERGE_PROMPT,
+-                    self._build_notes_merge_message(note_group, round_index, len(note_groups)),
++                    self._build_notes_merge_message(
++                        note_group,
++                        round_index,
++                        len(note_groups),
++                        visible_target_tokens=merge_visible_target_tokens,
++                    ),
+                     temperature=0.1,
+-                    # 輸出上限綁定預算：讓整併輸出「物理上」不可能超過預算太多
+-                    num_predict=merge_predict_cap,
++                    # provider completion cap 與可見目標分離（RC-1）：初始 cap 為
++                    # merge_provider_output_tokens（reserved output），超出可見目標
++                    # 的輸出交由下一輪 compaction，不以可見目標壓縮 max_tokens。
++                    num_predict=provider_output_cap,
+                     context_window_tokens=context_window_tokens,
+                     lmstudio_selection=lmstudio_selection,
+-                    # v4.7.1：merge_predict_cap 是整併的收斂機制（每輪輸出必須
+-                    # 小於預算，才能保證多輪整併最終收斂）。若自動擴大 num_predict，
+-                    # 會讓整併輸出膨脹回接近 context 上限，破壞「整併必縮小」的保證。
++                    # Ollama 路徑維持不自動擴大 num_predict；LM Studio 的 semantic
++                    # recovery 由 allow_reasoning_retry（預設 True）單獨決定。
+                     expand_output_budget=False,
+                 )
+                 merged_round.append(self._clean_ollama_output(merged))
+@@ -1055,8 +1136,8 @@ class SummarizationService:
+             current_notes = merged_round
+             round_index += 1
+ 
+-        combined = current_notes[0] if len(current_notes) == 1 else "\n\n".join(current_notes)
+-        return self._truncate_to_token_budget(combined, notes_merge_budget_tokens)
++        # 全量收斂或顯式失敗：不合併截斷路徑，尾端來源內容一律保留。
++        return current_notes[0] if len(current_notes) == 1 else "\n\n".join(current_notes)
+ 
+     def _truncate_to_token_budget(self, text: str, budget_tokens: int) -> str:
+         """最後保底：仍超出預算時依行硬截斷（保留前段，行界不切半句）。"""
+@@ -1854,8 +1935,11 @@ class SummarizationService:
+         會在這裡補做一次 selection。整個請求只使用 model key，不觸發 JIT
+         load，也不在生成失敗時改選其他 instance。
+ 
+-        expand_output_budget=False（merge call）與 allow_reasoning_retry=False
+-        都會禁止 reasoning retry，維持輸出物理上限＝caller cap（ADR-7/8）。
++        semantic recovery 僅由 ``allow_reasoning_retry`` 決定（RC-2）：correction
++        等 BEST_EFFORT 呼叫端傳 False 即停用；CORE 生成（含 merge）預設啟用，
++        merge 的可見目標由 orchestration 的 compaction 收斂，不再透過禁止
++        provider recovery 實現。``expand_output_budget`` 僅作用於 Ollama
++        num_predict 擴張，不再參與 LM Studio recovery 決策。
+         """
+         selection = selection or self._active_lmstudio_selection
+         if selection is None:
+@@ -1908,7 +1992,7 @@ class SummarizationService:
+             requested_max_tokens,
+             context_budget,
+             prompt_tokens,
+-            allow_reasoning_retry and expand_output_budget,
++            allow_reasoning_retry,
+         )
+ 
+         response = await self._lmstudio_chat_request(
+@@ -1921,30 +2005,195 @@ class SummarizationService:
+         )
+         self._log_lmstudio_response_diagnostics(
+             selection, finish_reason, content, reasoning_text,
+-            usage_tokens, requested_max_tokens, retry=False,
++            usage_tokens, requested_max_tokens, attempt_type="initial",
+         )
+         summary = self._clean_ollama_output(str(content))
++        if summary and summary.strip():
++            log.info("LM Studio 摘要生成成功，模型: {}", selection.model_identifier)
++            return summary.strip()
++
++        # RC-2：有界 semantic recovery state machine（allow_reasoning_retry 單獨
++        # 決定；每個 logical generation 最多三次 completed provider calls）。
++        reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
++        if not allow_reasoning_retry:
++            log.warning("LM Studio 摘要生成結果為空（本次呼叫停用 semantic recovery）")
++            raise StableServiceError(
++                LMSTUDIO_NO_FINAL_CONTENT,
++                self._describe_empty_lmstudio_response(finish_reason, reasoning_evidence, False),
++            )
+ 
+-        reasoning_retry_allowed = allow_reasoning_retry and expand_output_budget
+-        if not (summary and summary.strip()):
+-            reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
+-            if finish_reason == "length" and reasoning_evidence and reasoning_retry_allowed:
+-                summary = await self._retry_lmstudio_reasoning_only(
+-                    client, selection, messages, temperature,
+-                    requested_max_tokens, context_budget, prompt_tokens,
+-                    reasoning_text, usage_tokens, finish_reason,
+-                )
+-            else:
+-                log.warning("LM Studio 摘要生成結果為空")
+-                raise StableServiceError(
+-                    LMSTUDIO_NO_FINAL_CONTENT,
+-                    self._describe_empty_lmstudio_response(
+-                        finish_reason, reasoning_evidence, reasoning_retry_allowed,
+-                    ),
+-                )
++        return await self._recover_lmstudio_empty_response(
++            client, selection, messages, temperature,
++            requested_max_tokens, context_budget, prompt_tokens,
++            reasoning_text, finish_reason, usage_tokens,
++        )
++
++    async def _recover_lmstudio_empty_response(
++        self,
++        client,
++        selection: LMStudioModelSelection,
++        messages: list[dict],
++        temperature: float,
++        initial_max_tokens: int,
++        context_budget: int,
++        prompt_tokens: int,
++        reasoning_text: Optional[str],
++        finish_reason: Optional[str],
++        usage_tokens: dict,
++    ) -> str:
++        """空回應的有界 semantic recovery state machine（RC-2 / CHANGE_MAP 2）。
++
++        每個 CORE logical generation 最多三次 completed provider calls：
++        1. initial：caller 指定的初始 provider completion cap（已於呼叫端完成）。
++        2. growth retry：僅 initial 為 ``length + reasoning + empty content`` 時，
++           以既有 headroom/configured-cap 公式提高一次 max_tokens。
++        3. stop replay：僅 growth retry 為 ``stop + reasoning + empty content`` 時，
++           以同 model/instance/prompt/temperature 與目前 cap replay 一次。
++
++        initial 直接 ``stop + reasoning + empty`` → 只做一次同 cap replay（總計
++        兩次），不接續 growth retry。growth retry 再度 ``length + empty``、
++        stop replay 仍空、無 reasoning evidence、無可增加 headroom → 立即拋
++        ``LMSTUDIO_NO_FINAL_CONTENT``，不再呼叫 provider。network transient
++        retries 於 ``_lmstudio_chat_request`` 內另行計數，與 semantic attempts
++        分開、互不重置上限。
++        """
++        reasoning_evidence = bool(reasoning_text and reasoning_text.strip())
++        if not reasoning_evidence:
++            log.warning("LM Studio 回應無 final content 且無 reasoning 證據，不進行 semantic retry")
++            raise StableServiceError(
++                LMSTUDIO_NO_FINAL_CONTENT,
++                self._describe_empty_lmstudio_response(finish_reason, False, True),
++            )
+ 
+-        log.info("LM Studio 摘要生成成功，模型: {}", selection.model_identifier)
+-        return summary.strip()
++        if finish_reason == "stop":
++            # initial 直接 stop + reasoning + empty → 一次同 cap replay（總計兩次）。
++            return await self._replay_lmstudio_stop_empty(
++                client, selection, messages, temperature,
++                initial_max_tokens, finish_reason,
++            )
++
++        if finish_reason != "length":
++            log.warning("LM Studio 空回應 finish_reason={} 不支援 semantic retry", finish_reason)
++            raise StableServiceError(
++                LMSTUDIO_NO_FINAL_CONTENT,
++                self._describe_empty_lmstudio_response(finish_reason, True, True),
++            )
++
++        # growth retry：以既有 headroom/configured-cap 公式提高一次 cap。
++        retry_cap, observed_reasoning_tokens = self._compute_lmstudio_growth_cap(
++            initial_max_tokens, context_budget, prompt_tokens,
++            reasoning_text, usage_tokens,
++        )
++        if retry_cap <= initial_max_tokens:
++            raise StableServiceError(
++                LMSTUDIO_NO_FINAL_CONTENT,
++                "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
++                f"（finish_reason={finish_reason}, reasoning_tokens≈{observed_reasoning_tokens}），"
++                f"且 provider headroom 無法提高 max_tokens（{initial_max_tokens}→{retry_cap}）；"
++                "請縮短輸入或調低 max_tokens",
++            )
++
++        log.warning(
++            "LM Studio 回應僅含 reasoning（finish_reason={}, reasoning_tokens≈{}），"
++            "提高 max_tokens {}→{} 執行一次 growth retry（model/instance/prompt/temperature 不變）",
++            finish_reason,
++            observed_reasoning_tokens,
++            initial_max_tokens,
++            retry_cap,
++        )
++        growth_response = await self._lmstudio_chat_request(
++            client, selection, messages, temperature, retry_cap
++        )
++        growth_content, growth_reasoning, growth_finish_reason, growth_usage = (
++            self._parse_lmstudio_response_payload(growth_response)
++        )
++        self._log_lmstudio_response_diagnostics(
++            selection, growth_finish_reason, growth_content, growth_reasoning,
++            growth_usage, retry_cap, attempt_type="growth retry",
++        )
++        summary = self._clean_ollama_output(str(growth_content))
++        if summary and summary.strip():
++            return summary.strip()
++
++        growth_reasoning_evidence = bool(growth_reasoning and growth_reasoning.strip())
++        if growth_finish_reason == "stop" and growth_reasoning_evidence:
++            # growth retry 停止於 reasoning-only 空回應 → 一次同 cap stop replay。
++            return await self._replay_lmstudio_stop_empty(
++                client, selection, messages, temperature,
++                retry_cap, growth_finish_reason,
++            )
++
++        # growth retry 再度 length+empty、無 reasoning 或其他 finish reason：
++        # budget 增長無效，立即拋錯，不再有第三次呼叫。
++        raise StableServiceError(
++            LMSTUDIO_NO_FINAL_CONTENT,
++            f"LM Studio growth retry（max_tokens={retry_cap}）後仍無 final content"
++            f"（finish_reason={growth_finish_reason}，reasoning_evidence="
++            f"{growth_reasoning_evidence}）",
++        )
++
++    def _compute_lmstudio_growth_cap(
++        self,
++        initial_max_tokens: int,
++        context_budget: int,
++        prompt_tokens: int,
++        reasoning_text: Optional[str],
++        usage_tokens: dict,
++    ) -> tuple[int, int]:
++        """Revision-1 growth retry cap 公式（含 observed reasoning tokens 估算）。"""
++        observed_reasoning_tokens = usage_tokens.get("reasoning_tokens")
++        if not observed_reasoning_tokens and reasoning_text:
++            # usage 未提供 reasoning tokens 時以文字 token 估算代替（不記錄文字）
++            observed_reasoning_tokens = self._estimate_tokens(reasoning_text)
++        observed_reasoning_tokens = int(observed_reasoning_tokens or 0)
++
++        configured_cap = max(1, int(settings.LMSTUDIO_REASONING_RETRY_MAX_TOKENS))
++        provider_headroom = context_budget - prompt_tokens - 64
++        retry_cap = min(
++            provider_headroom,
++            configured_cap,
++            max(initial_max_tokens * 2, observed_reasoning_tokens + initial_max_tokens + 256),
++        )
++        return max(1, int(retry_cap)), observed_reasoning_tokens
++
++    async def _replay_lmstudio_stop_empty(
++        self,
++        client,
++        selection: LMStudioModelSelection,
++        messages: list[dict],
++        temperature: float,
++        replay_max_tokens: int,
++        stop_finish_reason: Optional[str],
++    ) -> str:
++        """``stop + reasoning + empty content`` 的最終同 cap replay：恰好一次。
++
++        同 model/instance/prompt/temperature 與目前 token cap replay，不再提高
++        cap；replay 仍無 final content → ``LMSTUDIO_NO_FINAL_CONTENT``。
++        """
++        log.warning(
++            "LM Studio 回應僅含 reasoning 且 finish_reason={}，以相同 cap={} 、"
++            "同 model/instance/prompt/temperature 執行最終 stop replay 一次",
++            stop_finish_reason,
++            replay_max_tokens,
++        )
++        replay_response = await self._lmstudio_chat_request(
++            client, selection, messages, temperature, replay_max_tokens
++        )
++        replay_content, replay_reasoning, replay_finish_reason, replay_usage = (
++            self._parse_lmstudio_response_payload(replay_response)
++        )
++        self._log_lmstudio_response_diagnostics(
++            selection, replay_finish_reason, replay_content, replay_reasoning,
++            replay_usage, replay_max_tokens, attempt_type="stop replay",
++        )
++        summary = self._clean_ollama_output(str(replay_content))
++        if summary and summary.strip():
++            return summary.strip()
++        raise StableServiceError(
++            LMSTUDIO_NO_FINAL_CONTENT,
++            f"LM Studio stop replay（max_tokens={replay_max_tokens}）後仍無 final content"
++            f"（finish_reason={replay_finish_reason}）",
++        )
+ 
+     def _describe_empty_lmstudio_response(
+         self,
+@@ -1957,14 +2206,20 @@ class SummarizationService:
+             if not reasoning_retry_allowed:
+                 return (
+                     "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+-                    "（finish_reason=length），且本次呼叫禁止 reasoning retry"
+-                    "（merge/收斂受限呼叫）：請調高 caller max_tokens 或縮短輸入"
++                    "（finish_reason=length），且本次呼叫已停用 semantic recovery"
++                    "（BEST_EFFORT 呼叫）：請調高 caller max_tokens 或縮短輸入"
+                 )
+             return (
+                 "LM Studio 僅輸出 reasoning 即達 max_tokens 上限"
+                 "（finish_reason=length），且 retry headroom 不足以提高 max_tokens；"
+                 "請調高 caller max_tokens 或 LMSTUDIO_REASONING_RETRY_MAX_TOKENS"
+             )
++        if reasoning_evidence:
++            return (
++                f"LM Studio 回應無 final content（finish_reason={finish_reason}，"
++                "有 reasoning 證據但 semantic recovery 已用罄或不可用）；"
++                "請確認模型是否正常輸出，或改用其他已載入 LLM"
++            )
+         return (
+             f"LM Studio 回應無 final content（finish_reason={finish_reason}，"
+             "無 reasoning 證據）；請確認模型是否正常輸出，或改用其他已載入 LLM"

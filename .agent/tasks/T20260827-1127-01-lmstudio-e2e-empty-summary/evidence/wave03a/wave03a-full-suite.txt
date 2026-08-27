@@ -1,0 +1,27 @@
+........................................................................ [ 13%]
+........................................................................ [ 27%]
+.....................................................s.................. [ 41%]
+........................................................................ [ 55%]
+........................................................................ [ 69%]
+........................................................................ [ 83%]
+....................................................ss.................. [ 96%]
+................                                                         [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:272: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.6/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151
+  /Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field "model_info" has conflict with protected namespace "model_".
+  
+  You may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.
+    warnings.warn(
+
+tests/test_websocket_error_handling.py::TestWebSocketErrorHandling::test_websocket_endpoint_broken_pipe_on_initial_send
+  /Users/hsiaojohnny/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/lib/python3.12/unittest/mock.py:2217: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+517 passed, 3 skipped, 3 warnings in 4.94s
