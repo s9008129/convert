@@ -1,0 +1,28 @@
+{
+  "mode": "full",
+  "upload_mode": "browser",
+  "started_at": "2026-08-27T21:39:11.635250+08:00",
+  "finished_at": "2026-08-27T21:40:09.112743+08:00",
+  "port": 51746,
+  "child_pid": 53011,
+  "expected_build_revision": "be6f24320e5b7106be71364d8172fddfa0bd297d",
+  "actual_build_revision": "be6f24320e5b7106be71364d8172fddfa0bd297d",
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260827-1127-01-lmstudio-e2e-empty-summary/e2e/attempt-01/runner",
+  "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-01",
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-01/backend.log",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/attempt-01/backend_data",
+  "source_audio_sha256": "5ffba7448c6846e56b358113c7ed4525507480ece9b031c5281435f59c6683d0",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [
+    "InvalidURL: Invalid non-printable ASCII character in URL",
+    "缺少必要檢查：['upload_ok', 'stored_upload_sha_match', 'task_completed', 'task_summary_failed_false', 'transcript_downloaded', 'docx_downloaded', 'formal_docx_valid', 'metrics_valid', 'model_snapshot_consistent']"
+  ],
+  "verdict": "FAIL"
+}

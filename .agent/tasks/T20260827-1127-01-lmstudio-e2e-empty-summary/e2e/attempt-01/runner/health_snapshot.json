@@ -1,0 +1,51 @@
+{
+  "captured_at": "2026-08-27T21:39:16.699552+08:00",
+  "url": "http://127.0.0.1:51746/api/health",
+  "expected_build_revision": "be6f24320e5b7106be71364d8172fddfa0bd297d",
+  "actual_build_revision": "be6f24320e5b7106be71364d8172fddfa0bd297d",
+  "revision_match": true,
+  "raw_response": {
+    "status": "healthy",
+    "version": "4.7.2",
+    "gpu_available": true,
+    "gpu_name": "Apple Silicon",
+    "ollama_available": false,
+    "lmstudio_available": true,
+    "gemini_available": true,
+    "queue_status": {
+      "total_queued": 0,
+      "processing_count": 0,
+      "estimated_wait_seconds": 0,
+      "max_concurrent": 1,
+      "queue_max_size": 50
+    },
+    "device_info": {
+      "current_device": "mlx-metal",
+      "compute_type": "float16",
+      "fallback_count": 0,
+      "gpu_name": "Apple Silicon",
+      "gpu_memory_mb": null,
+      "gpu_available": true,
+      "gpu_busy": false,
+      "mps_available": false,
+      "accelerator": "mlx-metal",
+      "asr_backend": "mlx_whisper",
+      "asr_model": {
+        "identifier": "doggy8088/Breeze-ASR-26-MLX",
+        "revision": "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
+      },
+      "cuda_runtime_available": false,
+      "cuda_runtime_error": null,
+      "torch_cuda_version": null,
+      "llm": {
+        "provider": "lmstudio",
+        "server_reachable": true,
+        "selection_status": "ready",
+        "loaded_llm_count": 1,
+        "selected_model": "qwen3.6-35b-a3b-mlx",
+        "context_length": 183296
+      }
+    },
+    "build_revision": "be6f24320e5b7106be71364d8172fddfa0bd297d"
+  }
+}
