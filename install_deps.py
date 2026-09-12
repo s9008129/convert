@@ -54,7 +54,7 @@ def apple_helper_hint(system_name: str | None = None) -> str | None:
             APPLE_HELPER_BUILD_COMMAND,
             "  建置後產物應存在：",
             APPLE_HELPER_BINARY_PATH,
-            "  未建置時 auto 會自動回退 MLX-Whisper，服務仍可運作；",
+            "  未建置時 Apple 路徑直接失敗（fail-closed，不會回退 Whisper）；",
             "  詳見 doc/apple-speech-analyzer-operations.md。",
         ]
     )

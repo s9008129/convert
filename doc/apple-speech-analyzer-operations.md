@@ -1,6 +1,6 @@
 # Apple SpeechAnalyzer 本機 ASR 操作手冊（僅 macOS）
 
-> 適用：`ASR_BACKEND=auto` 的 macOS 26+ / Apple Silicon 主機。
+> 適用：macOS 26+ / Apple Silicon 主機（`ASR_BACKEND=auto` 或 `apple`）。
 > Windows / Linux / Docker 完全不受本功能影響：不會解析到 `apple`、不會顯示 Apple
 > 狀態、安裝與環境檢查也不會出現 Xcode / Swift / helper 字樣。
 > 建置細節與 Swift 契約另見 [Apple Speech CLI 建置與驗證手冊](apple-speech-cli-build.md)；
@@ -10,17 +10,18 @@
 
 | 情境 | 行為 |
 |---|---|
-| Mac + `ASR_BACKEND=auto`（預設） | 優先使用 Apple SpeechAnalyzer（本機、免 HF 模型）；失敗自動回退 `mlx_whisper` |
-| Mac + `ASR_BACKEND=apple`（明確指定） | 只走 Apple；任何失敗直接回報（fail-closed），不偷換引擎 |
-| Mac + `ASR_BACKEND=mlx_whisper` | 完全回到舊行為（回滾開關） |
+| Mac + `ASR_BACKEND=auto`（預設） | Apple SpeechAnalyzer（唯一引擎、本機、免 HF 模型）；失敗直接失敗，**永不 fallback** |
+| Mac + `ASR_BACKEND=apple`（明確指定） | Apple SpeechAnalyzer；任何失敗直接回報（fail-closed），不偷換引擎 |
+| Mac + `ASR_BACKEND=transformers`／`faster_whisper`／`mlx_whisper` | 硬性拒絕（穩定 `ValueError`）：Mac 僅提供 Apple SpeechAnalyzer |
 | Windows / Linux / Docker + `auto` | 維持既有 `transformers` / `faster_whisper` 解析，永不解析到 `apple` |
 | 非 Mac + `ASR_BACKEND=apple` | 啟動/解析時直接拒絕並提示僅 macOS |
 | 使用者取消（SIGTERM/SIGINT） | 回報 `APPLE_CANCELLED`，**任何情況都不 fallback** |
 
 引擎解析鏈（凍結語意）：
 
-- Mac `auto`：`apple → mlx_whisper`
+- Mac `auto`：`apple`（單鏈、單一引擎，**永不 fallback**）
 - Mac 明確 `apple`：`apple`（單點，fail-closed）
+- Mac 顯式 `transformers`／`faster_whisper`／`mlx_whisper`：`ValueError`（Mac 已無 Whisper 選項）
 - 非 Mac `auto`：與現狀完全一致（不含 `apple`）
 
 ## 2. 如何確認 Mac 走 Apple 引擎
@@ -46,8 +47,8 @@ curl -s http://localhost:9527/api/config | python3 -m json.tool | grep effective
 
 ### 2.2 前端狀態列
 
-Mac 上頁尾狀態列出現「Apple 神經引擎（本機）」＝目前引擎是 Apple；
-顯示「Apple Silicon（MLX/Metal）」＝目前已回退或指定 MLX-Whisper。
+Mac 上頁尾狀態列出現「Apple 神經引擎（本機）」＝目前引擎是 Apple（Mac 唯一引擎）；
+Mac 不會再出現「Apple Silicon（MLX/Metal）」引擎狀態（已無 MLX-Whisper 引擎）。
 （本產品沒有引擎選擇器；引擎由後端環境變數決定。）
 
 ### 2.3 任務 metadata 與日誌
@@ -56,7 +57,7 @@ Mac 上頁尾狀態列出現「Apple 神經引擎（本機）」＝目前引擎�
 
 | 鍵 | 意義 |
 |---|---|
-| `requested_engine` / `resolved_engine` / `engine_chain` | 要求引擎、實際使用引擎、本次解析出的引擎嘗試鏈（靜態解析，例如 `apple,mlx_whisper`；是否真的發生 fallback 見日誌 `Apple 引擎失敗（碼），改用 …`） |
+| `requested_engine` / `resolved_engine` / `engine_chain` | 要求引擎、實際使用引擎、本次解析出的引擎嘗試鏈；Mac 恆為 `resolved_engine="apple"`、`engine_chain="apple"`（單一引擎，無 fallback） |
 | `locale` | 請求的 Apple locale（`APPLE_LOCALE`，預設 `zh-Hant-TW`；非協商後值） |
 | `audio_duration_seconds` / `elapsed_seconds` / `real_time_factor` | 音長、耗時、RTF |
 | `helper_invocations` | 本次呼叫 Apple helper 執行檔的次數（正常長檔應為 1） |
@@ -99,24 +100,17 @@ uv run python install_deps.py --check      # Windows 不會出現任何 Apple �
   `--preset <值>`）、`APPLE_ENABLE_PREFLIGHT`（預設 `true`，MP3 等先預轉
   16k mono WAV，效能關鍵）。
 
-## 4. 如何回滾 `ASR_BACKEND=mlx_whisper`
+## 4. 無回滾路徑：Mac 只提供 Apple SpeechAnalyzer
 
-Mac 一行恢復舊行為（不影響既有逐字稿與快取；快取 key 已含 backend，會自動分流）：
+Mac 版沒有 Whisper 模型選項、也沒有 fallback：`ASR_BACKEND=auto` 與 `apple` 都只走
+Apple SpeechAnalyzer，任何失敗（helper 缺失／不可執行、取消、逾時、輸出無效）都直接
+使任務失敗（fail-closed）。
 
-```bash
-# .env
-ASR_BACKEND=mlx_whisper
-```
-
-```bash
-# 重啟服務後確認（effective_asr_backend 在 /api/config）
-curl -s http://localhost:9527/api/config | python3 -m json.tool | grep -E "\"asr_backend\"|effective_asr_backend"
-# 應顯示 mlx_whisper（前端狀態列回到「Apple Silicon（MLX/Metal）」）
-```
-
-- 想恢復「Mac 預設 Apple」：把 `ASR_BACKEND` 改回 `auto`（或移除該行）。
-- 徹底移除本功能：刪除 `apple_speech_cli/` 目錄即可回到原本三後端（`auto` 會自動回退）。
-- Windows / Linux 不需任何回滾動作（原本就看不到 Apple）。
+- 想回到舊 Whisper 行為：只能回退版本（Mac 沒有環境變數回滾開關）。
+- 顯式 legacy 值（`transformers`／`faster_whisper`／`mlx_whisper`）會被硬性拒絕：
+  `ASR_BACKEND=<x> 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）`。
+- 移除 `apple_speech_cli/` 目錄只會讓 Apple 失敗（任務 failed），不會回退其他引擎。
+- Windows / Linux 不需任何動作（原本就看不到 Apple）。
 
 ## 5. 錯誤碼對照（helper 離場碼，凍結契約）
 
@@ -131,8 +125,8 @@ curl -s http://localhost:9527/api/config | python3 -m json.tool | grep -E "\"asr
 | 6 | `APPLE_TRANSCRIPTION_ERROR` | 辨識失敗 | 檢查音訊內容（全靜音/毀損）與系統資源 |
 | 7 | `APPLE_CANCELLED` | 使用者取消（SIGTERM/SIGINT，5 秒寬限後強制結束） | 正常取消；**不會** fallback，重新上傳即可 |
 
-對外行為：`auto` 下除 `APPLE_CANCELLED` 外會依鏈回退 `mlx_whisper`；
-明確 `apple` 時上述任何錯誤都直接回報（fail-closed）。
+對外行為：Mac 上上述任何錯誤（含 `APPLE_CANCELLED`）都直接回報並使任務失敗
+（fail-closed）；Mac 沒有 fallback，永不改用其他引擎。
 
 ## 6. 觀測 `helper_invocations` 與 `conversion_reason`
 
@@ -159,12 +153,12 @@ grep "ASR 引擎觀測" "data/logs/app_$(date +%F).log" | tail -5
 
 **Q1：macOS < 26（例如 macOS 14/15）**
 Apple 引擎不可用，helper 會誠實回報 `APPLE_UNAVAILABLE`（離場碼 2）。
-`auto` 會自動回退 `mlx_whisper`（服務照常可用）；明確指定 `apple` 則直接失敗。
-處理：升級 macOS 26+，或維持 `mlx_whisper`。
+`auto` 與 `apple` 都直接失敗（fail-closed，不 fallback）；Mac 沒有其他引擎可退。
+處理：升級 macOS 26+。
 
 **Q2：Intel Mac**
-不支援（Apple Silicon 限定）。`auto` 不會解析到 `apple`，行為與舊版一致；
-明確指定 `apple` 會得到平台拒絕訊息。
+不支援 Apple 引擎（Apple SpeechAnalyzer 為 darwin+arm64 限定）。`auto` 走非 Apple
+平台既有解析、不會解析到 `apple`；明確指定 `apple` 會得到平台拒絕訊息。
 
 **Q3：Asset（語音模型）未安裝**
 `probe` 不會安裝模型；`transcribe` 首次遇到未安裝的 locale 會嘗試下載（需要網路）。
@@ -173,7 +167,7 @@ Apple 引擎不可用，helper 會誠實回報 `APPLE_UNAVAILABLE`（離場碼 2
 避免在離線環境使用未安裝的 locale。
 
 **Q4：找不到 helper**
-症狀：`auto` 每次都回退 MLX（較慢；`resolved_engine` 非 `apple`），或明確 `apple` 直接失敗。
+症狀：`auto` 與 `apple` 皆直接失敗（fail-closed；任務 failed，不會回退 MLX/Whisper）。
 處理：
 
 ```bash
@@ -198,5 +192,5 @@ Xcode / Swift / Apple / helper 字樣。此為自動化測試守衛（見 `tests
 
 - [Apple Speech CLI 建置與驗證手冊](apple-speech-cli-build.md)：Swift 建置、契約、實測記錄
 - [Apple SpeechAnalyzer 移植開發上下文](apple-speech-analyzer-porting-context.md)：設計與地雷
-- [README 快速開始](../README.md)：安裝、環境變數與回滾
+- [README 快速開始](../README.md)：安裝、環境變數與引擎設定
 - `.env.example`：`APPLE_*` 設定範例（僅 macOS 生效）

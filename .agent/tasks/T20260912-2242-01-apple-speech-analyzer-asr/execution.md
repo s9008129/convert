@@ -204,3 +204,91 @@
 - 比較測試：`e2e/comparison-0903/{comparison.json,comparison.md,quality-analysis.md}`、腳本 `e2e/compare_apple_vs_whisper.py`
 - 獨立稽核：`verification/docs-audit.md`、`verification/windows-matrix-audit.md`
 - 文件：`doc/apple-speech-analyzer-operations.md`、`doc/apple-speech-cli-build.md`、`doc/apple-speech-analyzer-porting-context.md`、`README.md`、`CHANGELOG.md`
+
+---
+
+# 附錄 A — 語意變更回合（Owner 指示，2026-09-13，PLAN_REVISION 1 之 §附錄）
+
+> 本附錄記錄 Owner 於 2026-09-13 明示的「Mac 僅提供 Apple SpeechAnalyzer」語意收斂。
+> 依 harness §10，變更 fallback 邊界屬語意變更 → 已落 `escalation.md`（`OWNER_DIRECTED /
+> RESOLVED`）。§0–§10 為前一回合之事實，**SI-02 的 auto 鏈已由本附錄取代**。
+
+## A.1 新語意（取代 SI-02）
+
+| requested | is_apple_platform | 前一回合（§7 SI-02） | **本回合新語意** |
+|---|---|---|---|
+| `auto` | True | `("apple","mlx_whisper")` | **`("apple",)`** 單一引擎、永不 fallback |
+| `apple` | True | `("apple",)` fail-closed | `("apple",)` fail-closed（不變） |
+| `transformers`/`faster_whisper`/`mlx_whisper` | True | 原樣尊重（單點） | **`ValueError` 硬性拒絕** |
+| `auto` / 其他顯式值 | False | 單點解析／原樣 | **完全不變**（逐值驗證，見 A.4） |
+
+`should_fallback()` 已刪除；`APPLE_AUTO_FALLBACK` 保留但長度為 1。
+
+## A.2 程式變更（14 檔；主 agent 6 檔 + 4 個平行 subagent 分工）
+
+| 檔案 | 變更 |
+|---|---|
+| `backend/services/asr_apple/dispatcher.py` | `APPLE_ONLY_BACKENDS_ERROR`；Mac 顯式 legacy → `ValueError`；`should_fallback` 刪除 |
+| `backend/services/asr_apple/contract.py` | `APPLE_AUTO_FALLBACK = ("apple",)` |
+| `backend/core/platform_config.py` | `APPLE_PLATFORM_ASR_BACKENDS={"auto","apple"}`；Mac 拒 legacy；accelerator `mlx-metal`→`apple-neural` |
+| `backend/core/asr_model_resolver.py` | legacy 值走平台守衛；`resolve_asr_model` 在 Mac+`auto` 回 `""`（不再映射 MLX 模型 id） |
+| `backend/services/transcription.py` | 移除 `should_fallback` import；`_transcribe_with_apple_chain` 改為一律 `_apple_failure`（永不 fallback）；module/函式 docstring 同步 |
+| `backend/core/config.py` | `ASR_BACKEND` 描述更新 |
+| `backend/api/routes.py` | `/api/config` 在 effective=apple 時 `whisper_model`/`effective_whisper_model`/`whisper_model_revision` 回 `null`（欄位名與 schema 不變） |
+| `backend/main.py` | 啟動 log 在 Mac 顯示 `model=Apple SpeechAnalyzer（系統內建模型；fail-closed，無 fallback）`；舊 legacy 設定多一行可讀 ERROR 後仍 fail-loud |
+| `scripts/download_models.py` | Mac/apple 直接回報「系統內建模型、免下載」並 return True；刪除 fallback 預載邏輯 |
+| `scripts/verify_env.py` | apple 不再要求 `mlx_whisper`；Apple 路徑 supporting 清單為空；Mac 顯式 legacy 與 startup 同訊息 |
+| `install_deps.py` / `.env.example` / `config.macos.yaml` | 移除「回退 MLX-Whisper」敘述與 `mlx_whisper` 回滾開關；`gpu.accelerator` → `apple-neural` |
+| `README.md` / `CHANGELOG.md` / `doc/apple-speech-analyzer-operations.md` / `doc/apple-speech-analyzer-porting-context.md` / `doc/規格與設計/spec.md` | Mac 契約改寫；§4「回滾」改為「無回滾路徑」 |
+| `pyproject.toml` / `requirements.txt` / `uv.lock` | **移除** `mlx-whisper==0.4.3 ; Darwin/arm64` 平台相依（`uv lock` 172 行刪除、0 行新增；連帶移除 `mlx`/`mlx-metal`/`llvmpipe`/`numba`/`scipy`/`tiktoken`），venv 同步卸載 |
+
+前端 `frontend/**` **無需變更**：全站沒有引擎／模型下拉選單，唯一 ASR UI 是 accelerator 文案，
+`apple-neural`→「Apple 神經引擎（本機）」已正確；`mlx-metal` 分支在 Mac 已不可達但保留給非 Mac legacy。
+
+## A.3 測試變更（9 檔；14 處 Mac-fallback 斷言轉換）
+
+| 檔案 | 變更 |
+|---|---|
+| `tests/test_apple_dispatcher.py` | 刪 `should_fallback` 8 斷言；Mac auto 鏈長 1；Mac ×3 legacy（含大小寫／連字號變體）`ValueError`；新增 `should_fallback` 不存在守衛、非 Mac 回歸守衛 |
+| `tests/test_apple_chain_integration.py` | auto+Apple 錯誤改 fail-closed；`engine_chain` → `"apple"`；新增 legacy 引擎 spy 證明零呼叫 |
+| `tests/test_apple_helper_absent_e2e.py` | REAL-ABSENT-02 改寫為 fail-closed（`APPLE_UNAVAILABLE`＋「未 fallback」） |
+| `tests/test_download_models.py` | Mac auto 不預載（兩個 resolver `assert_not_called()`）；Mac 顯式 legacy 需 raise |
+| `tests/test_verify_env.py` | apple 不再要求 `mlx_whisper` |
+| `tests/test_api_routes.py` | `/api/config` Mac auto 三欄位為 `None` |
+| `tests/test_transcription_service.py`、`test_device_detector.py`、`test_file_manager.py`、`test_task_processor.py` | 顯式 legacy 測試釘在非 Mac 平台（避免斷言取決於執行主機） |
+| `tests/test_asr_subprocess.py` | metadata 字面 `["apple","mlx_whisper"]` → `["apple"]` |
+| `tests/test_apple_packaging_guard.py` | 守衛契約反轉：本專案不得再有 `mlx-whisper`／`mlx` 相依 |
+
+## A.4 驗證證據（全部為實跑觀察值）
+
+- **全量測試**：`uv run pytest tests/ -q` → **`730 passed, 3 skipped, 0 failed`**（8s；
+  前一回合 `88e136d` 基線為 726 passed / 3 skipped）。3 個 skip 皆為既有的 opt-in／缺 fixture。
+- **真機 E2E**（同一支 `tests/0903-科務會議.m4a`，44.9 分鐘音檔，sha256 見報告）：
+  `uv run python .agent/tasks/.../e2e/mac_apple_only_e2e.py` → **`verdict: PASS`**，17/17 checks 全過：
+  | 情境 | 結果 |
+  |---|---|
+  | `ASR_BACKEND=auto`（Mac） | `backend=apple`、`engine_chain=apple`、`resolved_engine=apple`、**15.4s**、載入的 Whisper/MLX 模組 `[]` |
+  | `ASR_BACKEND=apple`（Mac） | 同上、**15.4s**、逐字稿 sha256 與 auto **完全相同** |
+  | helper 失敗 + `auto`（shim 立即非零離場） | `AppleSpeechError`、訊息含「未 fallback」、Whisper/MLX 模組 `[]`、legacy 引擎零呼叫 |
+  報告：`e2e/mac-apple-only/report.json`。
+- **路由紅線**：Mac `auto`→`("apple",)`；Mac ×3 legacy + 變體 → `ValueError`（訊息一致）；
+  `APPLE_AUTO_FALLBACK == ("apple",)`；`APPLE_PLATFORM_ASR_BACKENDS == {"apple","auto"}`；
+  `should_fallback` 不存在；非 Mac `auto`→`("mlx_whisper",)`、顯式 legacy 原樣通過。
+- **`/api/config` 實測**（Mac）：`{"asr_backend":"auto","effective_asr_backend":"apple","whisper_model":null,"effective_whisper_model":null,"whisper_model_revision":null}`；
+  `/api/health`：`accelerator=apple-neural`、`asr_backend=apple`。
+- **`scripts/verify_env.py`**：Mac 實跑 exit 0，Supporting 模組不再列 MLX；`ASR_BACKEND=transformers` 時 exit 1 並印出與 startup 相同的拒絕訊息。
+- **相依淨空**：`rg -n "mlx" pyproject.toml requirements.txt uv.lock` 零命中；`.venv` 內 `mlx*` 零命中；`uv sync` 已卸載 `mlx`/`mlx-metal`/`mlx-whisper`/`llvmpipe`/`numba`/`scipy`/`tiktoken`。
+
+## A.5 殘留風險
+
+1. **fail-loud 啟動**：舊 `.env` 若殘留 `ASR_BACKEND=mlx_whisper`，Mac 服務會在 startup
+   以 `ValueError` 直接失敗（刻意，且 log 已先印一行可讀 ERROR）。修復方式：改 `auto` 或 `apple`。
+2. **Windows/Linux 真機仍未複驗**：相依移除的 marker 為 Darwin/arm64，理論上不影響
+   Windows/Linux；本回合以模擬矩陣重掃（`verification/windows-matrix-audit-rev2.md`）。
+3. **`apple_speech_cli/.build/`** 仍在使用者本機（gitignored，未提交）；helper binary 不入版控。
+4. **範圍界線（獨立稽核 C4）**：根目錄舊版 CLI（`main.py`／`src/whisper_transcriber.py`，
+   git tracked）是與網頁服務無關的獨立舊工具，仍使用 faster-whisper，在 macOS 可執行。
+   本回合未變更它（改造它等於新增第二套 Apple 整合＝新架構決策），已在 README 明示範圍界線。
+5. **獨立稽核**：`verification/mac-apple-only-audit.md`（對抗式，判定 PARTIAL → 3 項已修：
+   `apple_cli.py:449` docstring、porting-context 上游碼段限定詞、移除永久 skip 的
+   `tests/test_mlx_direct.py`）與 `verification/windows-matrix-audit-rev2.md`。

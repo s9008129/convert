@@ -117,7 +117,7 @@
 - 上傳檔名包含路徑遍歷字元（`../`、`\`、`\x00`）時必須拒絕。  
 - 任務完成但結果檔不存在時，`/result` 應回 404 而非空白檔。  
 - WebSocket 客戶端異常斷線時，連線管理器需清理 dead connections。  
-- MLX-Whisper 未安裝時，macOS 路徑需可回退至 faster-whisper。  
+- macOS（darwin + arm64）僅提供 Apple SpeechAnalyzer：Whisper 後端一律拒絕、任何失敗不 fallback（Windows/Linux 路徑不變）。  
 - 摘要引擎失敗時需降級輸出逐字稿，避免任務全失敗。
 
 ---

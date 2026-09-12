@@ -1,0 +1,181 @@
+{
+  "task_id": "T20260912-2242-01",
+  "semantics": "macOS: Apple SpeechAnalyzer only, single engine, no fallback",
+  "audio": "tests/0903-科務會議.m4a",
+  "audio_sha256": "b42f83d2c405d3f7b5ca1a5f609105631a72697d7b08778297acb5718ce6bb5e",
+  "router_redlines": {
+    "APPLE_AUTO_FALLBACK": [
+      "apple"
+    ],
+    "APPLE_PLATFORM_ASR_BACKENDS": [
+      "apple",
+      "auto"
+    ],
+    "should_fallback_removed": true,
+    "mac:auto": {
+      "chain": [
+        "apple"
+      ]
+    },
+    "mac:apple": {
+      "chain": [
+        "apple"
+      ]
+    },
+    "mac:transformers": {
+      "ValueError": "ASR_BACKEND=transformers 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）"
+    },
+    "mac:faster_whisper": {
+      "ValueError": "ASR_BACKEND=faster_whisper 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）"
+    },
+    "mac:mlx_whisper": {
+      "ValueError": "ASR_BACKEND=mlx_whisper 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）"
+    },
+    "nonmac:auto": {
+      "chain": [
+        "mlx_whisper"
+      ]
+    },
+    "nonmac:apple": {
+      "chain": [
+        "apple"
+      ]
+    },
+    "nonmac:transformers": {
+      "chain": [
+        "transformers"
+      ]
+    },
+    "nonmac:faster_whisper": {
+      "chain": [
+        "faster_whisper"
+      ]
+    },
+    "nonmac:mlx_whisper": {
+      "chain": [
+        "mlx_whisper"
+      ]
+    },
+    "resolver:auto": {
+      "resolved": "apple"
+    },
+    "resolver:apple": {
+      "resolved": "apple"
+    },
+    "resolver:mlx_whisper": {
+      "ValueError": "ASR_BACKEND=mlx_whisper 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）"
+    }
+  },
+  "scenarios": {
+    "auto_real": {
+      "scenario": "auto_real",
+      "ok": true,
+      "backend": "apple",
+      "language": "zh-Hant-TW",
+      "duration_seconds": 2695.061333,
+      "elapsed_seconds": 15.209304094314575,
+      "real_time_factor": 0.005643398132755806,
+      "chunk_count": 1340,
+      "char_count": 10315,
+      "text_sha256": "f75f000838181c74600e8a5a0af6572113904791f6b3212db1c9e90d48c3ae45",
+      "text_head": "管他那個大主任的那個你已經賣沒出來嗎好地方我好這個解除列鬼來這個這個我先講一下哦 11月這一次那個局會議那個人事主任報告 11月 1號大概有一些組織有變動我們這個組織組織的規程跟編織錶大概在之前有經過那個縣府法規審查小組已經審查通過了然後生",
+      "metadata": {
+        "requested_engine": "auto",
+        "resolved_engine": "apple",
+        "engine_chain": "apple",
+        "locale": "zh-Hant-TW",
+        "audio_duration_seconds": 2695.061,
+        "elapsed_seconds": 15.105,
+        "real_time_factor": 0.0056,
+        "helper_invocations": 1,
+        "conversion_reason": null,
+        "conversion_seconds": null,
+        "segment_count": 1340,
+        "segments_dropped": 0,
+        "segments_time_degraded": 0
+      },
+      "settings_asr_backend": "auto",
+      "loaded_asr_modules": [],
+      "exit_code": 0,
+      "stderr_tail": "/Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field \"model_info\" has conflict with protected namespace \"model_\".\n\nYou may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.\n  warnings.warn(\n"
+    },
+    "apple_real": {
+      "scenario": "apple_real",
+      "ok": true,
+      "backend": "apple",
+      "language": "zh-Hant-TW",
+      "duration_seconds": 2695.061333,
+      "elapsed_seconds": 15.234184980392456,
+      "real_time_factor": 0.005652630162384677,
+      "chunk_count": 1340,
+      "char_count": 10315,
+      "text_sha256": "f75f000838181c74600e8a5a0af6572113904791f6b3212db1c9e90d48c3ae45",
+      "text_head": "管他那個大主任的那個你已經賣沒出來嗎好地方我好這個解除列鬼來這個這個我先講一下哦 11月這一次那個局會議那個人事主任報告 11月 1號大概有一些組織有變動我們這個組織組織的規程跟編織錶大概在之前有經過那個縣府法規審查小組已經審查通過了然後生",
+      "metadata": {
+        "requested_engine": "apple",
+        "resolved_engine": "apple",
+        "engine_chain": "apple",
+        "locale": "zh-Hant-TW",
+        "audio_duration_seconds": 2695.061,
+        "elapsed_seconds": 15.129,
+        "real_time_factor": 0.0056,
+        "helper_invocations": 1,
+        "conversion_reason": null,
+        "conversion_seconds": null,
+        "segment_count": 1340,
+        "segments_dropped": 0,
+        "segments_time_degraded": 0
+      },
+      "settings_asr_backend": "apple",
+      "loaded_asr_modules": [],
+      "exit_code": 0,
+      "stderr_tail": "/Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field \"model_info\" has conflict with protected namespace \"model_\".\n\nYou may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.\n  warnings.warn(\n"
+    },
+    "auto_failing_helper_no_fallback": {
+      "scenario": "auto_failing_helper_no_fallback",
+      "ok": false,
+      "error_type": "AppleSpeechError",
+      "error_code": "APPLE_CANCELLED",
+      "error_message": "Apple 引擎失敗（未 fallback）：Apple 語音辨識已取消。",
+      "error_context": {
+        "stage": "helper_probe",
+        "helper_exit_code": "7",
+        "helper_timed_out": "false",
+        "helper_cancelled": "false",
+        "helper_stderr_tail": "shim: simulated helper failure"
+      },
+      "loaded_asr_modules": [],
+      "exit_code": 3,
+      "stderr_tail": "/Users/hsiaojohnny/dev/convert/.venv/lib/python3.12/site-packages/pydantic/_internal/_fields.py:151: UserWarning: Field \"model_info\" has conflict with protected namespace \"model_\".\n\nYou may be able to resolve this warning by setting `model_config['protected_namespaces'] = ()`.\n  warnings.warn(\n"
+    }
+  },
+  "checks": {
+    "A_auto_real_transcribed": true,
+    "A_auto_chain_is_single_apple": true,
+    "A_auto_resolved_engine_apple": true,
+    "A_auto_requested_engine_auto": true,
+    "A_auto_backend_apple": true,
+    "A_no_whisper_module_loaded": true,
+    "B_apple_explicit_chain_is_single_apple": true,
+    "B_apple_explicit_matches_auto_text": true,
+    "C_apple_auto_fallback_len1": true,
+    "C_apple_platform_backends": true,
+    "C_should_fallback_removed": true,
+    "C_mac_transformers_rejected": true,
+    "C_nonmac_transformers_passes_through": true,
+    "C_mac_faster_whisper_rejected": true,
+    "C_nonmac_faster_whisper_passes_through": true,
+    "C_mac_mlx_whisper_rejected": true,
+    "C_nonmac_mlx_whisper_passes_through": true,
+    "C_nonmac_auto_uses_default_backend": true,
+    "C_resolver_mac_auto_is_apple": true,
+    "C_resolver_mac_mlx_rejected": true,
+    "D_failing_helper_raises": true,
+    "D_failing_helper_error_type": true,
+    "D_failing_helper_no_fallback": true,
+    "D_failing_helper_message_says_no_fallback": true,
+    "D_failing_helper_has_stable_code": true
+  },
+  "failed_checks": [],
+  "verdict": "PASS"
+}

@@ -425,6 +425,10 @@ class TestCacheManagement:
         """Breeze-ASR-26 should still use the pinned effective revision when unset."""
         from backend.core.config import settings
 
+        # 顯式 transformers 是 Windows／Linux 語意：固定在非 Mac 平台，避免測試
+        # 依賴執行主機（Mac 上顯式 legacy backend 已 fail-closed）。
+        monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+        monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
         monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
         monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
         monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)

@@ -21,10 +21,9 @@ release 產物 → PATH）落空後由真函式丟出 ``APPLE_UNAVAILABLE``。
 1. REAL-ABSENT-01：顯式 ``apple`` ＋ 真 helper 缺席 → ``APPLE_UNAVAILABLE`` 直接
    向上拋（鏈長 1），錯誤訊息含「未 fallback」與精確建置指令；legacy 引擎路徑
    （``_transcribe_with_legacy_engine``／``_load_model``）以計數器證明未被呼叫。
-2. REAL-ABSENT-02：Mac ``auto`` 鏈為 ``("apple", "mlx_whisper")``；真 helper 缺席
-   （``APPLE_UNAVAILABLE``）允許換手 → fallback 到 mlx_whisper，最終結果來自 mlx
-   分支（legacy 引擎以可控 fake 回傳已知 ``DetailedTranscriptionResult``），
-   metadata 欄位符合現行 ``transcription.py`` 實作。
+2. REAL-ABSENT-02：Mac ``auto`` 鏈嚴格 ``("apple",)``；真 helper 缺席
+   （``APPLE_UNAVAILABLE``）fail-closed 直接向上拋——legacy 引擎邊界以間諜證明
+   完全未被呼叫（Mac 已無 Whisper 備援、沒有任何換手提示）。
 3. REAL-ABSENT-03：``APPLE_CANCELLED``（helper 離場碼 7）在 ``auto`` 下亦不 fallback。
    真 helper 缺席只會產生 ``APPLE_UNAVAILABLE``，離場碼 7 只能由真實子行程產生，
    故本案例是**注入式**：argv 導向真子行程（python 以 7 結束），``run_helper``
@@ -141,23 +140,23 @@ def _spy_legacy_engine(monkeypatch, calls, result=None):
     """把 legacy 引擎執行邊界（``_transcribe_with_legacy_engine``）換成可控 fake。
 
     ``calls`` 記錄 ``(engine, audio_path)``；被呼叫時回傳 ``result``（預設為已知
-    的 mlx 形狀結果），不被呼叫時可斷言清單為空。不載入任何真模型。
+    形狀的 legacy 結果），不被呼叫時可斷言清單為空。不載入任何真模型。
     """
 
-    fallback_result = result or DetailedTranscriptionResult(
-        text="mlx fallback 逐字稿",
+    legacy_result = result or DetailedTranscriptionResult(
+        text="legacy 逐字稿",
         duration_seconds=12.5,
         language="zh",
-        chunks=[TranscriptionChunk(start=0.0, end=12.5, text="mlx fallback 逐字稿")],
+        chunks=[TranscriptionChunk(start=0.0, end=12.5, text="legacy 逐字稿")],
         backend="mlx_whisper",
     )
 
     def fake(self, engine, audio_path, progress_callback, max_retries, force_cpu):
         calls.append((engine, audio_path))
-        return fallback_result
+        return legacy_result
 
     monkeypatch.setattr(TranscriptionService, "_transcribe_with_legacy_engine", fake)
-    return fallback_result
+    return legacy_result
 
 
 # ---------------------------------------------------------------------------
@@ -230,51 +229,42 @@ def test_explicit_apple_real_helper_absence_fails_closed(
 
 
 # ---------------------------------------------------------------------------
-# REAL-ABSENT-02：Mac auto ＋ 真 helper 缺席 → fallback mlx_whisper（可控 fake）
+# REAL-ABSENT-02：Mac auto ＋ 真 helper 缺席 → fail-closed（不再 fallback mlx）
 # ---------------------------------------------------------------------------
 
 
-def test_auto_mac_real_helper_absence_falls_back_to_mlx_whisper(
+def test_auto_mac_real_helper_absence_fails_closed(
     apple_platform, uploads_audio, real_helper_absent, monkeypatch
 ):
-    """SI-01／SI-02：Mac ``auto`` 鏈 ``("apple", "mlx_whisper")``；Apple 失敗換手一次。"""
+    """SI-01／SI-02：Mac ``auto`` 鏈嚴格 ``("apple",)``；Apple 失敗直接上拋、不換手。"""
 
     monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
-    assert resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL) == (
-        "apple",
-        "mlx_whisper",
-    )
+    assert resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL) == ("apple",)
 
     legacy_calls = []
-    fake_result = _spy_legacy_engine(monkeypatch, legacy_calls)
+    _spy_legacy_engine(monkeypatch, legacy_calls)
 
     progress = []
     service = TranscriptionService()
-    result = service.transcribe_detailed(
-        str(uploads_audio),
-        progress_callback=lambda percent, message: progress.append((percent, message)),
-    )
+    with pytest.raises(AppleSpeechError) as excinfo:
+        service.transcribe_detailed(
+            str(uploads_audio),
+            progress_callback=lambda percent, message: progress.append((percent, message)),
+        )
 
-    # 換手恰好一次、進到 mlx_whisper 分支、同一份 abs 路徑。
-    assert legacy_calls == [("mlx_whisper", str(uploads_audio))]
-    assert result.backend == "mlx_whisper"
-    assert result.text == "mlx fallback 逐字稿"
-    assert result.duration_seconds == 12.5
-    assert result.language == "zh"
-    assert [(chunk.start, chunk.end, chunk.text) for chunk in result.chunks] == [
-        (0.0, 12.5, "mlx fallback 逐字稿")
-    ]
-
-    # 現行 transcription.py：fallback 原樣回傳 legacy 引擎結果；Apple 專屬 metadata
-    # （resolved_engine／engine_chain／helper_invocations 等）只在 Apple 成功路徑注入，
-    # fallback 結果不得被標成 apple。既有三後端 metadata 維持空 dict。
-    assert result.metadata == {}
-    assert "resolved_engine" not in result.metadata
-
-    # 換手由真 APPLE_UNAVAILABLE（真 resolver 的分類）驅動，且 Apple 先試。
-    assert (25.0, "Apple 引擎失敗（APPLE_UNAVAILABLE），改用 mlx_whisper…") in progress
-    assert progress[0][1].startswith("Apple 語音辨識")
+    error = excinfo.value
+    # 真 APPLE_UNAVAILABLE（真 resolver 的分類）＋ fail-closed 標記。
+    assert error.code == APPLE_UNAVAILABLE
+    assert error.context.get("stage") == "helper_resolve"
+    assert HELPER_BUILD_COMMAND in error.user_message
+    assert "未 fallback" in error.user_message
+    # legacy 引擎邊界（mlx_whisper／transformers／faster_whisper）完全未被喚醒。
+    assert legacy_calls == []
+    assert service._model is None
     assert real_helper_absent.probe_calls == 0 and real_helper_absent.run_calls == 0
+    # 沒有任何換手提示：鏈只有 Apple 一段。
+    assert not any("改用" in message for _, message in progress)
+    assert progress[0][1].startswith("Apple 語音辨識")
     # 真 provider 的平台閘門看到的就是本檔固定的 darwin（無 fake 模組）。
     assert apple_provider.apple_platform_supported() is True
 
@@ -297,10 +287,7 @@ def test_auto_cancelled_exit_code_7_never_falls_back(
     """
 
     monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
-    assert resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL) == (
-        "apple",
-        "mlx_whisper",
-    )
+    assert resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL) == ("apple",)
 
     legacy_calls = []
     _spy_legacy_engine(monkeypatch, legacy_calls)

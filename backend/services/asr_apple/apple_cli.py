@@ -446,7 +446,7 @@ class ApplePayload:
 
 
 def output_invalid(message: str, *, context: Mapping[str, str] | None = None) -> AppleSpeechError:
-    """建立 ``APPLE_OUTPUT_INVALID`` 錯誤（可參與 auto fallback）。"""
+    """建立 ``APPLE_OUTPUT_INVALID`` 錯誤（Mac 已無 fallback：一律 fail-closed）。"""
 
     return AppleSpeechError(APPLE_OUTPUT_INVALID, message, context=context)
 

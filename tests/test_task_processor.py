@@ -334,6 +334,10 @@ def test_device_info_reports_gpu_present_even_when_busy(monkeypatch):
     from backend.services.device_detector import DeviceDetector, DeviceType
     from backend.core.config import settings
 
+    # 明確把主機釘在非 Apple 平台：顯式 legacy backend 在 macOS 已被硬性拒絕
+    # （T20260912-2242-01），本測試描述的是 CUDA 情境。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
     monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
 
     detector = DeviceDetector()

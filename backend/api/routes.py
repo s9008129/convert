@@ -515,7 +515,11 @@ async def get_config():
     """
     取得系統配置（公開部分）
     """
+    effective_asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
     effective_asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    # Mac 僅提供 Apple SpeechAnalyzer（fail-closed，無 fallback；Owner 2026-09-13）：
+    # 不回報任何 Whisper 模型 id／revision，避免 payload 看起來仍有 Mac Whisper 路徑。
+    is_apple_engine = effective_asr_backend == "apple"
     llm_health = summarization_service.get_local_llm_health()
     effective_provider = (
         llm_health.get("provider", settings.LOCAL_LLM_PROVIDER)
@@ -530,12 +534,16 @@ async def get_config():
         "queue_max_size": settings.QUEUE_MAX_SIZE,
         "default_mode": settings.DEFAULT_MODE,
         "asr_backend": settings.ASR_BACKEND,
-        "effective_asr_backend": infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND),
-        "whisper_model": settings.WHISPER_MODEL,
-        "effective_whisper_model": effective_asr_model,
-        "whisper_model_revision": resolve_model_revision(
-            effective_asr_model,
-            settings.WHISPER_MODEL_REVISION,
+        "effective_asr_backend": effective_asr_backend,
+        "whisper_model": None if is_apple_engine else settings.WHISPER_MODEL,
+        "effective_whisper_model": None if is_apple_engine else effective_asr_model,
+        "whisper_model_revision": (
+            None
+            if is_apple_engine
+            else resolve_model_revision(
+                effective_asr_model,
+                settings.WHISPER_MODEL_REVISION,
+            )
         ),
         "gemini_available": summarization_service.check_gemini_available(),
         "local_llm_provider": settings.LOCAL_LLM_PROVIDER,

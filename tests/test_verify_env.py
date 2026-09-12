@@ -19,7 +19,10 @@ def test_effective_asr_backend_uses_apple_for_darwin_arm64_auto():
     ) == "transformers"
 
 
-def test_critical_modules_follow_effective_mlx_backend(monkeypatch):
+def test_critical_modules_do_not_require_mlx_for_apple_backend(monkeypatch):
+    """Mac apple：Apple SpeechAnalyzer 走 Swift helper（系統內建模型），
+    不再要求任何 Python ASR 模組（沒有 "Apple 路徑 fallback"）。"""
+
     monkeypatch.setattr(verify_env.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(verify_env.platform, "machine", lambda: "arm64")
     monkeypatch.setenv("ASR_BACKEND", "auto")
@@ -31,8 +34,35 @@ def test_critical_modules_follow_effective_mlx_backend(monkeypatch):
     )
 
     assert all(ok for ok, _ in verify_env.check_critical_modules())
-    assert "mlx_whisper" in checked
+    assert "mlx_whisper" not in checked
+    assert "mlx" not in checked
     assert "faster_whisper" not in checked
+    assert "torch" not in checked
+    assert "transformers" not in checked
+
+
+def test_critical_modules_reject_explicit_legacy_backend_on_mac(monkeypatch):
+    """Mac 顯式 legacy：環境驗證回報與啟動時相同的 fail-closed 錯誤。"""
+
+    monkeypatch.setattr(verify_env.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(verify_env.platform, "machine", lambda: "arm64")
+    monkeypatch.setenv("ASR_BACKEND", "mlx-whisper")
+    checked = []
+    monkeypatch.setattr(
+        verify_env,
+        "check_module",
+        lambda module_name, display_name, import_test=None: (checked.append(module_name) or (True, display_name)),
+    )
+
+    results = verify_env.check_critical_modules()
+
+    assert any(
+        not ok
+        and "ASR_BACKEND=mlx_whisper 在 macOS 已不支援" in message
+        and "Mac 僅提供 Apple SpeechAnalyzer" in message
+        for ok, message in results
+    )
+    assert "mlx_whisper" not in checked
 
 
 def test_critical_modules_do_not_require_mlx_on_windows(monkeypatch):

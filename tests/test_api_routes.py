@@ -224,10 +224,12 @@ class TestConfigEndpoint:
         data = response.json()
         assert "gemini_available" in data
 
-    def test_config_exposes_app_backend_and_mlx_fallback_revision_on_mac_auto(self, test_client, mock_services, monkeypatch):
-        """Mac auto config exposes the Apple backend and the MLX fallback model/revision."""
+    def test_config_apple_backend_exposes_no_mlx_fallback_model(self, test_client, mock_services, monkeypatch):
+        """Mac auto：Apple 為唯一引擎，config 不得再暴露 MLX fallback 模型／revision。"""
         from backend.core.config import settings
 
+        monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: True)
+        monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: True)
         monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
         monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
 
@@ -236,8 +238,10 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["effective_asr_backend"] == "apple"
-        assert data["effective_whisper_model"] == "doggy8088/Breeze-ASR-26-MLX"
-        assert data["whisper_model_revision"] == "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
+        # Apple 路徑不暴露任何 Whisper 模型 id（含舊的 MLX fallback 模型）或 revision。
+        assert data["whisper_model"] is None
+        assert data["effective_whisper_model"] is None
+        assert data["whisper_model_revision"] is None
 
 
 # =============================================================================

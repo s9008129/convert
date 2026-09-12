@@ -18,6 +18,10 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.core.config import settings
+from backend.core.asr_model_resolver import (
+    DEFAULT_BREEZE_ASR_26_MLX_MODEL,
+    DEFAULT_BREEZE_ASR_26_MLX_REVISION,
+)
 from backend.services.device_detector import DeviceType
 from backend.services.transcription import DetailedTranscriptionResult, TranscriptionService
 
@@ -25,6 +29,10 @@ from backend.services.transcription import DetailedTranscriptionResult, Transcri
 def test_detect_runtime_falls_back_cpu_when_transformers_vram_insufficient(monkeypatch):
     service = TranscriptionService()
 
+    # 顯式 transformers 是 Windows／Linux 語意：固定在非 Mac 平台，讓測試與
+    # 執行主機解耦（Mac 上顯式 legacy backend 已 fail-closed）。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
     monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
     monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
     monkeypatch.setattr(settings, "ASR_TRANSFORMERS_MIN_VRAM_MB", 6000)
@@ -43,6 +51,9 @@ def test_detect_runtime_falls_back_cpu_when_transformers_vram_insufficient(monke
 def test_detect_runtime_falls_back_cpu_when_torch_has_no_cuda(monkeypatch):
     service = TranscriptionService()
 
+    # 同上：CUDA 降級屬非 Mac 語意，固定平台避免依賴執行主機。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
     monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
     monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
     monkeypatch.setattr(
@@ -90,10 +101,13 @@ def test_load_transformers_pipeline_uses_safe_resolution(monkeypatch):
 
 
 def test_load_mlx_model_uses_pinned_shared_snapshot(monkeypatch):
+    """MLX 載入路徑以顯式 MLX 模型名稱解析 shared snapshot 與 pinned revision
+    （不依賴 Mac auto 的模型映射；Mac 已無 Whisper 模型與 fallback）。"""
+
     service = TranscriptionService()
     fake_mlx = SimpleNamespace()
     monkeypatch.setitem(sys.modules, "mlx_whisper", fake_mlx)
-    monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+    monkeypatch.setattr(settings, "WHISPER_MODEL", DEFAULT_BREEZE_ASR_26_MLX_MODEL)
     monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
     monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
     monkeypatch.setattr(settings, "ASR_LOCAL_FILES_ONLY", True)
@@ -107,8 +121,8 @@ def test_load_mlx_model_uses_pinned_shared_snapshot(monkeypatch):
 
     assert service._model is fake_mlx
     assert service._mlx_model_source == "/shared/hf/snapshot"
-    assert mock_resolve.call_args.args[0] == "doggy8088/Breeze-ASR-26-MLX"
-    assert mock_resolve.call_args.kwargs["revision"] == "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
+    assert mock_resolve.call_args.args[0] == DEFAULT_BREEZE_ASR_26_MLX_MODEL
+    assert mock_resolve.call_args.kwargs["revision"] == DEFAULT_BREEZE_ASR_26_MLX_REVISION
     assert mock_resolve.call_args.kwargs["local_files_only"] is True
 
 
@@ -184,6 +198,11 @@ def test_transcribe_detailed_retries_once_with_force_cpu(monkeypatch, tmp_path):
     audio_path = uploads_dir / "sample.wav"
     audio_path.write_bytes(b"fake")
 
+    # 固定非 Mac 平台 ＋ 顯式 transformers：本測試描述的是 legacy 引擎的
+    # CUDA→CPU 重試路徑（Windows／Linux 語意，Mac 已無此選項）。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
     monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(service, "_unload_model", MagicMock())
 

@@ -266,7 +266,7 @@ def test_asr_worker_payload_carries_only_json_scalar_metadata(tmp_path, monkeypa
                 "segments_dropped": None,
                 "conversion_seconds": 1.5,
                 "conversion_reason": True,
-                "engine_chain": ["apple", "mlx_whisper"],  # list → 丟棄
+                "engine_chain": ["apple"],  # list → 丟棄（Mac 鏈恆為單段）
                 "helper_debug": {"exit_code": 0},  # dict → 丟棄
             },
         )

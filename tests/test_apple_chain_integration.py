@@ -7,9 +7,11 @@
 
 1. 顯式 ``ASR_BACKEND=apple``：Apple 失敗（helper 回 4／6／1）直接向上拋，
    鏈長 1、不試 mlx_whisper（fail-closed）。
-2. ``auto``（mock darwin arm64）：Apple 失敗（非取消）→ 進度提示後 fallback
-   mlx_whisper。
+2. ``auto``（mock darwin arm64）：鏈恆為 ``("apple",)``；Apple 失敗（非取消）
+   同樣 fail-closed 向上拋，絕不換手 mlx_whisper（Mac 已無 Whisper 備援）。
 3. ``auto`` ＋ helper 回 7（``APPLE_CANCELLED``）：取消永不 fallback。
+
+三條路徑都以「legacy 引擎邊界未被呼叫」的間諜證明 fail-closed。
 
 另補 Apple 分支的 ``_detect_runtime``／``_load_model``／``get_device_info``
 （不偵測裝置、不載入模型、不 import mlx/torch）與 settings 轉接。
@@ -192,6 +194,19 @@ def _patch_mlx(monkeypatch, calls, events=None):
     monkeypatch.setattr(TranscriptionService, "_load_mlx_whisper_model", lambda self: None)
 
 
+def _spy_legacy_engine(monkeypatch, calls):
+    """把 legacy 引擎執行邊界（``_transcribe_with_legacy_engine``）換成間諜。
+
+    Mac 鏈不得換手：一旦被呼叫就記錄並立刻讓測試爆掉（fail-closed 的硬證明）。
+    """
+
+    def fake_legacy(self, engine, audio_path, progress_callback, max_retries, force_cpu):
+        calls.append((engine, audio_path))
+        raise AssertionError(f"Mac 鏈不得呼叫 legacy 引擎（engine={engine}）")
+
+    monkeypatch.setattr(TranscriptionService, "_transcribe_with_legacy_engine", fake_legacy)
+
+
 # ---------------------------------------------------------------------------
 # 語意 1：顯式 apple ＋ helper 失敗 → fail-closed
 # ---------------------------------------------------------------------------
@@ -213,6 +228,8 @@ def test_explicit_apple_failure_never_falls_back(apple_env, monkeypatch, helper_
     service = TranscriptionService()
     mlx_calls = []
     _patch_mlx(monkeypatch, mlx_calls)
+    legacy_calls = []
+    _spy_legacy_engine(monkeypatch, legacy_calls)
 
     with pytest.raises(AppleSpeechError) as excinfo:
         service.transcribe_detailed(str(audio_path))
@@ -222,15 +239,27 @@ def test_explicit_apple_failure_never_falls_back(apple_env, monkeypatch, helper_
     assert len(state.helper_calls) == 1
     assert state.events == ["apple"]
     assert mlx_calls == []
+    assert legacy_calls == []
 
 
 # ---------------------------------------------------------------------------
-# 語意 2：auto ＋ Apple 失敗（非取消）→ fallback mlx_whisper
+# 語意 2：auto ＋ Apple 失敗（非取消）→ fail-closed（Mac 已無 Whisper 備援）
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("helper_exit", [4, 6, 1])
-def test_auto_apple_failure_falls_back_to_mlx_whisper(apple_env, monkeypatch, helper_exit):
+@pytest.mark.parametrize(
+    ("helper_exit", "expected_code"),
+    [
+        (4, APPLE_ASSET_ERROR),
+        (6, APPLE_TRANSCRIPTION_ERROR),
+        (1, APPLE_OUTPUT_INVALID),
+    ],
+)
+def test_auto_apple_failure_fails_closed_without_mlx(
+    apple_env, monkeypatch, helper_exit, expected_code
+):
+    """SI-02：Mac ``auto`` 鏈 ``("apple",)``；Apple 失敗直接上拋，不換手。"""
+
     state, audio_path = apple_env
     state.returncode = helper_exit
     monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
@@ -238,19 +267,18 @@ def test_auto_apple_failure_falls_back_to_mlx_whisper(apple_env, monkeypatch, he
     service = TranscriptionService()
     mlx_calls = []
     _patch_mlx(monkeypatch, mlx_calls, events=state.events)
-    progress = []
+    legacy_calls = []
+    _spy_legacy_engine(monkeypatch, legacy_calls)
 
-    result = service.transcribe_detailed(
-        str(audio_path),
-        progress_callback=lambda percent, message: progress.append((percent, message)),
-    )
+    with pytest.raises(AppleSpeechError) as excinfo:
+        service.transcribe_detailed(str(audio_path))
 
-    assert result.backend == "mlx_whisper"
-    assert result.text == "mlx 逐字稿"
-    assert state.events == ["apple", "mlx"]  # Apple 先試、失敗後才換手
+    assert excinfo.value.code == expected_code
+    assert "未 fallback" in excinfo.value.user_message
+    assert state.events == ["apple"]  # 只有 Apple 被喚醒，沒有第二段
     assert len(state.helper_calls) == 1
-    assert mlx_calls == [str(audio_path)]
-    assert any("mlx_whisper" in message for _, message in progress)
+    assert mlx_calls == []
+    assert legacy_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +294,8 @@ def test_auto_cancelled_apple_never_falls_back(apple_env, monkeypatch):
     service = TranscriptionService()
     mlx_calls = []
     _patch_mlx(monkeypatch, mlx_calls, events=state.events)
+    legacy_calls = []
+    _spy_legacy_engine(monkeypatch, legacy_calls)
 
     with pytest.raises(AppleSpeechError) as excinfo:
         service.transcribe_detailed(str(audio_path))
@@ -274,6 +304,7 @@ def test_auto_cancelled_apple_never_falls_back(apple_env, monkeypatch):
     assert "未 fallback" in excinfo.value.user_message
     assert state.events == ["apple"]
     assert mlx_calls == []
+    assert legacy_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +320,8 @@ def test_auto_apple_success_exposes_metadata_and_skips_mlx(apple_env, monkeypatc
     service = TranscriptionService()
     mlx_calls = []
     _patch_mlx(monkeypatch, mlx_calls, events=state.events)
+    legacy_calls = []
+    _spy_legacy_engine(monkeypatch, legacy_calls)
     progress = []
 
     result = service.transcribe_detailed(
@@ -306,7 +339,8 @@ def test_auto_apple_success_exposes_metadata_and_skips_mlx(apple_env, monkeypatc
     assert set(result.metadata) == EXPECTED_METADATA_KEYS
     assert result.metadata["requested_engine"] == "auto"
     assert result.metadata["resolved_engine"] == "apple"
-    assert result.metadata["engine_chain"] == "apple,mlx_whisper"
+    # Mac 鏈嚴格單一引擎：metadata 不得再出現 mlx_whisper fallback 段。
+    assert result.metadata["engine_chain"] == "apple"
     assert result.metadata["locale"] == "zh-Hant-TW"
     assert result.metadata["audio_duration_seconds"] == 12.0
     assert result.metadata["helper_invocations"] == 1
@@ -321,6 +355,7 @@ def test_auto_apple_success_exposes_metadata_and_skips_mlx(apple_env, monkeypatc
 
     assert state.events == ["apple"]
     assert mlx_calls == []
+    assert legacy_calls == []
     assert progress[-1] == (60.0, "轉錄完成")
 
 

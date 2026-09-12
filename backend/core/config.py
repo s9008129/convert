@@ -236,7 +236,10 @@ class Settings(BaseSettings):
     # ========================================
     ASR_BACKEND: str = Field(
         default="auto",
-        description="ASR 後端 (auto/transformers/faster_whisper/mlx_whisper/apple)；apple 僅 macOS"
+        description=(
+            "ASR 後端 (auto/transformers/faster_whisper/mlx_whisper/apple)；"
+            "macOS 僅提供 auto/apple（Apple SpeechAnalyzer），apple 不支援非 macOS"
+        )
     )
     WHISPER_MODEL: str = Field(
         default="MediaTek-Research/Breeze-ASR-26",

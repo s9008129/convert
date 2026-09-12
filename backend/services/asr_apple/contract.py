@@ -32,9 +32,10 @@ ENGINE_NAMES: tuple[str, ...] = (
 )
 DEFAULT_ENGINE = "auto"
 
-#: ``auto`` 在 Apple 平台（darwin + arm64/aarch64）的凍結 fallback 鏈（DEC-02）。
+#: ``auto`` 在 Apple 平台（darwin + arm64/aarch64）的凍結引擎鏈（Owner 2026-09-13 指示）。
+#: Mac 版**只提供 Apple SpeechAnalyzer**：鏈長固定為 1，永不 fallback 到 Whisper。
 #: 非 Apple 平台的 ``auto`` 維持既有單點解析，永不出現 ``apple``（SI-01）。
-APPLE_AUTO_FALLBACK: tuple[str, ...] = ("apple", "mlx_whisper")
+APPLE_AUTO_FALLBACK: tuple[str, ...] = ("apple",)
 
 # --- 穩定錯誤碼（helper 離場碼 → Python 例外，SI-05 凍結）-------------------
 

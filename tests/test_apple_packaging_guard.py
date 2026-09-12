@@ -141,9 +141,12 @@ def test_pyproject_adds_no_apple_python_dependency():
     ]
     assert offenders == []
 
-    mlx_deps = [dep for dep in dependencies if dep.lower().startswith("mlx-whisper")]
-    assert mlx_deps, "mlx-whisper 仍是 Mac 的 fallback 依賴"
-    assert all(
-        'platform_system == "Darwin"' in dep and 'platform_machine == "arm64"' in dep
-        for dep in mlx_deps
-    ), "mlx-whisper 必須維持 Darwin/arm64 platform marker"
+    # T20260912-2242-01（Owner 2026-09-13）：macOS 只提供 Apple SpeechAnalyzer，
+    # 沒有 Whisper 選項也沒有 fallback，因此 mlx-whisper／mlx 不得再是本專案的
+    # 相依（原本要求「mlx-whisper 必須維持 Darwin/arm64 marker」的契約已失效）。
+    mlx_deps = [
+        dep
+        for dep in dependencies
+        if dep.lower().startswith(("mlx-whisper", "mlx==", "mlx "))
+    ]
+    assert mlx_deps == [], f"macOS 已無 Whisper 路徑，不應再有 MLX 相依：{mlx_deps}"

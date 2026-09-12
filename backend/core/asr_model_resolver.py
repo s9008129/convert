@@ -77,7 +77,9 @@ def infer_asr_backend(model_name: str, backend_preference: str = "auto") -> str:
         # 不在這裡做任何 fallback（fail-closed，SI-02）。
         return resolve_platform_asr_backend("apple")
     if normalized_preference in {"transformers", "faster_whisper", "mlx_whisper"}:
-        return normalized_preference
+        # 顯式 legacy：非 Mac 原樣尊重；Mac 由平台守衛硬性拒絕
+        # （Mac 僅提供 Apple SpeechAnalyzer，Owner 2026-09-13）。
+        return resolve_platform_asr_backend(normalized_preference)
     if normalized_preference not in {"", "auto"}:
         # 與 platform_config 共用同一份可接受值檢查，避免未知值靜默改走其他 backend。
         resolve_platform_asr_backend(normalized_preference)
@@ -101,9 +103,11 @@ def resolve_engine_chain(
 
     - 顯式 ``apple``：非 Apple 平台直接 ``ValueError``（僅 macOS）；Apple 平台回
       ``("apple",)``，fail-closed 不 fallback。
-    - ``auto``：Apple 平台 ``("apple", "mlx_whisper")``；非 Apple 平台維持既有
-      單點解析（不碰 Windows/Linux 行為）。
-    - 其他顯式值：單點、原樣尊重（未知值 fail-fast，語意不變）。
+    - ``auto``：Apple 平台 ``("apple",)``——單一引擎、永不 fallback；非 Apple 平台
+      維持既有單點解析（不碰 Windows/Linux 行為）。
+    - Apple 平台上的顯式 ``transformers`` / ``faster_whisper`` / ``mlx_whisper``：
+      ``ValueError`` 硬性拒絕（Mac 已無 Whisper 選項）。
+    - 非 Apple 平台的其他顯式值：單點、原樣尊重（未知值 fail-fast，語意不變）。
     """
 
     normalized = (backend_preference or "auto").strip().lower().replace("-", "_")
@@ -125,7 +129,13 @@ def resolve_engine_chain(
 
 
 def resolve_asr_model(model_name: str, backend_preference: str = "auto") -> str:
-    """解析平台預設模型；明確 model/backend 設定永遠優先。"""
+    """解析平台預設模型；明確 model/backend 設定永遠優先。
+
+    macOS（Apple Silicon）已無 Whisper 路徑（Owner 2026-09-13）：``auto`` 且仍是
+    預設 Breeze 模型時回空字串，代表「本機沒有 Whisper 模型，由 Apple
+    SpeechAnalyzer 的系統內建模型推論」，不再映射到任何 MLX/Whisper 模型 id。
+    非 Apple 平台的既有解析完全不變（原樣回傳設定值）。
+    """
     normalized_model = (model_name or "").strip()
     normalized_preference = (backend_preference or "auto").strip().lower().replace("-", "_")
     if (
@@ -133,7 +143,7 @@ def resolve_asr_model(model_name: str, backend_preference: str = "auto") -> str:
         and is_darwin_arm64()
         and normalized_model.lower() == DEFAULT_BREEZE_ASR_26_MODEL.lower()
     ):
-        return DEFAULT_BREEZE_ASR_26_MLX_MODEL
+        return ""
     return normalized_model
 
 

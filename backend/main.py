@@ -29,13 +29,25 @@ async def lifespan(app: FastAPI):
     log.info(f"🚀 政府智慧會議紀錄生成系統 v{__version__} 啟動中...")
     log.info("=" * 50)
     
-    # 初始化裝置偵測
-    device_type, compute_type = device_detector.detect_best_device()
-    effective_asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    # 初始化裝置偵測。Mac 僅提供 Apple SpeechAnalyzer：顯式 Whisper backend 屬無效
+    # 設定（fail-closed），先留下可讀的啟動日誌再上拋，避免操作者只看見 traceback。
+    try:
+        device_type, compute_type = device_detector.detect_best_device()
+        effective_asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    except ValueError as exc:
+        log.error(f"ASR 設定無效，服務無法啟動：{exc}")
+        raise
     effective_asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
     effective_asr_revision = resolve_model_revision(
         effective_asr_model,
         settings.WHISPER_MODEL_REVISION,
+    )
+    # Mac 僅提供 Apple SpeechAnalyzer（fail-closed，無 fallback）：沒有 Whisper 模型
+    # 可回報，log 以引擎名稱呈現，避免出現空白的 model=；非 Mac 文案完全不變。
+    effective_asr_model_label = (
+        "Apple SpeechAnalyzer（系統內建模型；fail-closed，無 fallback）"
+        if effective_asr_backend == "apple"
+        else effective_asr_model
     )
     effective_accelerator = (
         "mlx-metal" if effective_asr_backend == "mlx_whisper"
@@ -71,13 +83,15 @@ async def lifespan(app: FastAPI):
     log.info("-" * 50)
     log.info("實際生效設定（來源：環境變數 / .env，非 config.yaml）：")
     log.info(
-        f"  ASR: backend={effective_asr_backend}, model={effective_asr_model}, "
+        f"  ASR: backend={effective_asr_backend}, model={effective_asr_model_label}, "
         f"revision={effective_asr_revision or 'unpinned'}, "
         f"language={settings.WHISPER_LANGUAGE}, beam={settings.ASR_BEAM_SIZE}"
     )
+    # Mac 只有 Apple SpeechAnalyzer：VAD 的 Whisper 路徑註記僅非 Mac 顯示（非 Mac 文案不變）。
+    vad_path_note = "" if effective_asr_backend == "apple" else "（僅 faster_whisper 路徑）"
     log.info(
         f"  ASR VAD: enabled={settings.ASR_VAD_ENABLED}, threshold={settings.ASR_VAD_THRESHOLD}, "
-        f"min_silence={settings.ASR_VAD_MIN_SILENCE_MS}ms（僅 faster_whisper 路徑）"
+        f"min_silence={settings.ASR_VAD_MIN_SILENCE_MS}ms{vad_path_note}"
     )
     log.info(
         f"  ASR 參數: initial_prompt={'有' if settings.ASR_INITIAL_PROMPT else '無'}, "

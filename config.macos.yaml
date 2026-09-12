@@ -22,9 +22,10 @@ llm:
     max_tokens: 8192
 
 whisper:
-  # auto resolves to apple (Apple SpeechAnalyzer) on macOS 26+ Apple Silicon,
-  # with mlx_whisper as the automatic fallback on failure. Explicit
-  # transformers / faster_whisper / mlx_whisper remain deliberate overrides.
+  # auto resolves to apple (Apple SpeechAnalyzer) on macOS 26+ Apple Silicon.
+  # macOS accepts only auto / apple; Apple failures are fail-closed (no
+  # Whisper fallback), and explicit transformers / faster_whisper /
+  # mlx_whisper are rejected.
   backend: auto
   language: auto
   compute_type: float16
@@ -41,7 +42,7 @@ whisper:
 
 gpu:
   enabled: true
-  accelerator: mlx-metal
+  accelerator: apple-neural
   auto_detect: true
 
 data:

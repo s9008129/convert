@@ -19,6 +19,10 @@ def _mock_nvidia_smi(*args, **kwargs):
 def test_detect_best_device_falls_back_to_cpu_when_transformers_torch_has_no_cuda(monkeypatch):
     detector = DeviceDetector()
 
+    # 顯式 transformers 是 Windows／Linux 語意：固定在非 Mac 平台，避免測試
+    # 依賴執行主機（Mac 上顯式 legacy backend 已 fail-closed）。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
     monkeypatch.setattr(device_detector_module.settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26", raising=False)
     monkeypatch.setattr(device_detector_module.settings, "ASR_BACKEND", "transformers", raising=False)
     monkeypatch.setattr(device_detector_module.subprocess, "run", _mock_nvidia_smi)
@@ -41,6 +45,9 @@ def test_detect_best_device_falls_back_to_cpu_when_transformers_torch_has_no_cud
 def test_detect_best_device_keeps_cuda_for_faster_whisper_without_torch_cuda(monkeypatch):
     detector = DeviceDetector()
 
+    # 同上：faster-whisper／CUDA 屬非 Mac 語意，固定平台避免依賴執行主機。
+    monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: False)
+    monkeypatch.setattr("backend.core.platform_config.is_darwin_arm64", lambda: False)
     monkeypatch.setattr(device_detector_module.settings, "WHISPER_MODEL", "large-v3", raising=False)
     monkeypatch.setattr(device_detector_module.settings, "ASR_BACKEND", "faster_whisper", raising=False)
     monkeypatch.setattr(device_detector_module.subprocess, "run", _mock_nvidia_smi)

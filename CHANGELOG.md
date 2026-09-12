@@ -2,23 +2,26 @@
 
 ## [Unreleased]
 
-### 🎯 主題：Apple SpeechAnalyzer 本機 ASR——macOS 26+ / Apple Silicon 預設（Windows 零影響）
+### 🎯 主題：Apple SpeechAnalyzer 本機 ASR——macOS 26+ / Apple Silicon 唯一引擎（Windows 零影響）
 
-Mac 上傳會議音檔預設改走 macOS 內建 SpeechAnalyzer 做本機轉錄：免下載 Hugging Face
-模型；本機實測（macOS 26 / Apple Silicon / 真實 helper）1658.958 秒（約 27.7 分鐘）MP3
-的 ASR 轉錄 9.9 秒（`elapsed_seconds=9.9`、`real_time_factor=0.006`、
-`helper_invocations=1`）（`e2e/attempt-03`；未於本 repo 量測與 MLX-Whisper 的倍率）。
+Mac 上傳會議音檔改走 macOS 內建 SpeechAnalyzer 做本機轉錄（Mac 唯一 ASR 引擎：無
+Whisper 選項、永不 fallback）：免下載 Hugging Face 模型；本機實測（macOS 26 /
+Apple Silicon / 真實 helper）1658.958 秒（約 27.7 分鐘）MP3 的 ASR 轉錄 9.9 秒
+（`elapsed_seconds=9.9`、`real_time_factor=0.006`、`helper_invocations=1`）
+（`e2e/attempt-03`；未於本 repo 量測與 MLX-Whisper 的倍率）。
 Windows / Linux / Docker 行為完全不變，也不會出現任何 Apple 設定、提示或 UI 字樣。
 （版本號於發布時指派；本條目先掛 Unreleased。）
 
 ### ✨ 新增
 
-- **Mac 預設引擎自動解析**：`ASR_BACKEND=auto` 在 macOS 26+ Apple Silicon 解析為
-  `apple`（`platform_config`／`asr_model_resolver` 雙點）；Apple 失敗自動回退
-  `mlx_whisper`。非 Mac 的 `auto` 維持既有解析（永不解析到 `apple`）；明確指定
+- **Mac 唯一引擎自動解析**：`ASR_BACKEND=auto` 在 macOS 26+ Apple Silicon 解析為
+  `apple`（`platform_config`／`asr_model_resolver` 雙點），單一引擎、**永不 fallback**；
+  Mac 上顯式 legacy 值（`transformers`／`faster_whisper`／`mlx_whisper`）一律以穩定
+  `ValueError` 拒絕。非 Mac 的 `auto` 維持既有解析（永不解析到 `apple`）；明確指定
   `ASR_BACKEND=apple` 於非 Mac 直接拒絕（fail-fast，訊息說明僅 macOS）。
-- **顯式 `apple` fail-closed**：指定 `apple` 失敗（含輸出契約驗證失敗）直接回報、
-  不偷換引擎；取消（`APPLE_CANCELLED`，離場碼 7）任何情況都不 fallback。
+- **顯式 `apple` fail-closed**：指定 `apple` 失敗（helper 缺失／不可執行、逾時、含輸出
+  契約驗證失敗）直接回報、不偷換引擎；取消（`APPLE_CANCELLED`，離場碼 7）任何情況都
+  不 fallback。
 - **Swift helper（不提交 binary）**：`apple_speech_cli/` 為本機建置的 SwiftPM
   executable，對外契約為 stdout 單一 schema 1.0 JSON＋stderr 診斷；建置與實測見
   `doc/apple-speech-cli-build.md`。
@@ -38,10 +41,30 @@ Windows / Linux / Docker 行為完全不變，也不會出現任何 Apple 設定
   `install_deps.py --check` 提供同一提示（僅提示、不自動編譯、不下載模型），
   Windows 安裝流程零 Apple。
 
+### ⚖️ 語意變更（Owner 指示，2026-09-13，T20260912-2242-01）
+
+Owner 指示取代先前的 auto fallback 語意：**Mac 版沒有 Whisper 模型選項、也沒有
+fallback**，唯一 ASR 引擎是 Apple 內建的 Apple SpeechAnalyzer。
+
+- `ASR_BACKEND=auto`（Mac 預設）→ Apple SpeechAnalyzer：單一引擎、永不 fallback。
+- `ASR_BACKEND=apple` → Apple SpeechAnalyzer，fail-closed：helper 缺失／不可執行、
+  取消、逾時、輸出無效等任何 Apple 失敗都直接使任務失敗（不再有 `mlx_whisper` 備援）。
+- Mac 上顯式 legacy 值（`transformers`／`faster_whisper`／`mlx_whisper`）→ 穩定
+  `ValueError`：`ASR_BACKEND=<x> 在 macOS 已不支援：Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）`。
+- Mac 不再有 Whisper 依賴、本機 Whisper 模型，也沒有「先 Apple 再 Whisper」路徑。
+- **相依移除**：`pyproject.toml` / `requirements.txt` 的 macOS Whisper 平台相依
+  （`mlx-whisper==0.4.3 ; Darwin/arm64`）已移除，`uv.lock` 同步收斂
+  （一併移除 `mlx`／`mlx-metal`／`numba`／`llvmpipe`／`scipy`／`tiktoken` 等僅服務
+  MLX-Whisper 的傳遞相依）；`tests/test_apple_packaging_guard.py` 的守衛契約同步反轉為
+  「本專案不得再有 MLX 相依」。Mac 端 `uv sync` 不會再安裝任何 Whisper runtime。
+- Windows / Linux 完全不變：Whisper 引擎與 `auto` 解析行為與先前一致，`apple` 仍被拒絕
+  （其相依本來就不含 MLX 平台套件）。
+
 ### 🔁 回滾
 
-- Mac：`.env` 設 `ASR_BACKEND=mlx_whisper` 即恢復舊行為（逐字稿與快取不受影響）；
-  移除 `apple_speech_cli/` 目錄亦可回到原本三後端。Windows / Linux 無需任何動作。
+- Mac：**已無 `ASR_BACKEND=mlx_whisper` 回滾開關**（顯式 legacy 值一律被拒絕）；如需回到
+  舊 Whisper 行為須回退版本。移除 `apple_speech_cli/` 只會使 Apple 失敗（fail-closed，
+  任務 failed），不會回退其他引擎。Windows / Linux 無需任何動作。
 
 ## [v4.7.2] - 2026-08-20
 

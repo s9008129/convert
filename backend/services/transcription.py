@@ -1,10 +1,11 @@
 """
 ASR 轉錄服務
 
-- 支援官方 Transformers Whisper 模型（Breeze-ASR-26）
-- 在 Apple Silicon 的 auto 路徑支援 mlx-whisper / Metal
-- 保留 faster-whisper / CTranslate2 回滾路徑
-- 支援 GPU/CPU 自動偵測與釋放
+- macOS（Apple Silicon）：唯一引擎是 Apple 內建 Apple SpeechAnalyzer，
+  `auto` 與顯式 `apple` 都只走這一條鏈，**無 Whisper、無 fallback**。
+- Windows/Linux：支援官方 Transformers Whisper 模型（Breeze-ASR-26）、
+  mlx-whisper / Metal、faster-whisper / CTranslate2 回滾路徑（行為不變）。
+- 支援 GPU/CPU 自動偵測與釋放。
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from backend.services.asr_apple.contract import (
     AppleSpeechError,
     normalize_engine_name,
 )
-from backend.services.asr_apple.dispatcher import should_fallback
 from backend.services.device_detector import DeviceType, device_detector
 
 
@@ -579,13 +579,14 @@ class TranscriptionService:
         max_retries: int = 1,
         force_cpu: bool = False,
     ) -> DetailedTranscriptionResult:
-        """唯一業務入口：依引擎鏈逐引擎嘗試（SI-02／SI-03／SI-10）。
+        """唯一業務入口：依引擎鏈執行（SI-02／SI-03／SI-10）。
 
-        - 鏈由 ``resolve_engine_chain`` 決定：顯式 ``apple`` 為 ``("apple",)``
-          （fail-closed）；Mac ``auto`` 為 ``("apple", "mlx_whisper")``；非 Mac
-          維持既有單點解析。
-        - Apple 取消（``APPLE_CANCELLED``）永不 fallback；顯式 apple 失敗亦不
-          fallback，只有 ``auto`` 的 Apple 失敗才換下一個引擎。
+        - 鏈由 ``resolve_engine_chain`` 決定：Mac（darwin + arm64）無論
+          ``auto`` 或顯式 ``apple`` 都是 ``("apple",)``——單一引擎、**永不
+          fallback**；Apple 平台上的 Whisper 系列顯式值由 router 直接
+          ``ValueError`` 拒絕。非 Mac 維持既有單點解析。
+        - Apple 任何錯誤（含 ``APPLE_CANCELLED``／``APPLE_OUTPUT_INVALID``）
+          一律 fail-closed 向上拋，不切換引擎。
         - 既有三後端的載入／解碼／重試行為完全不變（原邏輯原封不動搬到
           ``_transcribe_with_legacy_engine``）。
         """
@@ -622,26 +623,19 @@ class TranscriptionService:
         max_retries: int,
         force_cpu: bool,
     ) -> DetailedTranscriptionResult:
-        """Apple 引擎鏈：顯式 fail-closed、取消不 fallback、auto 才換手（SI-02／SI-03）。"""
+        """Apple 引擎鏈：一律 fail-closed，永不 fallback（SI-02／SI-03）。
 
+        Mac 只提供 Apple SpeechAnalyzer，鏈恆為 ``("apple",)``；因此任何
+        ``AppleSpeechError``（取消、逾時、輸出無效、helper 缺失）都直接轉成
+        標示「未 fallback」的穩定錯誤，不會、也不允許改跑 Whisper。
+        """
+
+        del max_retries, force_cpu  # Apple 路徑不載入本機模型，無 CPU 降級重試
         try:
             return self._transcribe_with_apple_engine(audio_path, progress_callback, chain)
         except AppleSpeechError as error:
-            fallback_engine = chain[1] if len(chain) > 1 else None
-            # 顯式 apple（鏈長 1）一律 fail-closed；auto 鏈只有 dispatcher 的
-            # should_fallback 允許的錯誤碼才換手（APPLE_CANCELLED 永不 fallback）。
-            if fallback_engine is None or not should_fallback(error.code):
-                raise self._apple_failure(error) from error
-            log.warning("Apple 引擎失敗（{}），改用 {} 重試", error.code, fallback_engine)
-            if progress_callback:
-                progress_callback(25.0, f"Apple 引擎失敗（{error.code}），改用 {fallback_engine}…")
-            return self._transcribe_with_legacy_engine(
-                fallback_engine,
-                audio_path,
-                progress_callback,
-                max_retries,
-                force_cpu,
-            )
+            log.warning("Apple 引擎失敗（{}），Mac 已無備援引擎，直接回報失敗", error.code)
+            raise self._apple_failure(error) from error
 
     @staticmethod
     def _apple_failure(error: AppleSpeechError) -> AppleSpeechError:

@@ -113,12 +113,13 @@ let audioFile = try AVAudioFile(forReading: input)
 
 ### 3.1 契約層
 
-`media_toolbox/asr/contract.py`：
+`media_toolbox/asr/contract.py`（**來源專案歷史快照**；本 repo 已無 fallback 順序，
+Mac 只有 `("apple",)` 單一引擎）：
 
 ```python
 EngineName = Literal["auto", "apple", "breeze", "mlx"]
-AUTO_FALLBACK_ORDER = ("apple", "breeze", "mlx")
-TAIGI_FALLBACK_ORDER = ("breeze", "mlx")
+AUTO_FALLBACK_ORDER = ("apple", "breeze", "mlx")   # 來源專案；未移植
+TAIGI_FALLBACK_ORDER = ("breeze", "mlx")           # 來源專案；未移植
 DEFAULT_ENGINE = "auto"
 ```
 
@@ -144,7 +145,9 @@ def resolve_engine_chain(requested_engine, *, taigi=False):
 - 只有 `auto` 會 fallback。
 - `APPLE_CANCELLED` 永不 fallback，取消優先於逾時。
 - Apple 嘗試一律用 `use_vad=False` 的新 `ASRRequest`，不改傳入的 frozen 物件。
-- 會議專案若無台語需求，可簡化為 `auto -> (apple, whisper)`，但保留 `explicit apple fail-closed` 語意。
+- 會議專案（Mac 僅提供 Apple SpeechAnalyzer）：`auto` 與 `explicit apple` 皆為單一
+  `("apple",)` 鏈，永不 fallback；顯式 legacy 值（`transformers`／`faster_whisper`／
+  `mlx_whisper`）一律拒絕。
 
 ### 3.3 超時公式
 
@@ -182,7 +185,8 @@ def resolve_executable(configured=None, repo_root=None, which=None):
 - 檢查 `schema_version`、`engine`、`text`、`segments`、`metadata`。
 - `start` / `end` 只接受數字或 `null`，`end < start` 就把 `end` 降級為 `None` 並計數。
 - 空白正規化後為空的 segment 直接丟棄並計 `segments_dropped`。
-- 任何違反丟 `APPLE_OUTPUT_INVALID`，可參與 `auto` fallback。
+- 任何違反丟 `APPLE_OUTPUT_INVALID`。（**來源專案**語意：可參與 `auto` fallback；
+  本 repo 的 Mac 路徑已無 fallback，此錯誤一律 fail-closed。）
 
 ### 3.6 CJK 空白正規化
 
@@ -267,7 +271,7 @@ def write_text_atomic(path, content, *, encoding="utf-8") -> Path:
 - Apple 繁中辭典對現代詞覆蓋極低，`台積電`、`輝達`、`光通訊` 都缺，辭典校正無鑑別力。
 - 通用錯字表對 ASR 有害，50 組只有 4 組安全，其餘兩邊都是合法詞。
 - 長 `MP3` 原生不可靠，`3/15/25` 分鐘可讀，`27.7` 分鐘起穩定失敗。
-- `probe` 不裝模型，`transcribe` 才裝，`auto` 流程應先 `probe` 再決定是否換手。
+- `probe` 不裝模型，`transcribe` 才裝；Mac 單一引擎：失敗即失敗（無換手決策）。
 
 ## 5. 移植到會議專案的最小清單
 
@@ -278,7 +282,7 @@ def write_text_atomic(path, content, *, encoding="utf-8") -> Path:
 - 簡化路由：
 
 ```python
-chain = ("apple", "whisper") if requested == "auto" else (requested,)
+chain = ("apple",)  # Mac 僅提供 Apple SpeechAnalyzer；auto 與 apple 皆單一引擎、永不 fallback
 ```
 
 - 會議欄位建議 `metadata`：
@@ -293,5 +297,5 @@ chain = ("apple", "whisper") if requested == "auto" else (requested,)
 - `swift test` 全綠。
 - 短中文 `probe` + `transcribe`，確認 `.md` 標點無多餘空白。
 - `27` 分鐘以上 `MP3`，確認 `helper_invocations=1`、`conversion_reason=fragile_native_container`。
-- 拔掉 helper，確認 `auto` fallback 可觀察，`explicit apple` fail-closed。
+- 拔掉 helper，確認 `auto` 與 `explicit apple` 都直接失敗（fail-closed，無 fallback）。
 - `SIGTERM` 取消，確認回 `APPLE_CANCELLED` 且無殘留暫存。

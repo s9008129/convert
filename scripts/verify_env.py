@@ -17,7 +17,8 @@
 
 常見錯誤情境：
     - Python 版本太舊或不在預期環境
-    - 關鍵套件未安裝（依 effective ASR backend 可能是 MLX-Whisper、Transformers 或 faster-whisper）
+    - 關鍵套件未安裝（依 effective ASR backend 可能是 MLX-Whisper、Transformers 或
+      faster-whisper；macOS 走 Apple SpeechAnalyzer，不需要 Python ASR 模組）
     - 系統缺少 FFmpeg
     - 必要目錄建立失敗或設定檔缺失
 
@@ -181,8 +182,9 @@ def check_apple_native_environment(
     else:
         helper_result = (
             False,
-            "Apple helper 尚未建置（僅提示，不自動編譯；ASR_BACKEND=auto 會先嘗試 Apple、"
-            "失敗回退 MLX-Whisper）。建置指令：cd apple_speech_cli && swift build -c release"
+            "Apple helper 尚未建置（僅提示，不自動編譯；Apple 路徑為 fail-closed，"
+            "helper 缺失時直接失敗、不會回退 Whisper）。建置指令："
+            "cd apple_speech_cli && swift build -c release"
             "（產物：apple_speech_cli/.build/release/apple-speech-cli；"
             "詳見 doc/apple-speech-analyzer-operations.md）",
         )
@@ -318,10 +320,24 @@ def check_critical_modules() -> List[Tuple[bool, str]]:
     ]
 
     backend = effective_asr_backend()
+    results: List[Tuple[bool, str]] = []
+    if is_apple_silicon_mac() and backend not in {"apple", "auto"}:
+        # macOS 僅接受 auto / apple：顯式 legacy 值在啟動時由
+        # resolve_platform_asr_backend 以 ValueError 拒絕（fail-closed）。
+        # 環境驗證必須回報相同的失敗，不得靜默通過。
+        normalized = backend.replace("-", "_")
+        results.append(
+            (
+                False,
+                f"ASR_BACKEND={normalized} 在 macOS 已不支援："
+                "Mac 僅提供 Apple SpeechAnalyzer（auto 或 apple）",
+            )
+        )
+        backend = "apple"
     if backend == "apple":
-        # Apple 路徑本身不需要 Python 模組（走 Swift helper）；mlx_whisper 是
-        # auto 鏈的 fallback，仍須可匯入。
-        modules.append(("mlx_whisper", "MLX-Whisper（Apple 路徑 fallback）", None))
+        # Apple SpeechAnalyzer 走 Swift helper（macOS 內建模型），
+        # 不需要任何 Python ASR 模組。
+        pass
     elif backend == "mlx_whisper":
         modules.append(("mlx_whisper", "MLX-Whisper (Metal ASR)", None))
     elif backend == "transformers":
@@ -334,7 +350,6 @@ def check_critical_modules() -> List[Tuple[bool, str]]:
     else:
         modules.append((backend, f"ASR backend: {backend}", None))
     
-    results = []
     for module, name, test in modules:
         results.append(check_module(module, name, test))
     
@@ -347,6 +362,10 @@ def check_optional_modules() -> List[Tuple[bool, str]]:
         ("mlx_whisper", "MLX-Whisper（未選用時為 supporting）", None),
         ("mlx", "MLX（未選用時為 supporting）", None),
     ]
+    if effective_asr_backend() == "apple":
+        # macOS 僅提供 Apple SpeechAnalyzer：MLX／MLX-Whisper 已非本平台選項，
+        # 也不再有 Python 相依，不以 supporting 模組列出（非 Mac 清單不變）。
+        modules = []
     
     results = []
     for module, name, test in modules:
