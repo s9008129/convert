@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from pathlib import Path
+
 from scripts import verify_env
 
 
-def test_effective_asr_backend_uses_mlx_only_for_darwin_arm64_auto():
+def test_effective_asr_backend_uses_apple_for_darwin_arm64_auto():
     assert verify_env.effective_asr_backend(
         system_name="Darwin",
         machine_name="arm64",
         configured_backend="auto",
-    ) == "mlx_whisper"
+    ) == "apple"
     assert verify_env.effective_asr_backend(
         system_name="Darwin",
         machine_name="arm64",
@@ -86,3 +88,60 @@ def test_evaluate_windows_cuda_torch_status_accepts_cuda_runtime():
 
     assert ok is True
     assert "2.11.0+cu126" in message
+
+
+def _patch_all_checks_ok(monkeypatch):
+    monkeypatch.setattr(verify_env, "check_python_version", lambda: (True, "ok"))
+    monkeypatch.setattr(verify_env, "check_python_path", lambda: (True, "ok"))
+    monkeypatch.setattr(verify_env, "check_ffmpeg", lambda: (True, "ok"))
+    monkeypatch.setattr(verify_env, "check_critical_modules", lambda: [])
+    monkeypatch.setattr(verify_env, "check_optional_modules", lambda: [])
+    monkeypatch.setattr(verify_env, "check_windows_cuda_torch", lambda: (True, "ok"))
+    monkeypatch.setattr(verify_env, "check_directories", lambda: [])
+    monkeypatch.setattr(verify_env, "check_config_files", lambda: [])
+    monkeypatch.setattr(verify_env, "has_nvidia_gpu", lambda: False)
+
+
+def test_apple_section_skipped_on_non_macos_without_apple_wording(monkeypatch, capsys):
+    """非 macOS（Windows/Linux）完全跳過 Apple 段，且不得輸出 Apple/Xcode 字樣。"""
+    assert verify_env.check_apple_native_environment(
+        system_name="Windows", machine_name="AMD64"
+    ) is None
+    assert verify_env.check_apple_native_environment(
+        system_name="Linux", machine_name="x86_64"
+    ) is None
+
+    monkeypatch.setattr(verify_env.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(verify_env.platform, "machine", lambda: "AMD64")
+    _patch_all_checks_ok(monkeypatch)
+
+    assert verify_env.run_all_checks() is True
+
+    output = capsys.readouterr().out.lower()
+    for token in ("apple", "xcode", "swift", "apple-speech-cli", "speechanalyzer"):
+        assert token not in output
+
+
+def test_apple_section_hints_missing_helper_and_stays_non_fatal(monkeypatch, capsys):
+    """macOS：缺 helper 與 Swift 工具鏈只給建置提示，不阻擋環境驗證通過。"""
+    monkeypatch.setattr(verify_env.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(verify_env.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        verify_env,
+        "APPLE_HELPER_DEFAULT_PATH",
+        Path("/nonexistent/apple-speech-cli"),
+    )
+    monkeypatch.delenv("APPLE_SPEECH_CLI_PATH", raising=False)
+    monkeypatch.setattr(verify_env.shutil, "which", lambda name: None)
+    monkeypatch.setattr(verify_env, "check_swift_toolchain", lambda: (False, "缺少 swift 工具鏈"))
+    _patch_all_checks_ok(monkeypatch)
+
+    results = verify_env.check_apple_native_environment()
+    assert results is not None
+    messages = "\n".join(msg for _, msg in results)
+    assert "尚未建置" in messages
+    assert "swift build -c release" in messages
+
+    assert verify_env.run_all_checks() is True
+    output = capsys.readouterr().out
+    assert "swift build -c release" in output

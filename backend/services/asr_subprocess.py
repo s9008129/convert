@@ -105,12 +105,15 @@ def _payload_to_detailed(payload: dict):
                 )
             )
     chunks = [chunk for chunk in chunks if chunk.text]
+    raw_metadata = payload.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     return DetailedTranscriptionResult(
         text=str(payload.get("text") or ""),
         duration_seconds=float(payload.get("duration_seconds") or 0.0),
         language=str(payload.get("language") or "auto"),
         chunks=chunks,
         backend=str(payload.get("backend") or "unknown"),
+        metadata=metadata,
     )
 
 
@@ -180,6 +183,9 @@ async def _transcribe_isolated_raw(
             f"ASR 子程序完成：backend={payload.get('backend')}, "
             f"音檔時長={float(payload.get('duration_seconds') or 0.0):.1f}s"
         )
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            log.info("ASR 引擎觀測：{}", json.dumps(metadata, ensure_ascii=False, sort_keys=True))
         if detailed_fallback:
             return _payload_to_detailed(payload)
         return payload["text"], float(payload.get("duration_seconds") or 0.0)

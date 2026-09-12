@@ -171,14 +171,19 @@ async function checkHealth() {
             elements.systemStatus.textContent = data.status === 'healthy' ? '系統正常' : '系統異常';
         }
         
-        // 更新 accelerator 狀態（CUDA / MLX- Metal / CPU）
+        // 更新 accelerator 狀態（Apple 本機引擎 / CUDA / MLX-Metal / MPS / CPU）
         if (elements.gpuStatus) {
             const accelerator = data.device_info?.accelerator || 'unknown';
             const gpuName = data.gpu_name || data.device_info?.gpu_name;
             let gpuText = '加速器未偵測';
             let statusClass = 'status-warning';
 
-            if (accelerator === 'mlx-metal') {
+            // Apple SpeechAnalyzer 本機引擎（macOS 26+ Apple Silicon 預設；
+            // Windows/Linux 的 accelerator 永遠不會是 apple-neural）
+            if (accelerator === 'apple-neural') {
+                gpuText = 'Apple 神經引擎（本機）';
+                statusClass = 'status-ok';
+            } else if (accelerator === 'mlx-metal') {
                 gpuText = 'Apple Silicon（MLX/Metal）';
                 statusClass = 'status-ok';
             } else if (accelerator === 'cuda' && data.gpu_available) {

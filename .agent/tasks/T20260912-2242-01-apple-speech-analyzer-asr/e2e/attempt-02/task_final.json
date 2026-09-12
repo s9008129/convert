@@ -1,0 +1,19 @@
+{
+  "completed_at": "2026-09-12T23:28:50.522095",
+  "created_at": "2026-09-12T23:28:19.656821",
+  "error_message": null,
+  "estimated_wait_seconds": 0,
+  "file_size": 13271918,
+  "filename": "3369c3a25f3c.mp3",
+  "original_filename": "meeting-30min.mp3",
+  "processing_mode": "local",
+  "progress": 100.0,
+  "queue_position": null,
+  "stage": "完成（⚠️ 僅逐字稿，會議紀錄生成失敗）",
+  "started_at": "2026-09-12T23:28:19.657288",
+  "status": "completed",
+  "summary_failed": true,
+  "task_id": "92824e54",
+  "template_id": "general",
+  "user_prompt": null
+}

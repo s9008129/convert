@@ -10,6 +10,8 @@
 主要流程：
     1) 檢查 Python 版本與目前執行環境
     2) 檢查 FFmpeg、關鍵模組與可選加速模組
+    2b) macOS（Apple Silicon）額外檢查 Apple 本機 ASR 前置（ffmpeg/ffprobe/swift/helper）；
+        缺工具鏈或 helper 只提示不致命，非 macOS 完全跳過且不輸出 Apple 字樣
     3) 檢查並建立必要資料夾、確認設定檔存在
     4) 彙整結果，若有關鍵錯誤就回傳失敗退出碼
 
@@ -30,12 +32,16 @@
 import sys
 import os
 import platform
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WINDOWS_CUDA_REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.windows-cuda.txt"
+APPLE_HELPER_DEFAULT_PATH = (
+    PROJECT_ROOT / "apple_speech_cli" / ".build" / "release" / "apple-speech-cli"
+)
 
 
 class Colors:
@@ -83,17 +89,105 @@ def effective_asr_backend(
     model_name: str | None = None,
 ) -> str:
     """依平台與設定推導 verify_env 應檢查的 ASR backend。"""
-    system = (system_name or platform.system()).strip().lower()
-    machine = (machine_name or platform.machine()).strip().lower()
     configured = (configured_backend or os.getenv("ASR_BACKEND", "auto")).strip().lower()
     model = (model_name or os.getenv("WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")).strip().lower()
     if configured and configured != "auto":
         return configured
-    if system == "darwin" and machine in {"arm64", "aarch64"}:
-        return "mlx_whisper"
+    if is_apple_silicon_mac(system_name=system_name, machine_name=machine_name):
+        # Mac auto 預設是 Apple SpeechAnalyzer（本機、免 HF 模型）。
+        return "apple"
     if "faster-whisper" in model or "/" not in model:
         return "faster_whisper"
     return "transformers"
+
+
+def is_apple_silicon_mac(
+    system_name: str | None = None,
+    machine_name: str | None = None,
+) -> bool:
+    """只有 darwin + arm64/aarch64 才算 Apple 本機 ASR 平台（其餘一律不是）。"""
+    system = (system_name or platform.system()).strip().lower()
+    machine = (machine_name or platform.machine()).strip().lower()
+    return system == "darwin" and machine in {"arm64", "aarch64"}
+
+
+def check_ffprobe() -> Tuple[bool, str]:
+    """檢查 ffprobe（Apple 路徑量測音長用；缺則退回逾時下限，不致命）。"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return True, result.stdout.split("\n")[0][:60]
+        return False, "ffprobe 執行失敗"
+    except FileNotFoundError:
+        return False, "ffprobe 未安裝（brew install ffmpeg 會一併提供）"
+    except subprocess.TimeoutExpired:
+        return False, "ffprobe 回應超時"
+
+
+def check_swift_toolchain() -> Tuple[bool, str]:
+    """檢查 Swift 工具鏈（僅建置 helper 需要；缺少只提示、不致命）。"""
+    try:
+        result = subprocess.run(
+            ["swift", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return False, "缺少 swift 工具鏈；建置 helper 需 Xcode（Swift 6.0+）：xcode-select --install"
+    except subprocess.TimeoutExpired:
+        return False, "swift 回應超時"
+    if result.returncode != 0:
+        return False, "swift 執行失敗；建置 helper 需可用工具鏈：xcode-select --install"
+    lines = (result.stdout or result.stderr or "").strip().splitlines()
+    if not lines:
+        return True, "Swift 工具鏈：可用"
+    return True, f"Swift 工具鏈：{lines[0][:60]}"
+
+
+def resolve_apple_helper_path() -> Path:
+    """APPLE_SPEECH_CLI_PATH > repo release 產物 > PATH；找不到回預設路徑。"""
+    configured = os.getenv("APPLE_SPEECH_CLI_PATH", "").strip()
+    if configured:
+        return Path(configured)
+    if APPLE_HELPER_DEFAULT_PATH.is_file():
+        return APPLE_HELPER_DEFAULT_PATH
+    on_path = shutil.which("apple-speech-cli")
+    if on_path:
+        return Path(on_path)
+    return APPLE_HELPER_DEFAULT_PATH
+
+
+def check_apple_native_environment(
+    system_name: str | None = None,
+    machine_name: str | None = None,
+) -> Optional[List[Tuple[bool, str]]]:
+    """macOS（Apple Silicon）專屬的 Apple 本機 ASR 前置檢查。
+
+    非 macOS 回 None＝完全跳過（不得輸出 Apple/Xcode 字樣）。
+    缺 swift 工具鏈或 helper 只給提示與建置指令，永不視為致命。
+    """
+    if not is_apple_silicon_mac(system_name=system_name, machine_name=machine_name):
+        return None
+
+    helper_path = resolve_apple_helper_path()
+    if helper_path.is_file():
+        helper_result: Tuple[bool, str] = (True, f"Apple helper 執行檔存在：{helper_path}")
+    else:
+        helper_result = (
+            False,
+            "Apple helper 尚未建置（僅提示，不自動編譯；ASR_BACKEND=auto 會先嘗試 Apple、"
+            "失敗回退 MLX-Whisper）。建置指令：cd apple_speech_cli && swift build -c release"
+            "（產物：apple_speech_cli/.build/release/apple-speech-cli；"
+            "詳見 doc/apple-speech-analyzer-operations.md）",
+        )
+
+    return [check_ffmpeg(), check_ffprobe(), check_swift_toolchain(), helper_result]
 
 
 def check_ffmpeg() -> Tuple[bool, str]:
@@ -224,7 +318,11 @@ def check_critical_modules() -> List[Tuple[bool, str]]:
     ]
 
     backend = effective_asr_backend()
-    if backend == "mlx_whisper":
+    if backend == "apple":
+        # Apple 路徑本身不需要 Python 模組（走 Swift helper）；mlx_whisper 是
+        # auto 鏈的 fallback，仍須可匯入。
+        modules.append(("mlx_whisper", "MLX-Whisper（Apple 路徑 fallback）", None))
+    elif backend == "mlx_whisper":
         modules.append(("mlx_whisper", "MLX-Whisper (Metal ASR)", None))
     elif backend == "transformers":
         modules.extend([
@@ -361,6 +459,14 @@ def run_all_checks() -> bool:
     
     if not optional_ok:
         print(f"  {Colors.YELLOW}提示：未使用的 supporting backend 缺失不會阻擋目前 effective ASR 路徑{Colors.RESET}")
+
+    # 4b. Apple SpeechAnalyzer（僅 macOS；缺工具鏈/helper 只提示，不阻擋啟動）
+    apple_results = check_apple_native_environment()
+    if apple_results is not None:
+        print(f"\n{Colors.BLUE}{Colors.BOLD}【Apple SpeechAnalyzer（macOS 本機 ASR）】{Colors.RESET}（僅提示；不阻擋啟動）")
+        for ok, msg in apple_results:
+            status = f"{Colors.GREEN}✅{Colors.RESET}" if ok else f"{Colors.YELLOW}⚠️{Colors.RESET}"
+            print(f"  {status} {msg}")
 
     # 5. Windows CUDA / Torch
     print(f"\n{Colors.BLUE}{Colors.BOLD}【Windows CUDA / Torch】{Colors.RESET}")

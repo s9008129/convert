@@ -1,0 +1,159 @@
+{
+  "apple": {
+    "backend": "apple",
+    "chunk_count": 1340,
+    "elapsed_seconds": 15.43,
+    "engine": "apple",
+    "head": "管他那個大主任的那個你已經賣沒出來嗎好地方我好這個解除列鬼來這個這個我先講一下哦 11月這一次那個局會議那個人事主任報告 11月 1號大概有一些組織有變動我們這個組織組織的規程跟編織錶大概在之前有經過那個縣府法規審查小組已經審查通過了然後生效日期是今年的 11月 1號那兩個兩個重點第一個是組織規程的部分我們土地稅科就分兩科一個叫地價稅科一個叫土地增值稅科然後校費稅科就改為使用牌照稅科改名之後所以你",
+    "language": "zh-Hant-TW",
+    "metadata": {
+      "audio_duration_seconds": 2695.061,
+      "conversion_reason": null,
+      "conversion_seconds": null,
+      "elapsed_seconds": 15.267,
+      "engine_chain": "apple",
+      "helper_invocations": 1,
+      "locale": "zh-Hant-TW",
+      "real_time_factor": 0.0057,
+      "requested_engine": "apple",
+      "resolved_engine": "apple",
+      "segment_count": 1340,
+      "segments_dropped": 0,
+      "segments_time_degraded": 0
+    },
+    "real_time_factor": 0.0057,
+    "stats": {
+      "chars": 10315,
+      "cjk_chars": 10001,
+      "digit_chars": 80,
+      "latin_chars": 47,
+      "punctuation_marks": 138,
+      "punctuation_per_100_cjk": 1.38,
+      "repeat_ngram8": {
+        "repeated_ratio": 0.0009876543209876543,
+        "top": [
+          [
+            "了解一下然後那個",
+            2
+          ],
+          [
+            "解一下然後那個煙",
+            2
+          ],
+          [
+            "一下然後那個煙酒",
+            2
+          ],
+          [
+            "煙酒及稅務管理科",
+            2
+          ],
+          [
+            "酒及稅務管理科煙",
+            2
+          ]
+        ]
+      }
+    },
+    "tail": "間是給新聞行銷處所以他必須這兩顆先空出來之後人當要種所以空出來變紅中像局長室以後會變成新聞學校處處長的辦公室那隔壁的會議室會變成副處長的辦公室所以這可能包含局長先會可能都會先那邊的辦公室都移過來了反正百局長就辦公室現在是說工廠跟財管會先過來那財管是在哪個辦公室就是土地稅客那個賬戶啊那天已經講說那個味道也是有嗯是對所以先搬過來的那個味道都很重你你我來說今天你仔細去聞整間都是味道。這些都是味道啊好啦我",
+    "transcript_path": "/Users/hsiaojohnny/dev/convert/data/cache/apple-vs-whisper-0903/transcript-apple.txt",
+    "whisper_model": null
+  },
+  "audio": {
+    "duration_seconds": 2695.061333,
+    "name": "0903-科務會議.m4a",
+    "sha256": "b42f83d2c405d3f7b5ca1a5f609105631a72697d7b08778297acb5718ce6bb5e"
+  },
+  "whisper_breeze_mlx": {
+    "backend": "mlx_whisper",
+    "chunk_count": 96,
+    "elapsed_seconds": 441.98,
+    "engine": "whisper_breeze_mlx",
+    "head": "這個解除列管 那個大主任的那個 你現在要做起來嗎 我幫你拿 好 我拿給你 火好了嗎 好 好 這個解除列管 來 這個 這個 我先講一下 十一月 這一次那個局務會議 那個人事主任的報告 十一月一號然後大概有一些組織有變動 例如說是 我們這個組織的歸程 跟編制表 大概在之前有經過縣府 法規審查小組 已經審查通過了 然後生肖日期是 今年的十一月一號 那兩個重點 第一個是組織歸程的部分 我們土地稅科就分兩科",
+    "language": "zh",
+    "metadata": {},
+    "real_time_factor": 0.164,
+    "stats": {
+      "chars": 12685,
+      "cjk_chars": 10746,
+      "digit_chars": 8,
+      "latin_chars": 39,
+      "punctuation_marks": 0,
+      "punctuation_per_100_cjk": 0.0,
+      "repeat_ngram8": {
+        "repeated_ratio": 0.0459749061269347,
+        "top": [
+          [
+            "我…我…我…我…",
+            108
+          ],
+          [
+            "…我…我…我…我",
+            108
+          ],
+          [
+            "等一下稍等一下稍",
+            40
+          ],
+          [
+            "一下稍等一下稍等",
+            39
+          ],
+          [
+            "下稍等一下稍等一",
+            39
+          ]
+        ]
+      }
+    },
+    "tail": "空出來要讓人家裝潢 像局長室以後會變成 新聞行銷處處長的辦公室 那隔壁的會議室 會變成副處長的辦公室 所以這裡 可能包含局長 都會先搬 可能都會先 那邊的辦公室都會移過來了 包含那 把局長丟辦公室 現在是說 工廠跟財管會先過來 那財管是在哪個辦公室就是土地稅客那個看過 那天怡伶講說 那個味道也是有 對啊 所以嫌搬過來的 那個味道都很重 對 你仔細去聞 整間都是味道 整間都是味道 真是的掌聲鼓勵鼓勵",
+    "transcript_path": "/Users/hsiaojohnny/dev/convert/data/cache/apple-vs-whisper-0903/transcript-whisper_breeze_mlx.txt",
+    "whisper_model": "doggy8088/Breeze-ASR-26-MLX"
+  },
+  "whisper_turbo": {
+    "backend": "mlx_whisper",
+    "chunk_count": 990,
+    "elapsed_seconds": 145.58,
+    "engine": "whisper_turbo",
+    "head": "這個檢除列管大主任的...你現在要做什麼?我聽不懂,你會好,你會好,你會好這個檢除列管這個...這個齁...我先講一下齁...11月...這次局務會議人事主委的報告齁...11月1日大概有一些組織有變動我們這個組織的規程跟編制表大概在之前有經過那個縣府法規審查小組已經審查通過了然後生效率是今年的11月1日那兩個重點第一個是組織規程的部分我們土地稅科就分兩科一個叫地價稅科 一個叫土地增值稅科然後相位",
+    "language": "zh",
+    "metadata": {},
+    "real_time_factor": 0.054,
+    "stats": {
+      "chars": 10070,
+      "cjk_chars": 9713,
+      "digit_chars": 31,
+      "latin_chars": 48,
+      "punctuation_marks": 240,
+      "punctuation_per_100_cjk": 2.47,
+      "repeat_ngram8": {
+        "repeated_ratio": 0.0033704422428761107,
+        "top": [
+          [
+            "沒有沒有沒有沒有",
+            5
+          ],
+          [
+            "有沒有沒有沒有沒",
+            4
+          ],
+          [
+            "昨天局務會議的部",
+            3
+          ],
+          [
+            "天局務會議的部分",
+            3
+          ],
+          [
+            "了解一下然後那個",
+            2
+          ]
+        ]
+      }
+    },
+    "tail": "聞行銷處,所以它必須這兩科先空出來之後,人家要轉紅所以控處要給總統,像局長室以後變成新聞行業處處長的辦公室隔壁的會議室會變成副處長的辦公室所以這裡可能包含局長,那邊的辦公室都移過來了把局長叫辦公室,現在是說工產跟財管會先過來那財管是在哪個辦公室,就是土地稅客那個湯那天怡琳講說那個味道也是有對 所以先翻過來的那個味道都很重你 我還說今天你仔細去聞整間都是味道哈哈哈哈整間都是味道你在好啦 我打擾感受手",
+    "transcript_path": "/Users/hsiaojohnny/dev/convert/data/cache/apple-vs-whisper-0903/transcript-whisper_turbo.txt",
+    "whisper_model": "mlx-community/whisper-large-v3-turbo"
+  }
+}

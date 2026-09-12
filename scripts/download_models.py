@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
 from backend.core.asr_model_resolver import (
     infer_asr_backend,
     resolve_asr_model,
+    resolve_engine_chain,
     resolve_mlx_model_source,
     resolve_model_revision,
     resolve_transformers_model_source,
@@ -34,6 +35,27 @@ def download_breeze_asr() -> bool:
         model_name,
         settings.WHISPER_MODEL_REVISION,
     )
+
+    # T20260912-2242-01：Mac auto 的 backend 現在解析為 apple。Apple
+    # SpeechAnalyzer 使用 macOS 系統內建模型，不需 Hugging Face 下載；
+    # 但 auto fallback 鏈仍以 mlx_whisper 收尾——維持 Mac 使用者既有行為，
+    # 預載 MLX 模型（絕不改成 faster-whisper 模型）。
+    if backend == "apple":
+        print("ℹ️ Apple SpeechAnalyzer 使用 macOS 系統內建模型，不需要下載 Hugging Face 模型。")
+        fallback_engine = next(
+            (
+                engine
+                for engine in resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL)
+                if engine != "apple"
+            ),
+            None,
+        )
+        if fallback_engine != "mlx_whisper":
+            print("ℹ️ 顯式 apple 為 fail-closed（無 fallback 引擎），略過模型預載。")
+            return True
+        print("📦 依 auto fallback 鏈預載 MLX 模型（Apple 引擎失敗時的備援）...")
+        backend = "mlx_whisper"
+
     print(f"📦 準備預載模型: {model_name}")
     print(f"   後端: {backend}")
     print(f"   Revision: {resolved_revision or '未固定'}")

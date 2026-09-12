@@ -1,0 +1,72 @@
+{
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e-apple-asr/attempt-03/backend.log",
+  "check": "CHECK-07（Mac 實機 ≥27min MP3；Apple 引擎；helper 單次呼叫；無 fallback；無殘留）",
+  "core_checks": {
+    "backend_started": true,
+    "conversion_reason_fragile_native_container": true,
+    "health_accelerator_apple_neural": true,
+    "health_apple_helper_available": true,
+    "health_ok": true,
+    "helper_invocations_single_call": true,
+    "no_apple_fallback": true,
+    "no_apple_temp_residue": true,
+    "task_completed": true,
+    "transcript_nonempty": true,
+    "upload_ok": true
+  },
+  "core_failed": [],
+  "failures": [],
+  "harness": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260912-2242-01-apple-speech-analyzer-asr/e2e/run_apple_asr_e2e.py",
+  "observations": {
+    "apple_fallback_log_lines": [],
+    "apple_helper": {
+      "available": true,
+      "path": "/Users/hsiaojohnny/dev/convert/apple_speech_cli/.build/release/apple-speech-cli",
+      "reason": null,
+      "supported": true
+    },
+    "apple_metadata": {
+      "audio_duration_seconds": 1658.958,
+      "conversion_reason": "fragile_native_container",
+      "conversion_seconds": 0.599,
+      "elapsed_seconds": 9.9,
+      "engine_chain": "apple,mlx_whisper",
+      "helper_invocations": 1,
+      "locale": "zh-Hant-TW",
+      "real_time_factor": 0.006,
+      "requested_engine": "auto",
+      "resolved_engine": "apple",
+      "segment_count": 572,
+      "segments_dropped": 0,
+      "segments_time_degraded": 0
+    },
+    "apple_metadata_log_lines": [
+      "{\"audio_duration_seconds\": 1658.958, \"conversion_reason\": \"fragile_native_container\", \"conversion_seconds\": 0.599, \"elapsed_seconds\": 9.9, \"engine_chain\": \"apple,mlx_whisper\", \"helper_invocations\": 1, \"locale\": \"zh-Hant-TW\", \"real_time_factor\": 0.006, \"requested_engine\": \"auto\", \"resolved_engine\": \"apple\", \"segment_count\": 572, \"segments_dropped\": 0, \"segments_time_degraded\": 0}"
+    ],
+    "apple_temp_residues": [],
+    "apple_transcribe_ok": null,
+    "apple_transcribe_ok_count": 0,
+    "backend_log_bytes": 48307,
+    "health_accelerator": "apple-neural",
+    "health_backend": null,
+    "observed_conversion_reason": "fragile_native_container",
+    "observed_helper_invocations": 1,
+    "summary_failed": true,
+    "task_duration_seconds": null,
+    "task_status": "completed",
+    "transcript_chars": 6811,
+    "transcript_head": "各位同仁早安，我們現在開始今天的例行會議會議記錄的部分，請各單位在三天內把修正意見回覆給幕僚單位與其。是同沒有意見資訊安全的部分我們已經完成全體同仁的資教育訓練接下來會進行社交工程演練請大家務必提高警覺目前係統的尖峰使用時段集中在上午 9點到 11點我們建議在這個區間加派人力避免民眾等候時間過長。根據統計上個月的案件處"
+  },
+  "supporting_checks": {
+    "apple_metadata_observable_in_parent_log": true,
+    "owned_child_cleaned": true,
+    "transcript_contains:交": true,
+    "transcript_contains:工": true,
+    "transcript_contains:演": true,
+    "transcript_contains:社": true,
+    "transcript_contains:程": true,
+    "transcript_contains:練": true
+  },
+  "task_id": "T20260912-2242-01-apple-speech-analyzer-asr",
+  "verdict": "PASS"
+}

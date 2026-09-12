@@ -22,12 +22,22 @@ llm:
     max_tokens: 8192
 
 whisper:
-  # auto resolves to mlx_whisper on Darwin ARM64. Explicit transformers or
-  # faster_whisper remains available as a deliberate compatibility override.
+  # auto resolves to apple (Apple SpeechAnalyzer) on macOS 26+ Apple Silicon,
+  # with mlx_whisper as the automatic fallback on failure. Explicit
+  # transformers / faster_whisper / mlx_whisper remain deliberate overrides.
   backend: auto
   language: auto
   compute_type: float16
   beam_size: 5
+  # Apple SpeechAnalyzer 參考設定（僅 macOS 生效；後端只讀環境變數／.env，
+  # 此檔僅供舊版 CLI 與文件參考；完整操作手冊見
+  # doc/apple-speech-analyzer-operations.md）
+  apple:
+    # 空值=依序搜尋 apple_speech_cli/.build/release/apple-speech-cli → PATH（不自動建置）
+    speech_cli_path: ""
+    locale: zh-Hant-TW
+    preset: time-indexed
+    enable_preflight: true
 
 gpu:
   enabled: true

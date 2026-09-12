@@ -1,0 +1,122 @@
+{
+  "build_revision": "1bd54fb0c953dff75321a063216bb79686b33dd4",
+  "device_info": {
+    "accelerator": "apple-neural",
+    "apple_helper": {
+      "available": true,
+      "path": "/Users/hsiaojohnny/dev/convert/apple_speech_cli/.build/release/apple-speech-cli",
+      "probe": {
+        "asset_status": "installed",
+        "command": "probe",
+        "engine": "apple",
+        "installed_locales": [
+          "zh_TW",
+          "zh_CN"
+        ],
+        "installed_locales_count": 2,
+        "locale_canonical_requested": "zh-Hant-TW",
+        "locale_in_supported_list": true,
+        "locale_installed": true,
+        "locale_requested": "zh-Hant-TW",
+        "locale_resolved": "zh_TW",
+        "locale_supported": true,
+        "maximum_reserved_locales": 5,
+        "metadata": {
+          "api": "SpeechAnalyzer/SpeechTranscriber",
+          "api_available": true,
+          "api_minimum_required": "macOS 26.0",
+          "arch": "arm64",
+          "cpu_count": 12,
+          "framework": "Speech",
+          "hardware_chip": "Apple M4 Pro",
+          "hardware_model": "Mac16,8",
+          "helper_version": "0.1.0",
+          "is_apple_silicon": true,
+          "memory_bytes": 51539607552,
+          "os_build": "25G83",
+          "os_version": "26.6.2",
+          "platform": "macOS"
+        },
+        "reserved_locales": [
+          "zh_TW",
+          "en_US"
+        ],
+        "schema_version": "1.0",
+        "supported_locales": [
+          "fr_FR",
+          "fr_CH",
+          "fr_CA",
+          "fr_BE",
+          "ko_KR",
+          "pt_BR",
+          "pt_PT",
+          "de_AT",
+          "de_CH",
+          "de_DE",
+          "it_IT",
+          "it_CH",
+          "zh_CN",
+          "zh_TW",
+          "es_CL",
+          "es_ES",
+          "es_US",
+          "es_MX",
+          "en_ZA",
+          "en_CA",
+          "en_SG",
+          "en_IN",
+          "en_NZ",
+          "en_GB",
+          "en_AU",
+          "en_US",
+          "en_IE",
+          "yue_CN",
+          "zh_HK",
+          "ja_JP"
+        ],
+        "supported_locales_count": 30,
+        "transcriber_is_available": true
+      },
+      "reason": null,
+      "supported": true
+    },
+    "asr_backend": "apple",
+    "asr_model": {
+      "identifier": "doggy8088/Breeze-ASR-26-MLX",
+      "revision": "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
+    },
+    "compute_type": "float16",
+    "cuda_runtime_available": false,
+    "cuda_runtime_error": null,
+    "current_device": "apple-neural",
+    "fallback_count": 0,
+    "gpu_available": true,
+    "gpu_busy": false,
+    "gpu_memory_mb": null,
+    "gpu_name": "Apple Silicon",
+    "llm": {
+      "context_length": null,
+      "loaded_llm_count": 0,
+      "provider": "lmstudio",
+      "selected_model": null,
+      "selection_status": "LMSTUDIO_UNREACHABLE",
+      "server_reachable": false
+    },
+    "mps_available": false,
+    "torch_cuda_version": null
+  },
+  "gemini_available": true,
+  "gpu_available": true,
+  "gpu_name": "Apple Silicon",
+  "lmstudio_available": false,
+  "ollama_available": false,
+  "queue_status": {
+    "estimated_wait_seconds": 0,
+    "max_concurrent": 1,
+    "processing_count": 0,
+    "queue_max_size": 50,
+    "total_queued": 0
+  },
+  "status": "healthy",
+  "version": "4.7.2"
+}

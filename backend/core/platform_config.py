@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 
 SUPPORTED_LOCAL_LLM_PROVIDERS = frozenset({"auto", "lmstudio", "ollama"})
-SUPPORTED_ASR_BACKENDS = frozenset({"auto", "transformers", "faster_whisper", "mlx_whisper"})
+SUPPORTED_ASR_BACKENDS = frozenset({"auto", "transformers", "faster_whisper", "mlx_whisper", "apple"})
 
 
 def is_darwin_arm64() -> bool:
@@ -30,7 +30,7 @@ def get_platform_defaults() -> Dict[str, Optional[str]]:
     """回傳只描述平台差異的 runtime 預設，不讀取外部服務狀態。"""
     if is_darwin_arm64():
         return {
-            "asr_backend": "mlx_whisper",
+            "asr_backend": "apple",
             "local_llm_provider": "lmstudio",
             "accelerator": "mlx-metal",
         }
@@ -54,15 +54,25 @@ def resolve_local_llm_provider(provider: str = "auto") -> str:
 
 
 def resolve_platform_asr_backend(backend: str = "auto") -> str:
-    """解析平台預設 ASR backend；非 Mac 的 auto 留給模型型 resolver。"""
+    """解析平台預設 ASR backend；非 Mac 的 auto 留給模型型 resolver。
+
+    Apple SpeechAnalyzer 只存在於 macOS（Apple Silicon），因此 `apple` 是非 Mac
+    的硬性拒絕值（fail-fast，SI-01）。
+    """
     normalized = (backend or "auto").strip().lower().replace("-", "_")
+    if normalized == "apple":
+        if not is_darwin_arm64():
+            raise ValueError(
+                "ASR_BACKEND=apple 僅 macOS 支援（Apple Silicon、macOS 26+）"
+            )
+        return "apple"
     if normalized not in SUPPORTED_ASR_BACKENDS:
         raise ValueError(
-            "ASR_BACKEND 必須是 auto、transformers、faster_whisper 或 mlx_whisper "
+            "ASR_BACKEND 必須是 auto、transformers、faster_whisper、mlx_whisper 或 apple "
             f"（收到 {backend!r}）"
         )
     if normalized == "auto" and is_darwin_arm64():
-        return "mlx_whisper"
+        return "apple"
     return normalized
 
 

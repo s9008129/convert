@@ -5,6 +5,7 @@ Tests for model preload script.
 """
 
 import os
+import platform
 import sys
 import tempfile
 from pathlib import Path
@@ -65,16 +66,57 @@ def test_download_models_supports_mlx_shared_cache(monkeypatch):
     assert mock_resolve.call_args.kwargs["local_files_only"] is False
 
 
+def test_download_models_apple_auto_preloads_mlx_fallback(monkeypatch):
+    """Mac auto 解析為 apple 時仍預載 MLX fallback（絕不改成 faster-whisper 模型）。"""
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+    monkeypatch.setattr(settings, "ASR_BACKEND", "auto")
+    monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+
+    with patch(
+        "scripts.download_models.resolve_mlx_model_source",
+        return_value="/shared/hf/snapshot",
+    ) as mock_resolve, patch(
+        "scripts.download_models.resolve_transformers_model_source",
+    ) as mock_transformers:
+        assert download_breeze_asr() is True
+
+    assert mock_resolve.call_args.args[0] == DEFAULT_BREEZE_ASR_26_MLX_MODEL
+    assert mock_resolve.call_args.kwargs["revision"] == DEFAULT_BREEZE_ASR_26_MLX_REVISION
+    assert mock_resolve.call_args.kwargs["local_files_only"] is False
+    mock_transformers.assert_not_called()
+
+
+def test_download_models_explicit_apple_skips_hf_preload(monkeypatch):
+    """顯式 apple 為 fail-closed（無 fallback 引擎）：不預載 HF 模型，成功結束。"""
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
+    monkeypatch.setattr(settings, "ASR_BACKEND", "apple")
+    monkeypatch.setattr(settings, "WHISPER_MODEL_REVISION", None)
+
+    with patch("scripts.download_models.resolve_mlx_model_source") as mock_mlx, patch(
+        "scripts.download_models.resolve_transformers_model_source"
+    ) as mock_transformers:
+        assert download_breeze_asr() is True
+
+    mock_mlx.assert_not_called()
+    mock_transformers.assert_not_called()
+
+
 def test_resolve_model_revision_only_auto_pins_breeze():
     assert resolve_model_revision("MediaTek-Research/Breeze-ASR-26", None) == "949c87bca9dbe90e160cf739460cc765e80805f3"
     assert resolve_model_revision("openai/whisper-large-v3", None) is None
     assert resolve_model_revision("openai/whisper-large-v3", "custom-rev") == "custom-rev"
 
 
-def test_darwin_auto_selects_mlx_and_keeps_explicit_backend(monkeypatch):
+def test_darwin_auto_selects_apple_and_keeps_explicit_backend(monkeypatch):
     monkeypatch.setattr("backend.core.asr_model_resolver.is_darwin_arm64", lambda: True)
 
-    assert infer_asr_backend("MediaTek-Research/Breeze-ASR-26", "auto") == "mlx_whisper"
+    # Mac auto 預設改走 Apple SpeechAnalyzer（T20260912-2242-01）；MLX 仍是
+    # fallback 引擎與其模型解析結果。
+    assert infer_asr_backend("MediaTek-Research/Breeze-ASR-26", "auto") == "apple"
     assert resolve_asr_model("MediaTek-Research/Breeze-ASR-26", "auto") == DEFAULT_BREEZE_ASR_26_MLX_MODEL
     assert infer_asr_backend("MediaTek-Research/Breeze-ASR-26", "transformers") == "transformers"
     assert infer_asr_backend("MediaTek-Research/Breeze-ASR-26", "mlx-whisper") == "mlx_whisper"

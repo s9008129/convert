@@ -84,9 +84,9 @@
 
 ```
 音檔  ──①語音辨識(ASR)──▶  逐字稿  ──②萃取式三階段──▶  會議紀錄(.md / .docx [+ 附件])
-            faster-whisper /             LLM（依會議類型模板套用提示詞）
-          transformers                 本地 Ollama/LM Studio 或雲端 Gemini
-          Breeze-ASR-25/26
+   Apple SpeechAnalyzer（macOS 26+ 預設）／  LLM（依會議類型模板套用提示詞）
+   faster-whisper / transformers            本地 Ollama/LM Studio 或雲端 Gemini
+   Breeze-ASR-25/26（Windows/Linux 維持既有路徑）
 ```
 
 **核心是「萃取優先（extraction-first）」的三階段流程**，刻意把「讀懂內容」與「寫成公文」分開，以降低杜撰風險；v4.4.0 起，所選**會議類型模板**會為每個階段附加專屬規則：
@@ -104,7 +104,7 @@
 ### 技術組成（簡述）
 
 - **後端**：FastAPI（提供網頁與 RESTful API，預設埠 `9527`）。
-- **語音辨識**：`MediaTek-Research/Breeze-ASR-26`（transformers 路徑）／`faster-whisper` Breeze-ASR-25（可依環境切換）。
+- **語音辨識**：macOS 26+ / Apple Silicon 預設 Apple SpeechAnalyzer（本機、免 HF 模型，失敗回退 MLX-Whisper）；`MediaTek-Research/Breeze-ASR-26`（transformers 路徑）／`faster-whisper` Breeze-ASR-25（可依環境切換）。
 - **語言模型**：本地 Ollama（預設 `gemma4:31b`）／LM Studio，或雲端 Gemini（`gemini-3.5-flash-lite`）。
 - **輸出**：Markdown 與 Word（DOCX，相容 Office 2024 / M365），依會議類型另有列管資料等附件。
 - **部署**：Docker（GPU／標準兩種 compose，程式碼 volume 掛載、零 rebuild）或原生服務（`uv run` / `start_service.sh`）。
@@ -120,6 +120,20 @@
 - **RAM**: 16GB+ (本地模式需要)
 - **Storage**: 20GB (模型 + 資料)
 - **GPU**: Apple MPS (自動)
+
+> 🍎 **macOS 26+ / Apple Silicon 的預設 ASR：Apple SpeechAnalyzer（本機引擎）**
+> Mac 上 `ASR_BACKEND=auto`（預設值）會優先使用 macOS 內建 SpeechAnalyzer 做本機轉錄，
+> 不需下載 Hugging Face 模型；本機實測（macOS 26 / Apple Silicon / 真實 helper）1658.958 秒
+> （約 27.7 分鐘）MP3 的 ASR 轉錄 9.9 秒（`elapsed_seconds=9.9`、`real_time_factor=0.006`、
+> `helper_invocations=1`，見 `.agent/tasks/T20260912-2242-01-apple-speech-analyzer-asr/e2e/attempt-03/`）；
+> 未於本 repo 量測與 MLX-Whisper 的倍率。Apple 失敗時自動回退 `mlx_whisper`。
+> 需求：**macOS 26+、Apple Silicon、`ffmpeg`（含 `ffprobe`）**，以及本機建置的
+> Swift helper（`cd apple_speech_cli && swift build -c release`，需 Xcode 工具鏈；
+> 安裝腳本**不會**自動編譯或下載模型）。
+> 回滾開關：`.env` 設 `ASR_BACKEND=mlx_whisper` 即恢復舊行為；明確指定
+> `ASR_BACKEND=apple` 時失敗不會自動回退（fail-closed）。
+> 完整操作、診斷與錯誤碼請見 [Apple SpeechAnalyzer 操作手冊](doc/apple-speech-analyzer-operations.md)。
+> Windows / Linux / Docker 完全不受影響，也不會出現任何 Apple 設定。
 
 #### Windows（推薦：Docker + NVIDIA GPU）
 - **OS**: Windows 10/11
@@ -180,6 +194,14 @@ cp .env.example .env
 #### 4. 本地模型（擇一）
 - **Ollama**（Docker 部署預設）：安裝後執行 `ollama pull gemma4:31b`，服務位址 `http://localhost:11434`
 - **LM Studio**（原生服務常見選擇）：官網 https://lmstudio.ai ，載入模型後啟動本地 API（預設 `http://localhost:1234/v1`）
+
+> 🍎 **macOS 26+ / Apple Silicon 建議先建置 ASR helper**（一次性）：
+> ```bash
+> cd apple_speech_cli && swift build -c release
+> cd .. && uv run python install_deps.py --check   # 檢視平台提示（僅 Mac 會出現 helper 提示）
+> ```
+> helper 未建置或 macOS < 26 時，`auto` 會自動回退 `mlx_whisper`，服務仍可運作；
+> 引擎選擇與回滾請見 [操作手冊](doc/apple-speech-analyzer-operations.md)。
 
 #### 5. 啟動服務
 ```bash
@@ -344,12 +366,16 @@ PASS/FAIL 與各項檢查）；完整 E2E 另含 `transcript.txt`、
 | `MEETINGSCRIBE_BUILD_REVISION` | - | 執行期 build revision（`/api/health` 的 `build_revision` 來源）；local/E2E launcher 注入 `git rev-parse HEAD`，未設定時 health 回傳 `null`，不影響一般啟動 |
 | `MEETINGSCRIBE_PORT`（或 `SERVICE_PORT`） | `9527` | API 服務監聽端口；啟動 log 與 uvicorn `--port` 應使用同一來源（`scripts/macos/*.sh` 以此變數傳入） |
 | `GEMINI_MODEL` | `gemini-3.5-flash-lite` | 雲端 LLM 模型 |
+| `ASR_BACKEND` | `auto` | ASR 後端（`auto`/`transformers`/`faster_whisper`/`mlx_whisper`/`apple`）。macOS 26+ Apple Silicon 的 `auto`＝`apple`（失敗回退 `mlx_whisper`）；Windows/Linux 的 `auto` 維持既有解析，且永遠不會解析到 `apple` |
 | `WHISPER_MODEL` | `MediaTek-Research/Breeze-ASR-26` | Whisper / ASR 模型名稱 |
+| `APPLE_SPEECH_CLI_PATH` | - | （僅 macOS 生效）apple-speech-cli 執行檔路徑；空值＝依序搜尋 repo release 產物→PATH（不自動建置） |
+| `APPLE_LOCALE`／`APPLE_PRESET`／`APPLE_ENABLE_PREFLIGHT` | `zh-Hant-TW`／`time-indexed`／`true` | （僅 macOS 生效）Apple SpeechAnalyzer locale、preset（可選 `time-indexed`／`plain`／`plain-alternatives`／`progressive`／`time-indexed-progressive`）、MP3 預轉 16k mono WAV 開關 |
 | `ENABLE_TRANSCRIPT_CORRECTION` | `true` | 是否啟用語意校正（詞彙表＋LLM＋同音閘門） |
 
 ## 📊 性能指標（參考值，依模型與硬體而異）
 
 ### 轉錄速度
+- **Apple SpeechAnalyzer（macOS 26+，預設）**: 本機實測（macOS 26 Apple Silicon、真實 helper）1658.958 秒（約 27.7 分鐘）MP3 的 ASR 轉錄 9.9 秒（`elapsed_seconds=9.9`）、`real_time_factor=0.006`、`helper_invocations=1`（`.agent/tasks/T20260912-2242-01-apple-speech-analyzer-asr/e2e/attempt-03/`；依硬體與 Asset 狀態而異；未於本 repo 量測與 MLX-Whisper 的倍率）
 - **Apple MPS**: 1 分鐘音頻 ≈ 6-10 秒
 - **CUDA**: 1 分鐘音頻 ≈ 3-5 秒
 - **CPU**: 1 分鐘音頻 ≈ 30-60 秒
@@ -398,6 +424,13 @@ uv run python -m pip install --upgrade --force-reinstall -r requirements.windows
 ```
 - 重新啟動服務後再檢查 `/api/health` 或重新上傳音檔
 
+#### Q: Mac 上沒有走 Apple 本機引擎（轉錄比預期慢）
+- 檢查 `/api/health`：`device_info.accelerator` 應為 `apple-neural`、`device_info.asr_backend` 應為 `apple`（`/health?quick=true` 不 spawn helper、不做 probe，`available: false` 代表未驗證；`effective_asr_backend` 在 `/api/config`）
+- 執行 `uv run python install_deps.py --check` 或 `uv run python scripts/verify_env.py`，看 helper 與 Swift 工具鏈提示
+- 建置 helper（一次性）：`cd apple_speech_cli && swift build -c release`
+- 常見原因與處理：macOS < 26（升級系統）、Intel Mac（不支援，自動回退 MLX-Whisper）、helper 找不到（建置或設 `APPLE_SPEECH_CLI_PATH`）、Asset 未安裝（首次 `transcribe` 需網路下載）——詳見 [操作手冊](doc/apple-speech-analyzer-operations.md)
+- 回滾舊行為：`.env` 設 `ASR_BACKEND=mlx_whisper` 後重啟服務（Windows/Linux 無需任何設定）
+
 #### Q: 記憶體不足
 - 改用較小的本地 LLM 模型
 - 關閉其他應用程式
@@ -405,8 +438,8 @@ uv run python -m pip install --upgrade --force-reinstall -r requirements.windows
 
 ### 日誌檔案
 ```bash
-# 應用日誌
-cat data/logs/app.log
+# 應用日誌（每日輪轉，檔名帶日期）
+cat "data/logs/app_$(date +%F).log"
 
 # Docker 容器日誌
 docker logs -f meetingscribe-app
@@ -418,13 +451,15 @@ docker logs -f meetingscribe-app
 - [使用者手冊](doc/操作手冊/使用者手冊.md) — 非技術使用者操作說明
 - [部署更新手冊](doc/操作手冊/部署更新手冊_v4.1.md) — 正式環境部署與更新步驟
 - [uv 管理說明](doc/操作手冊/uv管理說明.md) — 環境管理與依賴同步
+- [Apple SpeechAnalyzer 操作手冊](doc/apple-speech-analyzer-operations.md) — Mac 本機 ASR 引擎確認、helper 建置、回滾與錯誤碼對照
+- [Apple Speech CLI 建置與驗證手冊](doc/apple-speech-cli-build.md) — Swift helper 的建置實測與契約細節
 - [CHANGELOG](CHANGELOG.md) — 完整逐版變更紀錄
 
 ## 🏗️ 技術棧
 
 ### 後端
 - **框架**: FastAPI + Uvicorn
-- **轉錄**: faster-whisper / transformers（Breeze-ASR-25/26）
+- **轉錄**: macOS 26+ 預設 Apple SpeechAnalyzer（本機）；faster-whisper / transformers / MLX-Whisper（Breeze-ASR-25/26）
 - **LLM**: Ollama / LM Studio（本地） + Gemini API（雲端）
 - **資料**: 檔案系統（任務、逐字稿、輸出、詞彙表）
 
@@ -435,7 +470,7 @@ docker logs -f meetingscribe-app
 ### 環境支援
 - **Python**: 3.11+（`uv` 管理）
 - **OS**: macOS 12+、Windows 10/11、Ubuntu 20.04+
-- **GPU**: Apple MPS, NVIDIA CUDA, CPU
+- **GPU/加速器**: Apple Neural Engine（macOS 26+ 預設 ASR）、Apple MPS、NVIDIA CUDA、CPU
 - **Office 相容性**: Office 2024, M365 (DOCX 輸出)
 
 ## 📝 版本歷史

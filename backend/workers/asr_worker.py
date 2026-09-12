@@ -20,6 +20,21 @@ def _emit_progress(progress: float, message: str) -> None:
     print(json.dumps({"progress": progress, "message": message}, ensure_ascii=False), flush=True)
 
 
+def _scalar_metadata(metadata) -> dict:
+    """metadata 只保留 JSON 純量（str/int/float/bool/None）。
+
+    BE-03 best-effort：非純量值（list/dict/物件…）與非字串鍵安全丟棄，
+    metadata 絕不可讓轉錄失敗。
+    """
+    if not isinstance(metadata, dict):
+        return {}
+    return {
+        key: value
+        for key, value in metadata.items()
+        if isinstance(key, str) and (value is None or isinstance(value, (str, int, float, bool)))
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("用法: python -m backend.workers.asr_worker <audio_path> <result_json_path>", file=sys.stderr)
@@ -62,6 +77,7 @@ def main(argv: list[str]) -> int:
                 {"start": chunk.start, "end": chunk.end, "text": chunk.text}
                 for chunk in (result.chunks or [])
             ],
+            "metadata": _scalar_metadata(getattr(result, "metadata", {})),
         }
         with open(result_json_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)

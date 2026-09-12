@@ -17,6 +17,7 @@ import time
 from typing import Optional
 
 from backend.core.config import settings
+from backend.core.asr_model_resolver import resolve_engine_chain
 from backend.core.errors import describe_exception
 from backend.core.logger import log
 from backend.models.schemas import TaskInfo, TaskStatus, ProcessingMode, ProgressMessage
@@ -33,6 +34,22 @@ SUMMARY_FAILED_BANNER = (
     "> ⚠️ **注意：會議紀錄生成失敗，本檔僅包含逐字稿。**\n"
     "> 請重新送出任務或人工撰寫會議紀錄；勿將本檔直接作為正式會議紀錄使用。"
 )
+
+
+def _asr_stage_message() -> str:
+    """轉錄起始進度文案：本次解析鏈的第一個引擎是 apple 時不宣稱載入 Whisper。
+
+    文案屬觀測/UX 層（非 gating）：解析失敗一律回退既有 Whisper 文案，
+    絕不讓文案解析成為轉錄的新失敗點；Windows／其他後端文案不變。
+    """
+    try:
+        chain = resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL)
+    except Exception as exc:  # noqa: BLE001 — 文案解析不得擋轉錄
+        log.debug(f"ASR 引擎鏈解析失敗（進度文案回退 Whisper 文案）: {describe_exception(exc)}")
+        return "載入 Whisper 模型..."
+    if chain and chain[0] == "apple":
+        return "Apple 本機轉錄中…"
+    return "載入 Whisper 模型..."
 
 
 class TaskProcessor:
@@ -112,7 +129,9 @@ class TaskProcessor:
         # 避免 keep_alive（P0-7）讓 ASR 因 VRAM 不足降級 CPU
         await summarization_service.release_local_model()
 
-        await self._update_progress(task.task_id, 10.0, "載入 Whisper 模型...", TaskStatus.TRANSCRIBING)
+        await self._update_progress(
+            task.task_id, 10.0, _asr_stage_message(), TaskStatus.TRANSCRIBING
+        )
 
         # v4.7.0：ASR 預設走獨立子程序（backend/services/asr_subprocess.py）——
         # 程序退出保證 CUDA context／分配器殘留完全釋回，Ollama 之後載入

@@ -20,6 +20,7 @@ import numpy as np
 from backend.core.asr_model_resolver import (
     infer_asr_backend,
     resolve_asr_model,
+    resolve_engine_chain,
     resolve_mlx_model_source,
     resolve_model_revision,
     resolve_transformers_model_source,
@@ -27,6 +28,12 @@ from backend.core.asr_model_resolver import (
 from backend.core.config import settings
 from backend.core.errors import ASR_BACKEND_UNAVAILABLE, StableServiceError
 from backend.core.logger import log
+from backend.services.asr_apple.contract import (
+    APPLE_TRANSCRIPTION_ERROR,
+    AppleSpeechError,
+    normalize_engine_name,
+)
+from backend.services.asr_apple.dispatcher import should_fallback
 from backend.services.device_detector import DeviceType, device_detector
 
 
@@ -44,6 +51,8 @@ class DetailedTranscriptionResult:
     language: str
     chunks: List[TranscriptionChunk] = field(default_factory=list)
     backend: str = "unknown"
+    #: 引擎可觀測性（只放純量，不含逐字稿）；既有三後端維持空 dict。
+    metadata: dict = field(default_factory=dict)
 
 
 def _is_within_directory(path: str, directory: str) -> bool:
@@ -63,6 +72,8 @@ class TranscriptionService:
         self._fw_version: Optional[str] = None
         self._backend: str = "unknown"
         self._mlx_model_source: Optional[str] = None
+        #: 引擎鏈嘗試期間指定的引擎；讓 fallback 引擎不受 settings.ASR_BACKEND 影響。
+        self._engine_override: Optional[str] = None
 
     def _build_vad_params(
         self,
@@ -93,8 +104,12 @@ class TranscriptionService:
             "speech_pad_ms": speech_pad_ms,
         }
 
-    def _detect_runtime(self, force_cpu: bool = False) -> tuple[str, str]:
-        backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+    def _detect_runtime(self, force_cpu: bool = False, backend: Optional[str] = None) -> tuple[str, str]:
+        backend = backend or self._engine_override or infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        if backend == "apple":
+            # Apple Speech 在 helper 子程序內推論：不做裝置偵測、不載入模型，
+            # 也不碰 device_detector 的狀態（不得影響 mlx/transformers/faster 路徑）。
+            return "cpu", "int8"
         if backend == "mlx_whisper":
             # DeviceType.MPS 僅作既有內部 state marker；對外 metadata 會明確回報
             # mlx-metal，避免把 MLX 與 PyTorch MPS 混為一談。
@@ -141,10 +156,15 @@ class TranscriptionService:
         return device, compute_type
 
     def _load_model(self, force_cpu: bool = False) -> None:
-        self._backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
-        device, compute_type = self._detect_runtime(force_cpu=force_cpu)
+        self._backend = self._engine_override or infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
+        device, compute_type = self._detect_runtime(force_cpu=force_cpu, backend=self._backend)
         self._device = DeviceType(device) if device != "cpu" else DeviceType.CPU
         self._compute_type = compute_type
+
+        if self._backend == "apple":
+            # Apple 路徑不載入任何本機模型，也不 import mlx/torch（推論在 helper 內）。
+            log.info("Apple 引擎：跳過本機模型載入（交由 apple-speech-cli 子程序執行）")
+            return
 
         if self._backend == "mlx_whisper":
             self._load_mlx_whisper_model()
@@ -559,6 +579,16 @@ class TranscriptionService:
         max_retries: int = 1,
         force_cpu: bool = False,
     ) -> DetailedTranscriptionResult:
+        """唯一業務入口：依引擎鏈逐引擎嘗試（SI-02／SI-03／SI-10）。
+
+        - 鏈由 ``resolve_engine_chain`` 決定：顯式 ``apple`` 為 ``("apple",)``
+          （fail-closed）；Mac ``auto`` 為 ``("apple", "mlx_whisper")``；非 Mac
+          維持既有單點解析。
+        - Apple 取消（``APPLE_CANCELLED``）永不 fallback；顯式 apple 失敗亦不
+          fallback，只有 ``auto`` 的 Apple 失敗才換下一個引擎。
+        - 既有三後端的載入／解碼／重試行為完全不變（原邏輯原封不動搬到
+          ``_transcribe_with_legacy_engine``）。
+        """
         abs_audio_path = os.path.abspath(audio_path)
         abs_uploads_dir = os.path.abspath(settings.uploads_dir)
 
@@ -567,6 +597,131 @@ class TranscriptionService:
         if not os.path.exists(abs_audio_path):
             raise FileNotFoundError(f"音訊檔案不存在: {audio_path}")
 
+        chain = resolve_engine_chain(settings.ASR_BACKEND, settings.WHISPER_MODEL)
+        if chain[0] == "apple":
+            return self._transcribe_with_apple_chain(
+                chain,
+                abs_audio_path,
+                progress_callback,
+                max_retries,
+                force_cpu,
+            )
+        return self._transcribe_with_legacy_engine(
+            chain[0],
+            abs_audio_path,
+            progress_callback,
+            max_retries,
+            force_cpu,
+        )
+
+    def _transcribe_with_apple_chain(
+        self,
+        chain: tuple[str, ...],
+        audio_path: str,
+        progress_callback: Optional[callable],
+        max_retries: int,
+        force_cpu: bool,
+    ) -> DetailedTranscriptionResult:
+        """Apple 引擎鏈：顯式 fail-closed、取消不 fallback、auto 才換手（SI-02／SI-03）。"""
+
+        try:
+            return self._transcribe_with_apple_engine(audio_path, progress_callback, chain)
+        except AppleSpeechError as error:
+            fallback_engine = chain[1] if len(chain) > 1 else None
+            # 顯式 apple（鏈長 1）一律 fail-closed；auto 鏈只有 dispatcher 的
+            # should_fallback 允許的錯誤碼才換手（APPLE_CANCELLED 永不 fallback）。
+            if fallback_engine is None or not should_fallback(error.code):
+                raise self._apple_failure(error) from error
+            log.warning("Apple 引擎失敗（{}），改用 {} 重試", error.code, fallback_engine)
+            if progress_callback:
+                progress_callback(25.0, f"Apple 引擎失敗（{error.code}），改用 {fallback_engine}…")
+            return self._transcribe_with_legacy_engine(
+                fallback_engine,
+                audio_path,
+                progress_callback,
+                max_retries,
+                force_cpu,
+            )
+
+    @staticmethod
+    def _apple_failure(error: AppleSpeechError) -> AppleSpeechError:
+        """把 Apple 例外轉成明確標示「未 fallback」的穩定錯誤。"""
+
+        return AppleSpeechError(
+            error.code,
+            f"Apple 引擎失敗（未 fallback）：{error.user_message}",
+            context=dict(error.context),
+        )
+
+    def _transcribe_with_apple_engine(
+        self,
+        audio_path: str,
+        progress_callback: Optional[callable],
+        chain: tuple[str, ...],
+    ) -> DetailedTranscriptionResult:
+        """呼叫 Apple provider（不載入本機模型、不 import mlx/torch；SI-09）。"""
+
+        self._backend = "apple"
+        self._device = DeviceType.CPU
+        self._compute_type = "int8"
+
+        try:
+            # 延後 import：非 Apple 平台完全不碰 Apple 模組（DEC-10／SI-11）。
+            from backend.services.asr_apple import apple as apple_provider
+
+            result = apple_provider.transcribe_with_apple(
+                audio_path,
+                locale=settings.APPLE_LOCALE,
+                preset=settings.APPLE_PRESET,
+                progress_callback=progress_callback,
+                executable_path=settings.APPLE_SPEECH_CLI_PATH or None,
+                enable_preflight=settings.APPLE_ENABLE_PREFLIGHT,
+            )
+        except AppleSpeechError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 未預期例外仍須是 typed Apple error
+            raise AppleSpeechError(
+                APPLE_TRANSCRIPTION_ERROR,
+                "Apple 語音辨識發生未預期的錯誤。",
+                context={"stage": "transcribe", "error_type": type(exc).__name__},
+            ) from exc
+
+        chunks = [
+            TranscriptionChunk(
+                start=float(segment.start or 0.0),
+                end=float(segment.end or 0.0),
+                text=segment.text,
+            )
+            for segment in result.segments
+            if segment.text
+        ]
+        metadata = dict(result.metadata or {})
+        metadata["requested_engine"] = normalize_engine_name(settings.ASR_BACKEND)
+        metadata["resolved_engine"] = "apple"
+        metadata["engine_chain"] = ",".join(chain)
+
+        if progress_callback:
+            progress_callback(60.0, "轉錄完成")
+        return DetailedTranscriptionResult(
+            text=result.text,
+            duration_seconds=result.duration_seconds,
+            language=settings.APPLE_LOCALE,
+            chunks=chunks,
+            backend="apple",
+            metadata=metadata,
+        )
+
+    def _transcribe_with_legacy_engine(
+        self,
+        engine: str,
+        audio_path: str,
+        progress_callback: Optional[callable],
+        max_retries: int,
+        force_cpu: bool,
+    ) -> DetailedTranscriptionResult:
+        """既有三後端單一引擎路徑（載入／解碼／CPU 降級重試邏輯與改動前逐一相同）。"""
+
+        self._engine_override = engine
         try:
             if progress_callback:
                 progress_callback(5.0, "載入 ASR 模型...")
@@ -576,12 +731,12 @@ class TranscriptionService:
                 progress_callback(15.0, f"開始轉錄 ({self._backend}, {self._device.value.upper() if self._device else 'CPU'})...")
 
             result = (
-                self._transcribe_with_transformers(abs_audio_path)
+                self._transcribe_with_transformers(audio_path)
                 if self._backend == "transformers"
                 else (
-                    self._transcribe_with_mlx_whisper(abs_audio_path)
+                    self._transcribe_with_mlx_whisper(audio_path)
                     if self._backend == "mlx_whisper"
-                    else self._transcribe_with_faster_whisper(abs_audio_path)
+                    else self._transcribe_with_faster_whisper(audio_path)
                 )
             )
 
@@ -595,15 +750,17 @@ class TranscriptionService:
                 log.info("嘗試降級到 CPU 重新轉錄...")
                 device_detector.fallback_to_cpu()
                 self._unload_model()
-                return self.transcribe_detailed(
+                return self._transcribe_with_legacy_engine(
+                    engine,
                     audio_path,
-                    progress_callback=progress_callback,
-                    max_retries=max_retries - 1,
+                    progress_callback,
+                    max_retries - 1,
                     force_cpu=True,
                 )
             raise
         finally:
             self._unload_model()
+            self._engine_override = None
 
     def transcribe(
         self,
@@ -625,7 +782,13 @@ class TranscriptionService:
         model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         device = self._device.value if self._device else "not_loaded"
         accelerator = device
-        if backend == "mlx_whisper":
+        compute_type = self._compute_type
+        if backend == "apple":
+            # Apple Neural Engine（helper 子程序內推論）：沒有本機模型與 compute type。
+            device = "apple-neural"
+            accelerator = "apple-neural"
+            compute_type = "n/a"
+        elif backend == "mlx_whisper":
             device = "mlx-metal"
             accelerator = "mlx-metal"
         elif device == "cuda":
@@ -636,7 +799,7 @@ class TranscriptionService:
             accelerator = "cpu"
         return {
             "device": device,
-            "compute_type": self._compute_type,
+            "compute_type": compute_type,
             "backend": backend,
             "accelerator": accelerator,
             "asr_backend": backend,

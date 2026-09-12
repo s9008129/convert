@@ -198,25 +198,37 @@ class DeviceDetector:
         asr_backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         asr_model = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         is_mlx = asr_backend == "mlx_whisper"
-        current_device = "mlx-metal" if is_mlx and self.current_device == DeviceType.MPS else (
-            self.current_device.value if self.current_device else "unknown"
-        )
-        accelerator = "mlx-metal" if is_mlx else current_device
-        gpu_available = self.gpu_present or self.current_device == DeviceType.CUDA or is_mlx
-        gpu_busy = (
-            gpu_available and self.current_device == DeviceType.CPU
-            if is_mlx
-            else gpu_available and self.current_device != DeviceType.CUDA
-        )
+        if asr_backend == "apple":
+            # Apple SpeechAnalyzer 走系統內建神經網路引擎（非 PyTorch MPS、非 MLX）：
+            # 顯示字串與狀態獨立回報；mlx/cuda/cpu 分支語意完全不變。
+            current_device = "apple-neural"
+            accelerator = "apple-neural"
+            gpu_available = True
+            gpu_busy = False
+            mps_available = False
+            gpu_name = self.gpu_name or "Apple Silicon"
+        else:
+            current_device = "mlx-metal" if is_mlx and self.current_device == DeviceType.MPS else (
+                self.current_device.value if self.current_device else "unknown"
+            )
+            accelerator = "mlx-metal" if is_mlx else current_device
+            gpu_available = self.gpu_present or self.current_device == DeviceType.CUDA or is_mlx
+            gpu_busy = (
+                gpu_available and self.current_device == DeviceType.CPU
+                if is_mlx
+                else gpu_available and self.current_device != DeviceType.CUDA
+            )
+            mps_available = self.current_device == DeviceType.MPS and not is_mlx
+            gpu_name = self.gpu_name or ("Apple Silicon" if is_mlx else None)
         return {
             "current_device": current_device,
             "compute_type": self.current_compute_type,
             "fallback_count": self.fallback_count,
-            "gpu_name": self.gpu_name or ("Apple Silicon" if is_mlx else None),
+            "gpu_name": gpu_name,
             "gpu_memory_mb": self.gpu_memory_mb,
             "gpu_available": gpu_available,
             "gpu_busy": gpu_busy,
-            "mps_available": self.current_device == DeviceType.MPS and not is_mlx,
+            "mps_available": mps_available,
             "accelerator": accelerator,
             "asr_backend": asr_backend,
             "asr_model": {

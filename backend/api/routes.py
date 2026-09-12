@@ -6,6 +6,7 @@ v3.5.4 - 統一版本號 + 裝置狀態快取
 """
 
 import os
+import platform
 import time
 import inspect
 from typing import Optional
@@ -44,6 +45,77 @@ def _resolve_build_revision() -> Optional[str]:
     return value or None
 
 
+_APPLE_HELPER_REASON_NOT_MACOS = "非 macOS：Apple SpeechAnalyzer 僅支援 macOS"
+
+
+def _load_apple_helper_status():
+    """延後載入 Apple helper 狀態函式（WAVE-03 凍結介面）。
+
+    ``apple_helper_status(*, configured_path=None) -> dict``。以函式包裝讓
+    ``/health`` 在 Apple 模組載入失敗時仍可回報可觀察原因（BE-03，永不讓
+    health 失敗），並讓測試能在不載入 Apple 模組的前提下替換此 seam。
+    """
+    from backend.services.asr_apple.apple import apple_helper_status
+
+    return apple_helper_status
+
+
+def _apple_helper_health_section(*, quick: bool) -> dict:
+    """Apple ASR helper 可觀測區段（REQ-10；additive、best-effort、不 gating）。
+
+    - 非 macOS：最早分支返回 ``supported=false``——不載入 Apple 模組、
+      不執行 probe、不 spawn 子程序（SI-12 / NFR-03）。
+    - ``quick=true``：不得啟動 helper（health 保持輕量）；僅回報平台支援度，
+      ``available`` 未經驗證一律 false。
+    - 完整模式（macOS）：呼叫凍結介面取得 available/path/probe；任何失敗
+      都不得讓 ``/health`` 失敗，以 ``reason`` 回報可觀察的失敗原因。
+    """
+    if platform.system() != "Darwin":
+        return {
+            "supported": False,
+            "available": False,
+            "path": None,
+            "probe": None,
+            "reason": _APPLE_HELPER_REASON_NOT_MACOS,
+        }
+    if quick:
+        return {
+            "supported": True,
+            "available": False,
+            "path": None,
+            "probe": None,
+            "reason": "quick 模式：未執行 helper probe",
+        }
+    try:
+        helper_status = _load_apple_helper_status()(
+            configured_path=(settings.APPLE_SPEECH_CLI_PATH or None)
+        )
+    except Exception as exc:  # noqa: BLE001 — Apple 子系統失敗不得讓 /health 失敗（BE-03）
+        log.warning(f"Apple helper probe 失敗（/health 回報不可用）: {type(exc).__name__}: {exc}")
+        return {
+            "supported": True,
+            "available": False,
+            "path": None,
+            "probe": None,
+            "reason": f"helper probe 失敗：{type(exc).__name__}",
+        }
+    if not isinstance(helper_status, dict):
+        return {
+            "supported": True,
+            "available": False,
+            "path": None,
+            "probe": None,
+            "reason": "helper probe 回傳非預期格式",
+        }
+    return {
+        "supported": bool(helper_status.get("supported")),
+        "available": bool(helper_status.get("available")),
+        "path": helper_status.get("path"),
+        "probe": helper_status.get("probe"),
+        "reason": helper_status.get("reason"),
+    }
+
+
 @router.get("/health", response_model=HealthStatus)
 async def health_check(quick: bool = False):
     """
@@ -53,6 +125,8 @@ async def health_check(quick: bool = False):
     v3.5.4 改進：
     - 支援 quick 模式（使用快取，避免 GPU 滿載時阻塞）
     - 支援 CUDA 與 MLX/Metal 狀態
+    - Apple SpeechAnalyzer helper 狀態以 additive 區段回報（僅 macOS 完整模式
+      probe；quick 模式與非 macOS 一律不啟動 helper）
     
     Query Parameters:
         quick: bool - 是否使用快速模式（預設 False）
@@ -70,6 +144,9 @@ async def health_check(quick: bool = False):
     if device_info.get("accelerator") == "mlx-metal":
         device_info.setdefault("gpu_name", "Apple Silicon (MLX/Metal)")
         device_info["gpu_available"] = True
+
+    # Apple SpeechAnalyzer helper 觀測（additive；非 macOS 不 probe，SI-12）
+    device_info["apple_helper"] = _apple_helper_health_section(quick=quick)
     
     async def _resolve_status(result):
         """同時支援同步/非同步檢查結果"""

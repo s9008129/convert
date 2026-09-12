@@ -1,5 +1,48 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [Unreleased]
+
+### 🎯 主題：Apple SpeechAnalyzer 本機 ASR——macOS 26+ / Apple Silicon 預設（Windows 零影響）
+
+Mac 上傳會議音檔預設改走 macOS 內建 SpeechAnalyzer 做本機轉錄：免下載 Hugging Face
+模型；本機實測（macOS 26 / Apple Silicon / 真實 helper）1658.958 秒（約 27.7 分鐘）MP3
+的 ASR 轉錄 9.9 秒（`elapsed_seconds=9.9`、`real_time_factor=0.006`、
+`helper_invocations=1`）（`e2e/attempt-03`；未於本 repo 量測與 MLX-Whisper 的倍率）。
+Windows / Linux / Docker 行為完全不變，也不會出現任何 Apple 設定、提示或 UI 字樣。
+（版本號於發布時指派；本條目先掛 Unreleased。）
+
+### ✨ 新增
+
+- **Mac 預設引擎自動解析**：`ASR_BACKEND=auto` 在 macOS 26+ Apple Silicon 解析為
+  `apple`（`platform_config`／`asr_model_resolver` 雙點）；Apple 失敗自動回退
+  `mlx_whisper`。非 Mac 的 `auto` 維持既有解析（永不解析到 `apple`）；明確指定
+  `ASR_BACKEND=apple` 於非 Mac 直接拒絕（fail-fast，訊息說明僅 macOS）。
+- **顯式 `apple` fail-closed**：指定 `apple` 失敗（含輸出契約驗證失敗）直接回報、
+  不偷換引擎；取消（`APPLE_CANCELLED`，離場碼 7）任何情況都不 fallback。
+- **Swift helper（不提交 binary）**：`apple_speech_cli/` 為本機建置的 SwiftPM
+  executable，對外契約為 stdout 單一 schema 1.0 JSON＋stderr 診斷；建置與實測見
+  `doc/apple-speech-cli-build.md`。
+- **前端顯示**：`accelerator=apple-neural` 時狀態列顯示「Apple 神經引擎（本機）」；
+  Windows 常見 accelerator（cpu/cuda）不出現任何 Apple/Xcode/helper 字樣，既有
+  `mlx-metal`／`mps`／`cuda`／`cpu` 顯示維持不變。
+- **設定與文件**：新增 `APPLE_SPEECH_CLI_PATH`／`APPLE_LOCALE`（`zh-Hant-TW`）／
+  `APPLE_PRESET`（`time-indexed`，可選 `plain`／`plain-alternatives`／`progressive`／
+  `time-indexed-progressive`）／`APPLE_ENABLE_PREFLIGHT`；`.env.example`、
+  `config.macos.yaml`（標註僅 macOS 生效）與
+  [操作手冊](doc/apple-speech-analyzer-operations.md) 同步（錯誤碼 0/1/2/3/4/5/6/7
+  對照、`data/logs/app_<日期>.log` 的 `ASR 引擎觀測` 行觀測 `helper_invocations`／
+  `conversion_reason`、`/health?quick=true` 語意、常見問題）。
+- **環境檢查與安裝守衛**：`scripts/verify_env.py` 僅在 macOS（darwin+arm64）檢查
+  ffmpeg/ffprobe、Swift 工具鏈與 `apple_speech_cli/.build/release/apple-speech-cli`；
+  缺工具鏈或 helper 只提示建置指令、不視為致命；非 macOS 完全跳過且不輸出 Apple 字樣。
+  `install_deps.py --check` 提供同一提示（僅提示、不自動編譯、不下載模型），
+  Windows 安裝流程零 Apple。
+
+### 🔁 回滾
+
+- Mac：`.env` 設 `ASR_BACKEND=mlx_whisper` 即恢復舊行為（逐字稿與快取不受影響）；
+  移除 `apple_speech_cli/` 目錄亦可回到原本三後端。Windows / Linux 無需任何動作。
+
 ## [v4.7.2] - 2026-08-20
 
 ### 🎯 主題：修復地端公文段落編號階層不符標準（雲端無此問題）

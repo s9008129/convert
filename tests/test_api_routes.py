@@ -49,7 +49,15 @@ def mock_services():
     with patch('backend.api.routes.device_detector') as mock_device, \
          patch('backend.api.routes.task_queue') as mock_queue, \
          patch('backend.api.routes.file_manager') as mock_file, \
-         patch('backend.api.routes.summarization_service') as mock_summary:
+         patch('backend.api.routes.summarization_service') as mock_summary, \
+         patch('backend.api.routes._load_apple_helper_status',
+               return_value=lambda **kwargs: {
+                   "supported": False,
+                   "available": False,
+                   "path": None,
+                   "probe": None,
+                   "reason": "測試替身：不執行真實 Apple helper probe",
+               }):
         
         # Setup device_detector mock
         mock_device.detect_best_device.return_value = None
@@ -216,8 +224,8 @@ class TestConfigEndpoint:
         data = response.json()
         assert "gemini_available" in data
 
-    def test_config_exposes_effective_mlx_revision_on_mac_auto(self, test_client, mock_services, monkeypatch):
-        """Mac auto config exposes the effective MLX model and pinned revision."""
+    def test_config_exposes_app_backend_and_mlx_fallback_revision_on_mac_auto(self, test_client, mock_services, monkeypatch):
+        """Mac auto config exposes the Apple backend and the MLX fallback model/revision."""
         from backend.core.config import settings
 
         monkeypatch.setattr(settings, "WHISPER_MODEL", "MediaTek-Research/Breeze-ASR-26")
@@ -227,7 +235,7 @@ class TestConfigEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["effective_asr_backend"] == "mlx_whisper"
+        assert data["effective_asr_backend"] == "apple"
         assert data["effective_whisper_model"] == "doggy8088/Breeze-ASR-26-MLX"
         assert data["whisper_model_revision"] == "619860a64925c0f0dfecdbb5f8d9a2da2df1bc12"
 

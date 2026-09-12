@@ -38,7 +38,9 @@ async def lifespan(app: FastAPI):
         settings.WHISPER_MODEL_REVISION,
     )
     effective_accelerator = (
-        "mlx-metal" if effective_asr_backend == "mlx_whisper" else device_type.value
+        "mlx-metal" if effective_asr_backend == "mlx_whisper"
+        else "apple-neural" if effective_asr_backend == "apple"
+        else device_type.value
     )
     log.info(f"裝置偵測完成: {effective_accelerator}, 精度: {compute_type}")
     

@@ -324,9 +324,17 @@ async def test_process_task_warms_up_before_correction_and_reports_timeout(monke
     assert "會議紀錄生成失敗" in saved["content"]
 
 
-def test_device_info_reports_gpu_present_even_when_busy():
-    """v4.3.2：VRAM 被占滿（current_device 暫為 CPU）時，GPU 仍應回報存在。"""
+def test_device_info_reports_gpu_present_even_when_busy(monkeypatch):
+    """v4.3.2：VRAM 被占滿（current_device 暫為 CPU）時，GPU 仍應回報存在。
+
+    T20260912-2242-01：Mac auto 預設改走 apple（顯示 apple-neural 且 gpu_busy
+    固定 False）；本測試描述的是 CUDA 情境，改以顯式非 apple 後端固定，
+    避免斷言取決於執行主機平台。
+    """
     from backend.services.device_detector import DeviceDetector, DeviceType
+    from backend.core.config import settings
+
+    monkeypatch.setattr(settings, "ASR_BACKEND", "transformers")
 
     detector = DeviceDetector()
     detector.gpu_present = True

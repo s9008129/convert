@@ -112,6 +112,10 @@ coverage.xml
 # 測試音檔
 tests/test_audio/
 
+# Apple SpeechAnalyzer helper（SwiftPM 建置產物／binary 永不入版控，T20260912-2242-01）
+apple_speech_cli/.build/
+apple_speech_cli/apple-speech-cli
+
 # 備份檔案
 *.bak
 *.backup

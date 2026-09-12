@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     # ========================================
     ASR_BACKEND: str = Field(
         default="auto",
-        description="ASR 後端 (auto/transformers/faster_whisper/mlx_whisper)"
+        description="ASR 後端 (auto/transformers/faster_whisper/mlx_whisper/apple)；apple 僅 macOS"
     )
     WHISPER_MODEL: str = Field(
         default="MediaTek-Research/Breeze-ASR-26",
@@ -349,6 +349,26 @@ class Settings(BaseSettings):
     ASR_WORKER_TIMEOUT_SECONDS: float = Field(
         default=7200.0,
         description="ASR 子程序硬上限（秒）；逾時 kill 並判定任務失敗（超長音檔屬病態輸入，不退回 in-process）"
+    )
+
+    # ========================================
+    # Apple SpeechAnalyzer 設定（僅 macOS；T20260912-2242-01）
+    # ========================================
+    APPLE_SPEECH_CLI_PATH: str = Field(
+        default="",
+        description="apple-speech-cli 執行檔路徑（空=依序搜尋 repo release 產物→PATH；不自動編譯）"
+    )
+    APPLE_LOCALE: str = Field(
+        default="zh-Hant-TW",
+        description="Apple SpeechAnalyzer locale（預設繁體中文台灣）"
+    )
+    APPLE_PRESET: str = Field(
+        default="time-indexed",
+        description="Apple SpeechAnalyzer preset（time-indexed 才有逐詞時間軸）"
+    )
+    APPLE_ENABLE_PREFLIGHT: bool = Field(
+        default=True,
+        description="MP3 等脆弱容器是否先預轉 16k mono WAV（效能關鍵；關閉只影響速度）"
     )
     
     # ========================================

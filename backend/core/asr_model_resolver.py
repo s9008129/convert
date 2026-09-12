@@ -72,21 +72,56 @@ def is_faster_whisper_model(model_name: str) -> bool:
 def infer_asr_backend(model_name: str, backend_preference: str = "auto") -> str:
     model_name = (model_name or "").strip()
     normalized_preference = (backend_preference or "auto").strip().lower().replace("-", "_")
+    if normalized_preference == "apple":
+        # 顯式 apple：非 Mac 直接 ValueError（僅 macOS），Mac 原樣尊重；
+        # 不在這裡做任何 fallback（fail-closed，SI-02）。
+        return resolve_platform_asr_backend("apple")
     if normalized_preference in {"transformers", "faster_whisper", "mlx_whisper"}:
         return normalized_preference
     if normalized_preference not in {"", "auto"}:
         # 與 platform_config 共用同一份可接受值檢查，避免未知值靜默改走其他 backend。
         resolve_platform_asr_backend(normalized_preference)
 
-    # Apple Silicon 的 auto 是明確的 MLX/Metal 平台契約；只有明確 backend
-    # 才能保留 transformers/faster_whisper 路徑。
+    # Apple Silicon 的 auto 預設是 Apple SpeechAnalyzer（本機、需 macOS 26+）；
+    # 只有明確 backend 才能保留 MLX / transformers / faster_whisper 路徑。
     if normalized_preference in {"", "auto"} and is_darwin_arm64():
-        return "mlx_whisper"
+        return "apple"
     if is_faster_whisper_model(model_name):
         return "faster_whisper"
     if "/" not in model_name and not is_local_model_path(model_name):
         return "faster_whisper"
     return "transformers"
+
+
+def resolve_engine_chain(
+    backend_preference: str = "auto",
+    model_name: str = "",
+) -> tuple[str, ...]:
+    """解析本次請求的 ASR 引擎嘗試鏈（SI-01 / SI-02 / SI-03）。
+
+    - 顯式 ``apple``：非 Apple 平台直接 ``ValueError``（僅 macOS）；Apple 平台回
+      ``("apple",)``，fail-closed 不 fallback。
+    - ``auto``：Apple 平台 ``("apple", "mlx_whisper")``；非 Apple 平台維持既有
+      單點解析（不碰 Windows/Linux 行為）。
+    - 其他顯式值：單點、原樣尊重（未知值 fail-fast，語意不變）。
+    """
+
+    normalized = (backend_preference or "auto").strip().lower().replace("-", "_")
+    if normalized == "apple":
+        return (resolve_platform_asr_backend("apple"),)
+    if normalized not in {"", "auto"}:
+        # 未知值與 platform_config 共用同一份檢查（維持既有 fail-fast 語意）。
+        resolve_platform_asr_backend(normalized)
+    effective = normalized or "auto"
+    # 延後 import：backend.services.__init__ 會拉起 device_detector（再回頭 import
+    # 本模組），模組頂層 import 會形成循環。
+    from backend.services.asr_apple.dispatcher import resolve_engine_chain as apple_chain
+
+    return apple_chain(
+        effective,
+        is_apple_platform=is_darwin_arm64(),
+        default_backend=infer_asr_backend(model_name, effective),
+    )
 
 
 def resolve_asr_model(model_name: str, backend_preference: str = "auto") -> str:
