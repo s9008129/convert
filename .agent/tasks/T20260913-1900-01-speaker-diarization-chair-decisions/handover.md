@@ -66,7 +66,7 @@
 | 模型檔 | `models/diarization/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`（28 MB）＋`models/diarization/sherpa-onnx-pyannote-segmentation-3-0/`；`models/` 已被 `.gitignore` 忽略 |
 | git | 本任務變更已 commit＋push（5 個 commit；見下方「git commit」列；`git log --oneline -5` 可驗） |
 | Stage 05 獨立驗收 | **已完成（attempt-01）：總 gate = `ACCEPTED`**（C1 PASS／C2 PARTIAL／C3 PASS／C4 PASS）；證據：`e2e/attempt-01/e2e_report.md`、`result.md` |
-| git commit | 最新 `606712a`（補 ASR 品質風險評估）→ `91bdc09`（ASR 評估）→ `a3c2a01`（數字對齊）→ `65d665c`（Stage 05 證據＋文件）→ `4768e4a`（feat(diarization,cloud)），全部已 push 至 `origin/main` |
+| git commit | 已 push 至 `origin/main`（含本文件更新）。主要節點：`4768e4a`（feat(diarization,cloud)）→ `65d665c`（Stage 05 證據＋文件）→ `a3c2a01`（數字對齊）→ `91bdc09`（ASR 評估）→ `606712a`（ASR 風險評估補完）；完整清單：`git log --oneline -8` |
 
 ---
 
