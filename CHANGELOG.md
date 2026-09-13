@@ -1,6 +1,6 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
-## [Unreleased]
+## [Unreleased] - 2026-09-13
 
 ### 🎯 主題：Apple SpeechAnalyzer 本機 ASR——macOS 26+ / Apple Silicon 唯一引擎（Windows 零影響）
 
@@ -10,7 +10,7 @@ Apple Silicon / 真實 helper）1658.958 秒（約 27.7 分鐘）MP3 的 ASR 轉
 （`elapsed_seconds=9.9`、`real_time_factor=0.006`、`helper_invocations=1`）
 （`e2e/attempt-03`；未於本 repo 量測與 MLX-Whisper 的倍率）。
 Windows / Linux / Docker 行為完全不變，也不會出現任何 Apple 設定、提示或 UI 字樣。
-（版本號於發布時指派；本條目先掛 Unreleased。）
+（2026-09-13 完成；版本號於發布時指派，本條目先掛 Unreleased。）
 
 ### ✨ 新增
 

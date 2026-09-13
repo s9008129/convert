@@ -192,5 +192,5 @@ Xcode / Swift / Apple / helper 字樣。此為自動化測試守衛（見 `tests
 
 - [Apple Speech CLI 建置與驗證手冊](apple-speech-cli-build.md)：Swift 建置、契約、實測記錄
 - [Apple SpeechAnalyzer 移植開發上下文](apple-speech-analyzer-porting-context.md)：設計與地雷
-- [README 快速開始](../README.md)：安裝、環境變數與引擎設定
+- [README 快速開始](../README.md)：安裝與引擎設定
 - `.env.example`：`APPLE_*` 設定範例（僅 macOS 生效）
