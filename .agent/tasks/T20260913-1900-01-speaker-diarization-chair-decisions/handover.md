@@ -25,7 +25,7 @@
 3. 依交接文件 §5「待辦」逐項完成。優先序：Stage 05 獨立驗收（fresh-context 子代理）→ 文件 §9 證據 → 一致性複核 → 收尾 → 最終回報。
 4. 硬性限制（違反即算做錯）：
    - 雲端 LLM 一律用 Ollama Cloud（deepseek-v4.1-flash）；**不要用 Gemini**。
-   - 地端 LM Studio 沒開，不要測地端模型；`LOCAL_LLM_PROVIDER=auto` 解析到 lmstudio 失敗是預期現象，不得當成 bug。
+   - 地端 LM Studio 沒開，不要測地端模型；`LOCAL_LLM_PROVIDER=auto` 解析到 lmstudio 失敗是預期現象，不得當成 bug。語意／錯字校正若要執行，一律用雲端 Ollama Cloud `deepseek-v4.1-flash`，不得用 LM Studio。
    - 不得印出任何 API key；不得 git reset/stash/覆寫使用者的工作；不得 commit 未經確認的無關檔案。
    - diarization 是 fail-soft 加值層：任何失敗都要退回純文字逐字稿、任務照常完成（C4）。
    - 「發言者N」是自動分群編號，不是姓名；文件與紀錄都不得當人名。
@@ -125,7 +125,7 @@
 | 4 | 收尾清理 | 已刪 `data/uploads/minicheck-deadbeef.wav`；確認 `data/outputs/` 無重複殘檔（目前有 `_record.md/.docx` 兩份與 `_3d7f76d3.md/.docx` 相同的副本，可清可留） | 無測試殘檔 |
 | 5 | 最終回報使用者 | primary outcome → 閉環 → 殘留風險（見 §9） | 使用者可據此驗收 |
 | 6 | （可選，需使用者同意） | ① 對「品質補強仍回報『待辦事項遺漏 71 項』」調參或加警告；② 修正 log 誤導訊息（`device_detector` 在 Apple ASR 路徑仍印「使用 MPS 加速」，但 `mps_available=false`）；③ 實作 S3（裁示→quote/time 結構化欄位） | 需先問使用者，不可自行擴張範圍 |
-| 7 | （建議另開新任務）ASR 語意／錯字校正移植 | 使用者另一專案完成校正後，把關鍵修正邏輯移植回本專案（可能落點：ASR 後處理層或提示詞層）；**不屬本 GOAL 範圍** | 移植後以同一支音檔重跑 E2E 回歸，比對標籤／裁示歸屬／輸出檔差異 |
+| 7 | （建議另開新任務）ASR 語意／錯字校正移植 | 使用者另一專案完成校正後，把關鍵修正邏輯移植回本專案（可能落點：ASR 後處理層或提示詞層）；**不屬本 GOAL 範圍**；校正與測試一律用雲端 Ollama Cloud `deepseek-v4.1-flash`，不得用 LM Studio | 移植後以同一支音檔重跑 E2E 回歸，比對標籤／裁示歸屬／輸出檔差異 |
 
 ---
 
@@ -146,6 +146,7 @@
 4. **fail-soft 契約**：diarization 不可用／逾時／ASR 無時間軸 → 逐字稿退回純文字，任務必須照常完成；失敗**不得**寫入標註快取 key。
 5. **參數凍結**：`DIARIZATION_NUM_CLUSTERS=8`、`DIARIZATION_TIMEOUT_SECONDS=900`、`ENABLE_DIARIZATION=true`、fp32 模型優先、`DIARIZATION_MIN_SEGMENT_COVERAGE=0.6`、`DIARIZATION_MERGE_GAP_SECONDS=1.5`。
 6. **additive API 設計**：`cloud_llm_*` 為新增欄位；`gemini_available` 保留（語意改為「目前 provider 金鑰已設定」），舊測試與前端相容。
+7. **語意／錯字校正引擎**（使用者 2026-09-13 明確指示）：若執行 ASR 語意／錯字校正，**一律用雲端 LLM＝Ollama Cloud `deepseek-v4.1-flash`**；**不得用 LM Studio／地端模型**（地端未開，且不再走地端路線）。
 
 ---
 
@@ -205,6 +206,7 @@ curl -s -m 120 -X POST http://localhost:9527/api/upload \
    - 逐字稿有大量同音錯字（例如「編織錶」「雞茶股」）——成因在 ASR 層，不是 diarization/LLM 層；本次語意校正因 LM Studio 未開而熔斷跳過（屬預期 fail-soft）。
    - 風險判定：C1/C3/C4 **低風險**（標籤與時間軸不依賴用字正確）；成品可讀性屬**中風險**（錯字會直接進紀錄）；C2 的 3 個反例屬歸屬邏輯問題，與錯字無因果關係。
    - 建議路徑：ASR 校正留在使用者另一專案獨立處理；移植回本專案後，**用同一支 `0903-科務會議.m4a` 重跑 E2E 當回歸**，比對標籤、裁示歸屬與輸出檔差異。
+   - **校正引擎（使用者明確指示 2026-09-13）**：語意／錯字校正與其測試**一律用雲端 LLM＝Ollama Cloud `deepseek-v4.1-flash`**；**不要用 LM Studio**（地端未開、且使用者要求不再走地端路線）。
 5. **重疊語音**（B1，BEST_EFFORT）：未處理。
 6. **相依性**：`sherpa-onnx` 已進 `requirements.txt`／`pyproject.toml`／`uv.lock`；Docker／Windows 首次使用需執行 `scripts/download_diarization_models.py`（缺模型時 fail-soft）。
 7. **`/tmp` 資源易失**：研究報告與 E2E 證據副本都在 `/tmp`；重開機即消失。重要結論已寫入 repo 文件。
