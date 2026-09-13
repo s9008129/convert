@@ -64,9 +64,9 @@
 | 輸出檔 | `data/outputs/0903-科務會議_3d7f76d3.md`（26,797 B）、`..._3d7f76d3.docx`（49,584 B）、`..._3d7f76d3_attachment.docx`（40,541 B）、`..._3d7f76d3_逐字稿.txt`（38,149 B） |
 | baseline（舊版 Gemini、無標籤） | `data/outputs/0903-科務會議_42fbaee7.md`（10,598 B）＋`..._逐字稿.txt`（0 個「發言者」標籤） |
 | 模型檔 | `models/diarization/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`（28 MB）＋`models/diarization/sherpa-onnx-pyannote-segmentation-3-0/`；`models/` 已被 `.gitignore` 忽略 |
-| git | 本任務變更**尚未 commit**（19 個 modified ＋ 新增檔；見 §10） |
+| git | 本任務變更已 commit＋push（5 個 commit；見下方「git commit」列；`git log --oneline -5` 可驗） |
 | Stage 05 獨立驗收 | **已完成（attempt-01）：總 gate = `ACCEPTED`**（C1 PASS／C2 PARTIAL／C3 PASS／C4 PASS）；證據：`e2e/attempt-01/e2e_report.md`、`result.md` |
-| git commit | `4768e4a`（feat(diarization,cloud)…）已 push 至 `origin/main`；Stage 05 證據與本文件更新為第二個 commit |
+| git commit | 最新 `606712a`（補 ASR 品質風險評估）→ `91bdc09`（ASR 評估）→ `a3c2a01`（數字對齊）→ `65d665c`（Stage 05 證據＋文件）→ `4768e4a`（feat(diarization,cloud)），全部已 push 至 `origin/main` |
 
 ---
 
