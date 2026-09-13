@@ -12,7 +12,7 @@
 
 關鍵分支與錯誤情境：
 - 上傳檔案格式不支援、檔案過大、處理模式錯誤。
-- 雲端模式未配置 Gemini 金鑰。
+- 雲端模式未配置目前的雲端 provider 金鑰。
 - 任務不存在、任務尚未完成、佇列滿載無法收件。
 """
 import os
@@ -37,6 +37,7 @@ from backend.models.schemas import (
     TaskStatus, ProcessingMode, TaskInfo, QueueStatus,
     UploadResponse, HealthStatus
 )
+from backend.core.config import settings
 
 
 # =============================================================================
@@ -385,7 +386,7 @@ class TestUploadEndpoint:
         assert "無效的處理模式" in response.json()["detail"]
     
     def test_upload_cloud_mode_without_gemini_key(self, test_client, mock_services):
-        """Test cloud mode upload when Gemini API key is not configured."""
+        """Test cloud mode upload when the configured cloud provider key is missing."""
         mock_services['file_manager'].validate_file.return_value = (True, "")
         mock_services['file_manager'].validate_file_size = AsyncMock(return_value=(True, "", 1024))
         mock_services['summarization_service'].check_gemini_available.return_value = False
@@ -396,7 +397,12 @@ class TestUploadEndpoint:
         response = test_client.post("/api/upload", files=files, data=data)
         
         assert response.status_code == 400
-        assert "Gemini API Key" in response.json()["detail"]
+        # v4.7.1：錯誤訊息由「目前雲端 provider」決定（預設 Ollama Cloud），
+        # 並明確指出要設定的環境變數名稱。
+        detail = response.json()["detail"]
+        assert settings.cloud_llm_provider_label in detail
+        assert settings.cloud_llm_api_key_env_name in detail
+        assert "API Key" in detail
     
     def test_upload_queue_full(self, test_client, mock_services):
         """Test upload when queue is full."""

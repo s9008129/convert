@@ -156,9 +156,13 @@ def build_asr_cache_signature(
     initial_prompt: Optional[str] = None,
     beam_size: Optional[int] = None,
     vad_enabled: Optional[bool] = None,
+    diarization: Optional[str] = None,
 ) -> str:
     # 除 backend/model/revision 外，納入會改變文字輸出的主要 ASR 選項，
     # 避免切換語言提示或解碼參數時誤用舊逐字稿。
+    # diarization（T20260913-1900-01）：發言者標註同樣會改變逐字稿內容
+    #（加入 [時間] 發言者N： 標籤），必須一併納入簽章，否則停用／調整
+    # diarization 後會誤用舊的無標籤逐字稿快取。
     raw_signature = "::".join(
         str(value) if value is not None else "unset"
         for value in (
@@ -169,6 +173,7 @@ def build_asr_cache_signature(
             initial_prompt or "",
             beam_size if beam_size is not None else "default",
             vad_enabled if vad_enabled is not None else "default",
+            diarization or "diarization:off",
         )
     )
     return hashlib.sha256(raw_signature.encode("utf-8")).hexdigest()[:16]

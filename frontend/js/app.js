@@ -111,6 +111,13 @@ async function initializeApp() {
 }
 
 // ===== 與後端 API 溝通的函式 =====
+// v4.7.1：雲端 LLM 就緒判斷（provider 中立：ollama_cloud / gemini 皆適用）。
+// 後端 /api/health 提供 cloud_llm_available；gemini_available 為相容欄位，
+// 語意已改為「目前雲端 provider 金鑰已設定」，不得在此寫死 provider 名稱。
+function isCloudLlmAvailable(payload) {
+    return Boolean(payload?.cloud_llm_available ?? payload?.gemini_available);
+}
+
 // 讀取後端設定：例如檔案大小上限、允許副檔名、雲端模式可用性
 async function loadConfig() {
     try {
@@ -134,9 +141,12 @@ async function loadConfig() {
         renderTemplateOptions(state.config.meeting_templates || []);
 
 
-        // 檢查雲端模式是否可用
-        if (!state.config.gemini_available) {
+        // 檢查雲端模式是否可用（訊息帶目前 provider 標籤，唯一來源：/api/config）
+        if (!isCloudLlmAvailable(state.config)) {
             if (elements.cloudWarning) {
+                const cloudLabel = state.config.cloud_llm_provider_label || '雲端 LLM';
+                elements.cloudWarning.textContent =
+                    `雲端模式目前無法使用（未設定 ${cloudLabel} API Key）`;
                 elements.cloudWarning.style.display = 'block';
             }
             if (elements.modeCloud) {
@@ -225,7 +235,7 @@ async function checkHealth() {
         
         // 更新雲端模式可用性（機敏模板選取中時，雲端卡維持鎖定）
         if (elements.modeCloud) {
-            if (!data.gemini_available || state.templateLocalOnly) {
+            if (!isCloudLlmAvailable(data) || state.templateLocalOnly) {
                 elements.modeCloud.classList.add('disabled');
             } else {
                 elements.modeCloud.classList.remove('disabled');
@@ -277,10 +287,16 @@ function updateModelInfo() {
     }
 
     if (elements.cloudModelInfo) {
-        const name = state.config?.cloud_llm_model || 'Gemini API';
+        // 顯示名稱＝provider 標籤＋模型（v4.7.1；唯一來源：後端 /api/config）
+        const providerLabel = state.config?.cloud_llm_provider_label;
+        const model = state.config?.cloud_llm_model;
+        const name = providerLabel
+            ? (model ? `${providerLabel}（${model}）` : providerLabel)
+            : (model || '雲端 LLM');
+        const ready = isCloudLlmAvailable(health);
         elements.cloudModelInfo.textContent =
-            `使用模型：${name}（${health.gemini_available ? '已就緒' : '連線失敗'}）`;
-        elements.cloudModelInfo.style.color = health.gemini_available ? '#216E1F' : '#B50909';
+            `使用模型：${name}（${ready ? '已就緒' : '連線失敗'}）`;
+        elements.cloudModelInfo.style.color = ready ? '#216E1F' : '#B50909';
     }
 }
 
@@ -380,9 +396,9 @@ function selectTemplate(templateId) {
         }
         // 依系統實際能力恢復雲端卡（沿用 /api/config 與健康檢查判斷）
         if (elements.modeCloud) {
-            const geminiOk = Boolean(state.config?.gemini_available) &&
-                (!state.health || Boolean(state.health.gemini_available));
-            elements.modeCloud.classList.toggle('disabled', !geminiOk);
+            const cloudOk = isCloudLlmAvailable(state.config) &&
+                (!state.health || isCloudLlmAvailable(state.health));
+            elements.modeCloud.classList.toggle('disabled', !cloudOk);
         }
     }
 }
@@ -1050,7 +1066,10 @@ function selectMode(mode) {
             elements.footerMode.textContent = '本地模式：完全離線，資料不外傳';
             elements.footerMode.className = 'footer-mode local';
         } else {
-            elements.footerMode.textContent = '雲端模式：使用 Gemini API';
+            const providerLabel = state.config?.cloud_llm_provider_label;
+            elements.footerMode.textContent = providerLabel
+                ? `雲端模式：使用 ${providerLabel}`
+                : '雲端模式：使用雲端 LLM';
             elements.footerMode.className = 'footer-mode cloud';
         }
     }

@@ -87,6 +87,38 @@ class Settings(BaseSettings):
                 raise ValueError("GEMINI_API_KEY 格式無效（包含不允許的字符）")
         return v
 
+    @field_validator("CLOUD_LLM_PROVIDER")
+    @classmethod
+    def validate_cloud_llm_provider(cls, value: str) -> str:
+        normalized = (value or "ollama_cloud").strip().lower().replace("-", "_")
+        if normalized in {"ollama", "ollama_cloud", "ollama_cloud_api"}:
+            return "ollama_cloud"
+        if normalized == "gemini":
+            return "gemini"
+        raise ValueError("CLOUD_LLM_PROVIDER 必須是 ollama_cloud 或 gemini")
+
+    @field_validator("OLLAMA_API_KEY", mode="before")
+    @classmethod
+    def normalize_ollama_api_key(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("OLLAMA_API_KEY 必須是字串")
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("OLLAMA_CLOUD_BASE_URL", mode="before")
+    @classmethod
+    def normalize_ollama_cloud_url(cls, value: Optional[str]) -> str:
+        normalized = (value or "").strip().rstrip("/")
+        return normalized or "https://ollama.com/v1"
+
+    @field_validator("OLLAMA_CLOUD_MODEL", mode="before")
+    @classmethod
+    def normalize_ollama_cloud_model(cls, value: Optional[str]) -> str:
+        normalized = (value or "").strip()
+        return normalized or "deepseek-v4.1-flash"
+
     @field_validator("LOCAL_LLM_PROVIDER")
     @classmethod
     def validate_local_llm_provider(cls, value: str) -> str:
@@ -117,6 +149,29 @@ class Settings(BaseSettings):
         description="Gemini API 端點"
     )
     GEMINI_MODEL: str = Field(default="gemini-3.5-flash-lite", description="Gemini 模型名稱")
+
+    # ========================================
+    # 雲端 LLM provider（v4.7.1，T20260913-1900-01）
+    # ========================================
+    # 雲端模式預設改用 Ollama Cloud（OpenAI 相容端點）；Gemini 保留為可選 provider，
+    # 以 CLOUD_LLM_PROVIDER=gemini 切回。所有雲端呼叫一律透過下方的
+    # cloud_llm_* 屬性取值，不得再直接讀 GEMINI_*。
+    CLOUD_LLM_PROVIDER: str = Field(
+        default="ollama_cloud",
+        description="雲端 LLM provider（ollama_cloud/gemini）"
+    )
+    OLLAMA_API_KEY: Optional[str] = Field(
+        default=None,
+        description="Ollama Cloud API 金鑰（CLOUD_LLM_PROVIDER=ollama_cloud 時使用）"
+    )
+    OLLAMA_CLOUD_BASE_URL: str = Field(
+        default="https://ollama.com/v1",
+        description="Ollama Cloud OpenAI 相容端點"
+    )
+    OLLAMA_CLOUD_MODEL: str = Field(
+        default="deepseek-v4.1-flash",
+        description="Ollama Cloud 模型名稱"
+    )
     CLOUD_LLM_CHUNK_TOKENS: int = Field(
         default=3200,
         description="雲端萃取分塊大小（tokens）；沿用地端實證的分塊密度——分段萃取是筆記豐富度的結構保證（v4.3.3）"
@@ -373,6 +428,48 @@ class Settings(BaseSettings):
         default=True,
         description="MP3 等脆弱容器是否先預轉 16k mono WAV（效能關鍵；關閉只影響速度）"
     )
+
+    # ========================================
+    # 說話者分離（diarization；T20260913-1900-01）
+    # ========================================
+    # 定位：加值層（fail-soft）。不可用時主流程與現行版本完全一致，
+    # 只有逐字稿少了發言者標籤，不得讓任何任務失敗。
+    ENABLE_DIARIZATION: bool = Field(
+        default=True,
+        description="是否啟用逐字稿發言者自動分群（說話者分離）；停用或失敗時逐字稿維持純文字"
+    )
+    DIARIZATION_MODEL_DIR: str = Field(
+        default="models/diarization",
+        description="diarization 模型目錄（Docker 內為 /app/models/diarization；由 scripts/download_diarization_models.py 預載）"
+    )
+    DIARIZATION_THRESHOLD: float = Field(
+        default=0.6,
+        description="聚類相似度門檻（僅 num_clusters=-1 時生效）：數值越高越傾向合併為同一發言者；45 分鐘真實會議實測會嚴重碎裂，不建議單獨使用"
+    )
+    DIARIZATION_NUM_CLUSTERS: int = Field(
+        default=8,
+        description="固定發言者數（預設 8）；-1=依 threshold 自動分群。實測（45 分鐘科務會議）k=8 得 8 群、0 個 <5 秒碎群、覆蓋率 86.8%；threshold 自動路線得 51~120 群不可用"
+    )
+    DIARIZATION_MIN_DURATION_ON: float = Field(
+        default=0.3,
+        description="最短有效發言長度（秒）；低於此長度的區段被併入鄰近發言"
+    )
+    DIARIZATION_MIN_DURATION_OFF: float = Field(
+        default=0.5,
+        description="切分發言所需的最短停頓（秒）；越大越傾向把短停頓視為同一段發言"
+    )
+    DIARIZATION_MERGE_GAP_SECONDS: float = Field(
+        default=1.5,
+        description="標註逐字稿時，同一發言者相鄰發言合併的時間間隔上限（秒）"
+    )
+    DIARIZATION_TIMEOUT_SECONDS: float = Field(
+        default=900.0,
+        description="diarization 整體逾時（秒）；超過即回退無標籤流程（45 分鐘音檔實測約 150 秒）"
+    )
+    DIARIZATION_MIN_SEGMENT_COVERAGE: float = Field(
+        default=0.6,
+        description="ASR 片段與單一發言者重疊比例低於此值時，依時間比例拆分該片段（處理一句話內換人說的狀況）"
+    )
     
     # ========================================
     # 系統設定
@@ -411,6 +508,35 @@ class Settings(BaseSettings):
         description="臺灣公務機關會議紀錄系統提示詞（正式公務欄位格式）"
     )
     
+    # ---- 雲端 LLM provider 解析（單一來源；呼叫端不得直接讀 GEMINI_*）----
+    @property
+    def cloud_llm_is_ollama(self) -> bool:
+        return self.CLOUD_LLM_PROVIDER.strip().lower().replace("-", "_") != "gemini"
+
+    @property
+    def cloud_llm_provider_id(self) -> str:
+        return "ollama_cloud" if self.cloud_llm_is_ollama else "gemini"
+
+    @property
+    def cloud_llm_provider_label(self) -> str:
+        return "Ollama Cloud" if self.cloud_llm_is_ollama else "Gemini"
+
+    @property
+    def cloud_llm_api_key_env_name(self) -> str:
+        return "OLLAMA_API_KEY" if self.cloud_llm_is_ollama else "GEMINI_API_KEY"
+
+    @property
+    def cloud_llm_base_url(self) -> str:
+        return self.OLLAMA_CLOUD_BASE_URL if self.cloud_llm_is_ollama else self.GEMINI_BASE_URL
+
+    @property
+    def cloud_llm_model(self) -> str:
+        return self.OLLAMA_CLOUD_MODEL if self.cloud_llm_is_ollama else self.GEMINI_MODEL
+
+    @property
+    def cloud_llm_api_key(self) -> Optional[str]:
+        return self.OLLAMA_API_KEY if self.cloud_llm_is_ollama else self.GEMINI_API_KEY
+
     @property
     def max_file_size_bytes(self) -> int:
         """取得檔案大小上限（bytes）"""

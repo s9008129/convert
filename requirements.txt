@@ -45,6 +45,9 @@ loguru==0.7.2
 ffmpeg-python==0.2.0
 av>=12.0.0
 
+# 說話者分離（diarization；模型置於 models/diarization/，見 scripts/download_diarization_models.py）
+sherpa-onnx>=1.13.8
+
 # CUDA 支援（如果可用）
 # nvidia-cublas-cu12
 # nvidia-cudnn-cu12

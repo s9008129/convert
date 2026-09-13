@@ -174,6 +174,9 @@ async def health_check(quick: bool = False):
         ollama_available=ollama_available,
         lmstudio_available=lmstudio_available,
         gemini_available=gemini_available,
+        cloud_llm_available=gemini_available,
+        cloud_llm_provider=settings.cloud_llm_provider_id,
+        cloud_llm_model=settings.cloud_llm_model,
         queue_status=queue_status,
         device_info=device_info
     )
@@ -237,7 +240,11 @@ async def upload_file(
     if mode == ProcessingMode.CLOUD and not summarization_service.check_gemini_available():
         raise HTTPException(
             status_code=400,
-            detail="未設定 Gemini API Key，無法使用雲端模式。請執行 setup-api-key.ps1 設定 API Key。"
+            detail=(
+                f"未設定 {settings.cloud_llm_provider_label} API Key"
+                f"（{settings.cloud_llm_api_key_env_name}），無法使用雲端模式。"
+                "請設定環境變數（或 .env）後重啟服務。"
+            )
         )
 
     # 儲存檔案
@@ -552,7 +559,10 @@ async def get_config():
         # v4.3.1：前端模式卡顯示實際使用的模型名稱（唯一來源：後端設定/解析結果，
         # 換模型後前端自動同步，不得在前端寫死）
         "local_llm_model": summarization_service.get_effective_local_model(),
-        "cloud_llm_model": settings.GEMINI_MODEL,
+        "cloud_llm_model": settings.cloud_llm_model,
+        # v4.7.1：雲端 provider（ollama_cloud/gemini）——前端文案唯一來源
+        "cloud_llm_provider": settings.cloud_llm_provider_id,
+        "cloud_llm_provider_label": settings.cloud_llm_provider_label,
         # v4.4.0：會議類型模板清單（前端「選擇會議類型」選單唯一資料來源）
         "meeting_templates": template_public_info(),
         "default_meeting_template": GENERAL_TEMPLATE_ID,
@@ -616,5 +626,10 @@ async def check_gemini_health(force_refresh: bool = False):
         "available": health_status,
         "cached": is_cached,
         "timestamp": start_time.isoformat(),
-        "message": "✓ Gemini API 可用" if health_status else "✗ Gemini API 不可用或未配置"
+        "provider": settings.cloud_llm_provider_id,
+        "message": (
+            f"✓ {settings.cloud_llm_provider_label} API 可用"
+            if health_status
+            else f"✗ {settings.cloud_llm_provider_label} API 不可用或未配置"
+        )
     }

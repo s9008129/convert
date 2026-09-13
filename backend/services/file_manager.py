@@ -135,6 +135,18 @@ class FileManagerService:
         return hash_sha256.hexdigest()
 
     def get_asr_cache_signature(self) -> str:
+        return self._build_asr_cache_signature(self._diarization_cache_signature())
+
+    def get_unlabeled_asr_cache_signature(self) -> str:
+        """「無發言者標註」版本的 ASR 快取簽章（fail-soft 專用）。
+
+        當次 diarization 沒有產出（模型缺失／資源不足／音檔問題）時，逐字稿
+        內容等同現行無標註版本；此時只能把它寫進這個 key，否則日後模型恢復
+        後會誤用這份沒有標籤的快取而永遠不再嘗試標註（T20260913-1900-01）。
+        """
+        return self._build_asr_cache_signature("diarization:off")
+
+    def _build_asr_cache_signature(self, diarization: Optional[str]) -> str:
         backend = infer_asr_backend(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         model_name = resolve_asr_model(settings.WHISPER_MODEL, settings.ASR_BACKEND)
         return build_asr_cache_signature(
@@ -148,6 +160,26 @@ class FileManagerService:
             initial_prompt=settings.ASR_INITIAL_PROMPT,
             beam_size=settings.ASR_BEAM_SIZE,
             vad_enabled=settings.ASR_VAD_ENABLED,
+            diarization=diarization,
+        )
+
+    @staticmethod
+    def _diarization_cache_signature() -> str:
+        """發言者標註層的快取簽章（停用或參數變更時必須換 key）。
+
+        只有「開關＋會改變分群/對位結果的參數」進簽章；模型路徑不進
+        （同機同模型；換模型屬版本升級，由部署流程負責清快取）。
+        """
+        if not settings.ENABLE_DIARIZATION:
+            return "diarization:off"
+        return (
+            "diarization:"
+            f"t{settings.DIARIZATION_THRESHOLD}"
+            f"::n{settings.DIARIZATION_NUM_CLUSTERS}"
+            f"::on{settings.DIARIZATION_MIN_DURATION_ON}"
+            f"::off{settings.DIARIZATION_MIN_DURATION_OFF}"
+            f"::gap{settings.DIARIZATION_MERGE_GAP_SECONDS}"
+            f"::cov{settings.DIARIZATION_MIN_SEGMENT_COVERAGE}"
         )
 
     def _build_cache_path(self, file_hash: str, cache_signature: Optional[str] = None) -> str:

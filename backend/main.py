@@ -108,7 +108,9 @@ async def lifespan(app: FastAPI):
     log.info(
         f"  LLM: provider={effective_local_provider}, model={effective_local_model}, "
         f"num_ctx={settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS}, "
-        f"keep_alive={settings.LOCAL_LLM_KEEP_ALIVE}, cloud={settings.GEMINI_MODEL}"
+        f"keep_alive={settings.LOCAL_LLM_KEEP_ALIVE}, "
+        f"cloud_provider={settings.cloud_llm_provider_id}, "
+        f"cloud={settings.cloud_llm_model}"
     )
     log.info(
         f"  語意校正: {'啟用' if settings.ENABLE_TRANSCRIPT_CORRECTION else '停用'}"

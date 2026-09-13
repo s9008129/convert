@@ -28,6 +28,7 @@
 - **4 種會議類型**：一般會議（預設）、科務會議、採購評選會（僅限本地模式）、ISMS月工作會議。
 - **雙格式下載**：Markdown（.md）與 Word（.docx）；部分類型另附附件（如科務會議的列管資料）。
 - **逐字稿可另外下載**：方便核對與存檔。
+- **多人會議發言者標註**：逐字稿可自動標出「發言者1／2／3…」與時間戳，方便核對誰說了什麼（標籤是系統自動分群編號，不是姓名）。
 - **即時進度顯示**：處理到哪一步，畫面都看得到。
 - **排隊處理**：任務會排隊依序處理，畫面顯示排隊件數與順位。
 - **支援常見音訊格式**：MP3、MP4、WAV、M4A、MKV、WebM、FLAC、OGG、AVI、MOV。
@@ -84,10 +85,11 @@ cd apple_speech_cli && swift build -c release
 
 ### 選擇 AI 處理模式
 
-- **雲端模式**（需要網路）：先複製設定檔並填入 Gemini API 金鑰：
+- **雲端模式**（需要網路）：先複製設定檔並填入「目前雲端 provider」的金鑰
+  （預設 Ollama Cloud，需 `OLLAMA_API_KEY`；切回 Gemini 時改填 `GEMINI_API_KEY`）：
   ```bash
   cp .env.example .env
-  # 編輯 .env，填入 GEMINI_API_KEY
+  # 編輯 .env，填入 OLLAMA_API_KEY（使用 Gemini 時改填 GEMINI_API_KEY）
   ```
 - **本地模式**（完全離線）：
   - **Windows／Docker**：安裝 Ollama 後執行 `ollama pull gemma4:31b`。
@@ -111,7 +113,7 @@ cd apple_speech_cli && swift build -c release
 ## ❓ 常見問題
 
 **一定要連網嗎？**
-不一定。本地模式可全程離線；雲端模式才需要網路與 Gemini API 金鑰。Mac 第一次使用內建語音引擎時，系統可能需要先連線下載一次語音資源（僅此一次，之後即可離線使用）。
+不一定。本地模式可全程離線；雲端模式才需要網路，以及目前雲端 provider 的金鑰（預設 Ollama Cloud，需 `OLLAMA_API_KEY`）。Mac 第一次使用內建語音引擎時，系統可能需要先連線下載一次語音資源（僅此一次，之後即可離線使用）。
 
 **Mac 為什麼要先建置一個小工具？**
 Mac 版使用 macOS 內建的 Apple 語音引擎，需要一個小工具負責呼叫。這是「一次性」步驟，完成後就不用再處理。
@@ -132,6 +134,7 @@ MP3、MP4、WAV、M4A、MKV、WebM、FLAC、OGG、AVI、MOV。
 - [Apple 語音引擎操作手冊](doc/apple-speech-analyzer-operations.md) — Mac 使用者與管理員參考
 - [uv 管理說明](doc/操作手冊/uv管理說明.md) — 安裝與管理 Python 環境的白話說明
 - [系統架構與程式設計書](doc/規格與設計/系統架構與程式設計書.md) — 給工程與維護人員
+- [發言者分離與主席裁示設計文件](doc/規格與設計/發言者分離與主席裁示-研究與設計.md) — 發言者標註與主席裁示歸屬的設計、實測數據與驗收方式
 - 版本更新紀錄都在 [CHANGELOG.md](CHANGELOG.md)
 
 ## 📧 聯絡方式

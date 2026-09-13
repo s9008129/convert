@@ -1,6 +1,6 @@
 """
 LLM 摘要服務
-支援本地模式（Ollama/LM Studio）和雲端模式（Gemini API）
+支援本地模式（Ollama/LM Studio）和雲端模式（Ollama Cloud／Gemini API）
 
 v3.5.0 改進：
 - 支援平台自動偵測和配置（macOS 使用 LM Studio，Windows 使用 Ollama）
@@ -95,7 +95,7 @@ class _LoadedLMStudioInstance:
 class SummarizationService:
     """
     LLM 摘要生成服務
-    支援本地模式（Ollama/LM Studio）和雲端模式（Gemini API）
+    支援本地模式（Ollama/LM Studio）和雲端模式（Ollama Cloud／Gemini API）
     """
 
     LOCAL_EXTRACTION_PROMPT = """你是會議逐字稿資訊萃取助理。你的任務只有一個：盡量完整抽取事實，不要直接寫成最終會議記錄。
@@ -277,31 +277,38 @@ class SummarizationService:
         return self._lmstudio_client
 
     def _get_gemini_api_key(self) -> str:
-        """安全地取得 Gemini API Key"""
-        api_key = settings.GEMINI_API_KEY
+        """安全地取得目前雲端 provider 的 API Key。
+
+        方法名保留為向後相容 alias（v4.7.1 起雲端 provider 可為 Ollama Cloud
+        或 Gemini）；實際來源一律由 settings.cloud_llm_* 決定。
+        """
+        api_key = settings.cloud_llm_api_key
         if not api_key:
-            raise ValueError("未設定 GEMINI_API_KEY 環境變數")
+            raise ValueError(
+                f"未設定 {settings.cloud_llm_api_key_env_name} 環境變數"
+                f"（雲端 provider={settings.cloud_llm_provider_label}）"
+            )
         return api_key
 
     def _get_gemini_client(self) -> OpenAI:
-        """取得 Gemini API 客戶端（OpenAI 相容介面）"""
+        """取得雲端 LLM 客戶端（OpenAI 相容介面；provider 由 settings 決定）"""
         if not self._gemini_client:
             api_key = self._get_gemini_api_key()
             self._gemini_client = OpenAI(
                 api_key=api_key,
-                base_url=settings.GEMINI_BASE_URL,
+                base_url=settings.cloud_llm_base_url,
                 timeout=settings.CLOUD_LLM_REQUEST_TIMEOUT,
                 max_retries=settings.CLOUD_LLM_MAX_RETRIES,
             )
         return self._gemini_client
 
     def _get_gemini_async_client(self) -> AsyncOpenAI:
-        """取得 Gemini API 異步客戶端（OpenAI 相容介面）"""
+        """取得雲端 LLM 異步客戶端（OpenAI 相容介面；provider 由 settings 決定）"""
         if not self._gemini_async_client:
             api_key = self._get_gemini_api_key()
             self._gemini_async_client = AsyncOpenAI(
                 api_key=api_key,
-                base_url=settings.GEMINI_BASE_URL,
+                base_url=settings.cloud_llm_base_url,
                 timeout=settings.CLOUD_LLM_REQUEST_TIMEOUT,
                 max_retries=settings.CLOUD_LLM_MAX_RETRIES,
             )
@@ -2535,7 +2542,10 @@ class SummarizationService:
                 94.0,
                 f"補強雲端摘要品質（第 {attempts} 輪）...",
             )
-            log.info(f"Gemini 摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
+            log.info(
+                f"{settings.cloud_llm_provider_label} 摘要品質補強"
+                f"（第 {attempts} 輪），問題：{'; '.join(issues)}"
+            )
             summary = self._finalize_record_text(
                 self._clean_ollama_output(
                     await self._gemini_chat(
@@ -2549,7 +2559,9 @@ class SummarizationService:
             issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
 
         if issues:
-            log.warning(f"Gemini 摘要仍有待補強問題: {'; '.join(issues)}")
+            log.warning(
+                f"{settings.cloud_llm_provider_label} 摘要仍有待補強問題: {'; '.join(issues)}"
+            )
 
         return summary
 
@@ -2578,19 +2590,24 @@ class SummarizationService:
                 httpx.RemoteProtocolError,
             ) as exc:
                 if attempt >= retries:
-                    log.exception(f"Gemini 摘要生成失敗: {describe_exception(exc)}")
+                    log.exception(
+                        f"{settings.cloud_llm_provider_label} 摘要生成失敗: {describe_exception(exc)}"
+                    )
                     raise
                 wait_seconds = (attempt + 1) * settings.LOCAL_LLM_RETRY_BACKOFF_SECONDS
                 log.warning(
-                    f"Gemini 請求瞬時失敗（第 {attempt + 1}/{retries + 1} 次）："
+                    f"{settings.cloud_llm_provider_label} 請求瞬時失敗"
+                    f"（第 {attempt + 1}/{retries + 1} 次）："
                     f"{describe_exception(exc)}，{wait_seconds:.0f} 秒後重試"
                 )
                 await asyncio.sleep(wait_seconds)
             except Exception as e:
-                log.exception(f"Gemini 摘要生成失敗: {describe_exception(e)}")
+                log.exception(
+                    f"{settings.cloud_llm_provider_label} 摘要生成失敗: {describe_exception(e)}"
+                )
                 raise
 
-        raise RuntimeError("Gemini 請求重試邏輯異常（不應執行到此）")
+        raise RuntimeError("雲端請求重試邏輯異常（不應執行到此）")
 
     async def _gemini_chat_once(
         self,
@@ -2599,16 +2616,22 @@ class SummarizationService:
         temperature: float,
         progress_callback: Optional[callable],
     ) -> str:
-        """單次 Gemini 流式請求（由 _gemini_chat 負責重試與錯誤記錄）。"""
+        """單次雲端流式請求（由 _gemini_chat 負責重試與錯誤記錄）。"""
         client = self._get_gemini_async_client()
+        model_name = settings.cloud_llm_model
+        provider_label = settings.cloud_llm_provider_label
 
         # 使用異步流式響應以獲得實時進度更新
         summary_parts = []
+        # 推理模型（Ollama Cloud deepseek-v4.1-flash 等）會把思考過程放在
+        # content 以外的 reasoning/reasoning_content 欄位；只讀 content 時
+        # 必須能分辨「真的空回應」與「只有 reasoning」，否則錯誤訊息會誤導。
+        reasoning_chars = 0
         chunk_count = 0
 
         # 創建異步流式請求
         async with await client.chat.completions.create(
-            model=settings.GEMINI_MODEL,
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -2617,8 +2640,11 @@ class SummarizationService:
             stream=True  # 啟用流式響應
         ) as response:
             async for chunk in response:
-                if chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
                     summary_parts.append(content)
                     chunk_count += 1
 
@@ -2628,16 +2654,33 @@ class SummarizationService:
                     if progress_callback and chunk_count % 5 == 0:
                         progress = 86.0 + min(chunk_count / 10, 8.0)
                         progress_callback(progress, "雲端回應接收中...")
+                else:
+                    reasoning = getattr(delta, "reasoning", None) or getattr(
+                        delta, "reasoning_content", None
+                    )
+                    if reasoning:
+                        reasoning_chars += len(reasoning)
 
         summary = "".join(summary_parts)
 
         # 檢查摘要是否為空
         if not summary or not summary.strip():
-            log.warning("Gemini 摘要生成結果為空")
+            if reasoning_chars:
+                log.warning(
+                    f"{provider_label} 回應只有 reasoning（{reasoning_chars} 字）沒有正文，"
+                    f"模型={model_name}"
+                )
+                raise RuntimeError(
+                    f"摘要生成失敗：{provider_label} 模型 {model_name} 只回傳 reasoning 沒有正文"
+                    "（推理預算用盡；請調整模型或輸出上限後重試）"
+                )
+            log.warning(f"{provider_label} 摘要生成結果為空")
             raise RuntimeError("摘要生成失敗：結果為空")
 
         summary = self._clean_ollama_output(summary)
-        log.info(f"Gemini 摘要生成成功，模型: {settings.GEMINI_MODEL}，接收 {chunk_count} 個 chunks")
+        log.info(
+            f"{provider_label} 摘要生成成功，模型: {model_name}，接收 {chunk_count} 個 chunks"
+        )
         return summary
 
     async def check_ollama_health(self) -> bool:
@@ -2901,7 +2944,7 @@ class SummarizationService:
         return snapshot
 
     def check_gemini_available(self) -> bool:
-        """檢查 Gemini API 是否已配置"""
+        """檢查目前雲端 provider 的 API 是否已配置（方法名為相容 alias）"""
         try:
             self._get_gemini_api_key()
             return True
@@ -2931,11 +2974,14 @@ class SummarizationService:
         if not force_refresh and cache["last_check_time"]:
             age_seconds = (now - cache["last_check_time"]).total_seconds()
             if age_seconds < cache["ttl_seconds"] and cache["status"] is not None:
-                log.debug(f"使用快取 Gemini 健康檢查結果（緩存年齡: {age_seconds:.0f}秒）")
+                log.debug(
+                    f"使用快取 {settings.cloud_llm_provider_label} 健康檢查結果"
+                    f"（緩存年齡: {age_seconds:.0f}秒）"
+                )
                 return cache["status"]
 
         # 執行實際的 API 檢查
-        log.info("執行 Gemini API 健康檢查...")
+        log.info(f"執行 {settings.cloud_llm_provider_label} API 健康檢查...")
         try:
             if not self.check_gemini_available():
                 cache["status"] = False
@@ -2946,16 +2992,24 @@ class SummarizationService:
             client = self._get_gemini_client()
             response = client.models.list()
 
-            # 驗證是否能取得模型列表
-            result = len(list(response.models)) > 0
+            # OpenAI SDK 的 SyncPage 本身即為可迭代物件；舊寫法 response.models
+            # 在此 SDK 版本會 AttributeError，害健康檢查永遠回 false（v4.7.1 修）。
+            # 注意：Ollama Cloud 的 /v1/models 是公開端點，200 只證明端點可達，
+            # 不代表金鑰有效（金鑰錯誤的 401 只會在第一次 chat 呼叫時出現）。
+            result = len(list(response)) > 0
 
             cache["status"] = result
             cache["last_check_time"] = now
-            log.info(f"Gemini 健康檢查完成：{'✓ 可用' if result else '✗ 不可用'}")
+            log.info(
+                f"{settings.cloud_llm_provider_label} 健康檢查完成："
+                f"{'✓ 可用' if result else '✗ 不可用'}"
+            )
             return result
 
         except Exception as e:
-            log.warning(f"Gemini 健康檢查失敗: {describe_exception(e)}")
+            log.warning(
+                f"{settings.cloud_llm_provider_label} 健康檢查失敗: {describe_exception(e)}"
+            )
             cache["status"] = False
             cache["last_check_time"] = now
             return False
@@ -2970,7 +3024,7 @@ class SummarizationService:
             "status": None,
             "ttl_seconds": 86400
         }
-        log.info("已重置 Gemini 健康檢查快取")
+        log.info("已重置雲端健康檢查快取")
 
     async def _load_model_and_check_offload(
         self, client: httpx.AsyncClient, model: str, context_tokens: int

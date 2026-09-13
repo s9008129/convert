@@ -28,6 +28,8 @@ from backend.services.file_manager import file_manager
 from backend.services.queue_manager import task_queue
 from backend.services.device_detector import device_detector
 from backend.api.websocket import connection_manager
+from backend.services.diarization import DiarizationTurn, diarization_service
+from backend.services.speaker_transcript import AsrPiece, build_speaker_labeled_transcript
 
 
 SUMMARY_FAILED_BANNER = (
@@ -145,8 +147,90 @@ class TaskProcessor:
         if not transcript or not transcript.strip():
             raise RuntimeError("轉錄結果為空")
 
-        file_manager.save_transcript_cache(file_hash, transcript, cache_signature)
+        # 步驟 1.4：發言者標註（說話者分離；T20260913-1900-01）
+        # 加值層、fail-soft：任何失敗都回 None，逐字稿維持純文字（既有行為）。
+        labeled_transcript = await self._label_speakers(task, file_path, transcription_result)
+        if labeled_transcript:
+            transcript = labeled_transcript
+            cache_signature_to_save = cache_signature
+        else:
+            # fail-soft 契約（SI-D1）：這次沒標註成功時，只把逐字稿寫進
+            # 「無標註」的 key；否則模型／資源恢復後會命中這份沒有標籤的
+            # 快取，永遠不再嘗試說話者分離。
+            cache_signature_to_save = file_manager.get_unlabeled_asr_cache_signature()
+
+        file_manager.save_transcript_cache(file_hash, transcript, cache_signature_to_save)
         return transcript
+
+    async def _label_speakers(self, task: TaskInfo, file_path: str, transcription_result) -> Optional[str]:
+        """以說話者分離結果標註逐字稿的發言者（失敗一律回 None，不影響任務）。
+
+        需要兩個前提：ASR 有**可用的** segment 時間戳、diarization 可用。
+        任一缺少即維持現行純文字逐字稿——這是 diarization 的 fail-soft 契約
+        （SI-D1）。
+        """
+        try:
+            chunks = list(getattr(transcription_result, "chunks", None) or [])
+            if not chunks:
+                log.info("ASR 未提供 segment 時間戳，略過發言者標註")
+                return None
+
+            # 時間軸守門（必須在 diarization 之前）：ASR（尤其 Apple）允許
+            # start/end 為 null 的降級片段，這些片段在 transcription.py 會被
+            # 填成 0.0。若整體時間軸不可用，對位出來的標籤會全部錯誤（比沒有
+            # 標籤更糟），此時直接退回純文字，連 diarization 都不必跑。
+            pieces = [
+                (
+                    float(getattr(chunk, "start", 0.0) or 0.0),
+                    float(getattr(chunk, "end", 0.0) or 0.0),
+                    chunk.text,
+                )
+                for chunk in chunks
+            ]
+            usable = [piece for piece in pieces if piece[1] > piece[0]]
+            if len(usable) < max(1, len(pieces) // 2):
+                log.warning(
+                    "ASR 時間軸不可用（僅 {}/{} 段有有效時間區間），略過發言者標註以維持逐字稿正確性",
+                    len(usable),
+                    len(pieces),
+                )
+                return None
+
+            await self._update_progress(
+                task.task_id, 58.0, "分析發言者（語音分群）...", TaskStatus.TRANSCRIBING
+            )
+            result = await diarization_service.diarize_async(file_path)
+            if not result or not result.turns:
+                return None
+
+            segments = [
+                AsrPiece(start=start, end=end, text=text) for start, end, text in usable
+            ]
+            turns = [
+                DiarizationTurn(start=turn.start, end=turn.end, speaker=turn.speaker)
+                for turn in result.turns
+            ]
+            labeled = build_speaker_labeled_transcript(
+                segments,
+                turns,
+                merge_gap=settings.DIARIZATION_MERGE_GAP_SECONDS,
+                min_segment_coverage=settings.DIARIZATION_MIN_SEGMENT_COVERAGE,
+            )
+            if not labeled:
+                log.info("發言者對位沒有產生任何發言段落，逐字稿維持純文字")
+                return None
+
+            log.info(
+                "發言者標註完成：{} 位發言者、{} 段發言（diarization {} 段、threshold={}）",
+                labeled.speaker_count,
+                len(labeled.utterances),
+                len(result.turns),
+                settings.DIARIZATION_THRESHOLD,
+            )
+            return labeled.text
+        except Exception as exc:  # noqa: BLE001 — 標註失敗永不影響任務
+            log.warning(f"發言者標註失敗（不影響任務）：{describe_exception(exc)}")
+            return None
 
     async def _apply_semantic_correction(self, task: TaskInfo, transcript: str) -> tuple[str, Optional[CorrectionReport]]:
         """語意校正層：確定性清理（P1-2）＋ 選擇性 LLM 校正與同音閘門（P1-3/P1-4）。
@@ -322,7 +406,7 @@ class TaskProcessor:
         mode_label = (
             f"本地 ({local_provider_label})"
             if task.processing_mode == ProcessingMode.LOCAL
-            else "雲端 (Gemini)"
+            else f"雲端 ({settings.cloud_llm_provider_label})"
         )
 
         log.info(

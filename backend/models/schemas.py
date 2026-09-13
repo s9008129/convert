@@ -109,6 +109,11 @@ class HealthStatus(BaseModel):
     ollama_available: bool
     lmstudio_available: bool = False
     gemini_available: bool
+    # v4.7.1：雲端 provider 觀測（additive；gemini_available 保留為相容欄位，
+    # 語意＝「目前雲端 provider 的 API Key 已設定」）。
+    cloud_llm_available: Optional[bool] = None
+    cloud_llm_provider: Optional[str] = None
+    cloud_llm_model: Optional[str] = None
     queue_status: QueueStatus
     device_info: dict = Field(default_factory=dict)
     # RC-5 runtime provenance：nullable build revision（additive 向後相容欄位）。
