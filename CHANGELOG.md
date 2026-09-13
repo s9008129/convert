@@ -54,8 +54,8 @@ fallback**，唯一 ASR 引擎是 Apple 內建的 Apple SpeechAnalyzer。
 - Mac 不再有 Whisper 依賴、本機 Whisper 模型，也沒有「先 Apple 再 Whisper」路徑。
 - **相依移除**：`pyproject.toml` / `requirements.txt` 的 macOS Whisper 平台相依
   （`mlx-whisper==0.4.3 ; Darwin/arm64`）已移除，`uv.lock` 同步收斂
-  （一併移除 `mlx`／`mlx-metal`／`numba`／`llvmpipe`／`scipy`／`tiktoken` 等僅服務
-  MLX-Whisper 的傳遞相依）；`tests/test_apple_packaging_guard.py` 的守衛契約同步反轉為
+  （一併移除 `mlx`／`mlx-metal`／`llvmlite`／`numba`／`scipy`／`tiktoken`／`more-itertools`
+  等僅服務 MLX-Whisper 的傳遞相依）；`tests/test_apple_packaging_guard.py` 的守衛契約同步反轉為
   「本專案不得再有 MLX 相依」。Mac 端 `uv sync` 不會再安裝任何 Whisper runtime。
 - Windows / Linux 完全不變：Whisper 引擎與 `auto` 解析行為與先前一致，`apple` 仍被拒絕
   （其相依本來就不含 MLX 平台套件）。

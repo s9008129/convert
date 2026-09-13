@@ -2,7 +2,7 @@
 
 > 適用範圍：本專案所有 AI 輔助開發與維護工作  
 > 文件版本：v4.0  
-> 更新日期：2026-02-28
+> 更新日期：2026-09-13
 
 ---
 
@@ -27,9 +27,9 @@
 ## 2. 環境規範
 
 - 語言與框架：Python + FastAPI（後端）、Vanilla JavaScript（前端）。  
-- 主要服務：Whisper / Breeze-ASR-25 轉錄、Ollama / LM Studio（本地 LLM）、Gemini API（雲端）。  
-- 依賴安裝：以 `requirements.txt` 為準。  
-- **MUST 使用 conda 環境**（`conda activate meetingscribe`）進行安裝與執行。  
+- 主要服務：語音轉錄（macOS 26+ / Apple Silicon：**Apple SpeechAnalyzer 唯一引擎**、fail-closed 不 fallback；Windows/Linux：Breeze-ASR-26 transformers／faster-whisper）、Ollama / LM Studio（本地 LLM）、Gemini API（雲端）。  
+- 依賴與環境管理：以 `uv`（`pyproject.toml` / `uv.lock`）為準；Docker 映像建置使用 `requirements.txt`。  
+- **MUST 使用 uv 管理 Python 環境**（`uv sync`、`uv run …`）；不要再建立或啟用 conda 環境。  
 - 預設服務入口：`http://localhost:9527`。  
 - **MUST 使用台北時間（Asia/Taipei, UTC+8）** 作為所有時間戳記、日誌檔案命名、commit 訊息的時區標準。
 
@@ -52,7 +52,7 @@
 
 ## 3. SDD 開發法（Specification-Driven Development）
 
-1. **Spec First**：先更新 `doc/spec.md` 的 User Story / FR / SC，再改碼。  
+1. **Spec First**：先更新 `doc/規格與設計/spec.md` 的 User Story / FR / SC，再改碼。  
 2. **Contract Aware**：API 行為變更必須同步更新端點文件與錯誤語意。  
 3. **Test Traceable**：每個需求至少對應一個可執行測試（單元/整合/E2E 其一）。  
 4. **Doc Sync**：功能、設定、流程一旦變更，README/指南/變更紀錄同步更新。  
@@ -62,7 +62,7 @@
 
 | 文件 | 可執行性 | 說明 |
 |------|---------|------|
-| `doc/spec.md` | ✅ 可驗證 | 驗收標準可直接轉換為測試案例 |
+| `doc/規格與設計/spec.md` | ✅ 可驗證 | 驗收標準可直接轉換為測試案例 |
 | `CHANGELOG.md` | ✅ 可追蹤 | 版本變更可審計 |
 | `README.md` | ✅ 可執行 | 啟動步驟可直接複製執行 |
 
@@ -108,11 +108,14 @@
 ### 測試執行原則
 - 先跑基線測試，了解現況，再做修改。  
 - 修改後至少重跑受影響模組測試。  
-- 若因環境缺依賴導致失敗，需在回報中清楚註記（例如 `aiofiles`、`mlx_whisper` 缺失）。
+- 若因環境缺依賴導致失敗，需在回報中清楚註記（例如 `aiofiles` 缺失、或 macOS 缺 Swift 工具鏈／未建置 Apple helper）。
 
 ### 穩定測試指令
 ```bash
-python -m pytest tests/ --ignore=tests/test_mlx_direct.py -v
+uv run pytest tests/ -q
+
+# macOS 真機可另跑 Apple 專屬聚焦測試：
+uv run pytest tests/test_apple_dispatcher.py tests/test_apple_chain_integration.py -q
 ```
 
 ### 覆蓋率建議
@@ -123,7 +126,7 @@ python -m pytest tests/ --ignore=tests/test_mlx_direct.py -v
 
 ## 7. CI/CD 與部署
 
-- 現有 `.github/workflows/build-windows.yml` 為停用狀態（`if: false`），不可假設有完整 CI 保護。  
+- 本 repo 目前沒有 CI workflows（`.github/workflows/` 不存在），不可假設有完整 CI 保護。  
 - 部署前必做：
   1. `scripts/verify_env.py` 確認依賴與目錄。  
   2. 關鍵 API 健康檢查（`/api/health`）。  
@@ -188,10 +191,10 @@ python -m pytest tests/ --ignore=tests/test_mlx_direct.py -v
 
 每次需求變更都要檢查下列文件是否需同步：
 
-- `doc/spec.md`（需求與驗收標準）  
+- `doc/規格與設計/spec.md`（需求與驗收標準）  
 - `README.md`（使用方式、模式說明）  
 - `CHANGELOG.md`（版本變更）  
-- `doc/使用者手冊.md`（操作指南）
+- `doc/操作手冊/使用者手冊.md`（操作指南）
 
 **規則**：若程式與文件衝突，以「修正文件到真實行為」或「修正程式達到文件規格」二擇一，禁止長期不一致。
 
@@ -244,7 +247,7 @@ python -m pytest tests/ --ignore=tests/test_mlx_direct.py -v
 
 ## 附：執行準則（快速版）
 
-1. 先讀 `doc/spec.md` 再改碼。  
+1. 先讀 `doc/規格與設計/spec.md` 再改碼。  
 2. 只做最小必要變更。  
 3. 所有變更可追溯到需求與測試。  
 4. 測試失敗要說清楚是程式問題還環境問題。  

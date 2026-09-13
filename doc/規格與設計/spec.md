@@ -2,7 +2,7 @@
 
 **版本**：v4.0  
 **建立日期**：2026-02-14  
-**更新日期**：2026-02-28  
+**更新日期**：2026-09-13（新增 macOS Apple-only ASR 契約 FR-018；T20260912-2242-01）  
 **適用範圍**：`/Users/hsiaojohnny/dev/convert`
 
 ---
@@ -10,7 +10,7 @@
 ## 1. 專案定位與核心功能
 
 政府智慧會議紀錄生成系統 是一套將會議音訊/視訊檔案轉換為結構化會議紀錄（Markdown）的系統，目標是縮短人工整理逐字稿與會議結論的時間成本，並提供可部署於本地或雲端推理模式的彈性。  
-系統核心由 FastAPI 後端、Vanilla JS 前端、Whisper 轉錄引擎、LLM 摘要引擎、FIFO 任務佇列與 WebSocket 即時進度通知構成。  
+系統核心由 FastAPI 後端、Vanilla JS 前端、語音辨識引擎（macOS 26+／Apple Silicon：Apple SpeechAnalyzer 唯一引擎；Windows/Linux：Whisper 系列 `transformers`／`faster-whisper`）、LLM 摘要引擎、FIFO 任務佇列與 WebSocket 即時進度通知構成。  
 它解決的本質問題是：在資源有限（GPU/CPU）、檔案量不穩定、語音品質不一的真實情境下，如何穩定、可觀測地交付可用會議摘要。
 
 ---
@@ -143,6 +143,7 @@
 - **FR-015**: 系統 MUST 透過請求超時中介層避免長請求阻塞整體服務。  
 - **FR-016**: 系統 MUST 對 uploads/outputs/cache 提供保留天數清理機制。  
 - **FR-017**: 系統 MUST 產出結構化日誌（含一般、錯誤、JSON logs）。
+- **FR-018**: 在 macOS（darwin + arm64）上，系統 MUST 以 Apple SpeechAnalyzer 作為唯一 ASR 引擎（`ASR_BACKEND=auto` 或 `apple`），顯式 Whisper 後端值（`transformers`／`faster_whisper`／`mlx_whisper`）MUST 以穩定錯誤拒絕；任何 Apple 失敗（含取消、逾時、輸出無效）MUST fail-closed、不得 fallback。非 macOS 平台 MUST 維持既有 Whisper 解析路徑且永遠不解析到 `apple`（來源：Owner 指示 2026-09-13、T20260912-2242-01）。  
 
 ---
 

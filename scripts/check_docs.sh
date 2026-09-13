@@ -124,7 +124,8 @@ echo -e "${BLUE}【檢查 3】文件結構完整性${NC}"
 echo "─────────────────────────────────────────"
 
 # 檢查必要目錄
-REQUIRED_DIRS=("doc/操作手冊" "doc/計畫與報告" "doc/規格與設計" "doc/research" "doc/歷史封存")
+# 依 doc/README.md 的維護規則：實際只有「操作手冊」「規格與設計」兩個分類子資料夾
+REQUIRED_DIRS=("doc/操作手冊" "doc/規格與設計")
 for dir in "${REQUIRED_DIRS[@]}"; do
     if [ -d "$dir" ]; then
         echo -e "  ${GREEN}✅ ${dir}/ 存在${NC}"
@@ -135,7 +136,8 @@ for dir in "${REQUIRED_DIRS[@]}"; do
 done
 
 # 檢查必要文件
-REQUIRED_FILES=("README.md" "CHANGELOG.md" "VERSION" "doc/README.md" ".github/INSTRUCTIONS.md")
+# 注意大小寫：實際檔名為 .github/instructions.md（Linux 等大小寫敏感檔案系統會區分）
+REQUIRED_FILES=("README.md" "CHANGELOG.md" "VERSION" "doc/README.md" ".github/instructions.md")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ -f "$file" ]; then
         echo -e "  ${GREEN}✅ ${file} 存在${NC}"

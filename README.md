@@ -1,6 +1,6 @@
 # 政府智慧會議紀錄生成系統
 
-[![Version](https://img.shields.io/badge/version-4.7.1-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.7.2-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/操作手冊/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 
@@ -12,9 +12,13 @@
 > 非技術使用者操作說明請見 [使用者手冊](doc/操作手冊/使用者手冊.md)；
 > 正式環境的更新部署步驟請見 [部署更新手冊](doc/操作手冊/部署更新手冊_v4.1.md)。
 
-## 🆕 最新版本：v4.7.1（2026-08-20）
+## 🆕 最新版本：v4.7.2（2026-08-20）
 
-**地端「空白會議紀錄」根因徹底根治——已於正式機真實模型（gemma4:31b／RTX 4090）驗證通過。**
+**v4.7.2：修復地端公文段落編號階層不符標準**——地端弱模型（gemma4:31b）過去跳過中文數字層、
+直接用阿拉伯數字條列各欄位；根因是共用提示詞未明講「一、→（一）→1、→（1）」階層與不可跳層規則，
+補上規則後地端與雲端產出一致。詳見 [CHANGELOG](CHANGELOG.md#v472---2026-08-20)。
+
+**同場：地端「空白會議紀錄」根因徹底根治——已於正式機真實模型（gemma4:31b／RTX 4090）驗證通過。**
 
 2026-08 陸續發生的地端排程任務「空白會議紀錄」問題，經三輪根因分析全數解決：
 
@@ -28,9 +32,11 @@
   `num_predict` 從源頭降低撞牆機率。已在正式機以真實長會議錄音完整驗證：
   截斷正確被接受、任務正常完成、產出結構完整的會議紀錄。
 
-> 完整變更內容 → 詳見 [CHANGELOG.md](CHANGELOG.md#v471---2026-08-20)。
+> 完整變更內容 → 詳見 [CHANGELOG.md](CHANGELOG.md#v472---2026-08-20)。
 > 根因全貌與研究過程：[v4.7.0](CHANGELOG.md#v470---2026-08-19)、
 > [v4.6.2](CHANGELOG.md#v462---2026-08-19)。
+> 🍎 **Unreleased（尚未指派版本號）**：macOS ASR 收斂為唯一 Apple SpeechAnalyzer
+> （移除 Whisper 選項與 fallback、相依淨空），詳見 [CHANGELOG](CHANGELOG.md) 最上方條目。
 
 ---
 
@@ -48,11 +54,11 @@
 - 機敏類型強制**僅限本地模式**：前端自動鎖定＋後端 400 雙重防護
 
 ### 🎯 雙模式部署
-- **本地模式**：完整離線，資料不外傳，使用 Ollama（預設）／LM Studio + faster-whisper/transformers
+- **本地模式**：完整離線，資料不外傳，使用 Ollama（預設）／LM Studio＋本機 ASR（macOS 26+：Apple SpeechAnalyzer；Windows/Linux：faster-whisper／transformers）
 - **雲端模式**：使用 Gemini API（分段併發萃取＋雙輸入生成，長會議紀錄豐富度與本地相當）
 
 ### 🚀 性能優化
-- **GPU 加速**：支援 Apple MPS、NVIDIA CUDA
+- **GPU 加速**：macOS ASR 走 Apple 神經引擎（SpeechAnalyzer，不佔用 MLX/MPS）；Windows/Linux 支援 NVIDIA CUDA
 - **智能降級**：GPU 不可用時自動切換至 CPU
 - **並行處理**：任務排隊系統，支援批次上傳
 - **零 rebuild 部署**：Docker 以 volume 掛載程式碼，改程式或提示詞只需 `restart`
@@ -116,10 +122,10 @@
 ### 系統需求
 
 #### macOS
-- **OS**: macOS 12.0+ (Apple Silicon 優先)
+- **OS**: **macOS 26.0+（Apple Silicon）**——ASR 唯一引擎是系統內建的 Apple SpeechAnalyzer；macOS < 26 或 Intel Mac 上服務可啟動，但轉錄必然失敗（fail-closed，Mac 已無 Whisper 備援引擎）
 - **RAM**: 16GB+ (本地模式需要)
-- **Storage**: 20GB (模型 + 資料)
-- **GPU**: Apple MPS (自動)
+- **Storage**: 20GB（本地 LLM 模型 + 資料；ASR 走系統內建模型，不需下載 Whisper 模型）
+- **GPU**: Apple 神經引擎（ASR，macOS 26+ 需另建 helper）／Metal（本地 LLM 由 LM Studio、Ollama 使用）
 
 > 🍎 **macOS 26+ / Apple Silicon 的 ASR：Apple SpeechAnalyzer（唯一引擎）**
 > Mac 上 `ASR_BACKEND=auto`（預設值）與 `ASR_BACKEND=apple` 都只使用 macOS 內建
@@ -383,7 +389,7 @@ PASS/FAIL 與各項檢查）；完整 E2E 另含 `transcript.txt`、
 
 ### 轉錄速度
 - **Apple SpeechAnalyzer（macOS 26+，唯一引擎）**: 本機實測（macOS 26 Apple Silicon、真實 helper）1658.958 秒（約 27.7 分鐘）MP3 的 ASR 轉錄 9.9 秒（`elapsed_seconds=9.9`）、`real_time_factor=0.006`、`helper_invocations=1`（`.agent/tasks/T20260912-2242-01-apple-speech-analyzer-asr/e2e/attempt-03/`；依硬體與 Asset 狀態而異；未於本 repo 量測與 MLX-Whisper 的倍率）
-- **Apple MPS**: 1 分鐘音頻 ≈ 6-10 秒
+- **Apple MPS（歷史值）**: 1 分鐘音頻 ≈ 6-10 秒——此為舊 MLX-Whisper 路徑的實測值；macOS 已無 MLX/Whisper 引擎（唯一引擎為 Apple SpeechAnalyzer），僅供舊版 CLI 與歷史比較參考
 - **CUDA**: 1 分鐘音頻 ≈ 3-5 秒
 - **CPU**: 1 分鐘音頻 ≈ 30-60 秒
 
@@ -477,10 +483,14 @@ docker logs -f meetingscribe-app
 ### 環境支援
 - **Python**: 3.11+（`uv` 管理）
 - **OS**: macOS 12+、Windows 10/11、Ubuntu 20.04+
-- **GPU/加速器**: Apple Neural Engine（macOS 26+ 預設 ASR）、Apple MPS、NVIDIA CUDA、CPU
+- **GPU/加速器**: Apple Neural Engine（macOS 26+ 預設 ASR）、NVIDIA CUDA、CPU；Apple MPS 僅存在於舊版 CLI／歷史路徑（後端 Mac 已無 MLX/MPS 引擎）
 - **Office 相容性**: Office 2024, M365 (DOCX 輸出)
 
 ## 📝 版本歷史
+
+### [v4.7.2] - 2026-08-20
+- ✅ 修復**地端公文段落編號階層**不符標準（應為「一、」→「（一）」→「1、」→「（1）」）；
+  根因是共用提示詞未明講階層與不可跳層規則，補上後地端與雲端產出一致（雲端原本即正常）
 
 ### [v4.7.1] - 2026-08-20
 - ✅ 修復 v4.7.0 迴歸：`done_reason=length`（輸出撞 `num_predict` 上限，內容
@@ -535,4 +545,4 @@ docker logs -f meetingscribe-app
 
 **政府智慧會議紀錄生成系統**
 
-Last updated: 2026-08-20
+Last updated: 2026-09-13

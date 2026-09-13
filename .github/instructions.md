@@ -1,11 +1,11 @@
 # 政府智慧會議紀錄生成系統 專案最高指導原則
 
-> **版本**：v1.1.0  
+> **版本**：v1.2.0  
 > **建立日期**：2025-12-19  
-> **最後更新**：2025-12-19  
+> **最後更新**：2026-09-13  
 > **狀態**：✅ 生效中  
 > **專案代號**：政府智慧會議紀錄生成系統 ASR/LLM Upgrade 2025
-> **當前版本**：v4.0.0
+> **當前版本**：v4.7.2（唯一來源：根目錄 `VERSION`）
 
 ---
 
@@ -151,10 +151,10 @@ v主版本.次版本.修訂版本
 
 ### ASR（語音轉錄）
 
-| 優先順序 | 模型 | 理由 |
-|----------|------|------|
-| 1️⃣ | **Breeze-ASR-25** (v4.0.0 已啟用) | 專為台灣繁體中文設計，中英混用最佳 |
-| 2️⃣ | Whisper Large-v3 Turbo | 備用，多語言通用 |
+| 環境 | 引擎 | 說明 |
+|------|------|------|
+| macOS 26+ / Apple Silicon | **Apple SpeechAnalyzer**（唯一引擎） | macOS 內建模型、免下載 HF 模型；`ASR_BACKEND=auto` 即 `apple`；fail-closed、**永不 fallback**；顯式 Whisper 值一律拒絕（T20260912-2242-01） |
+| Windows / Linux | **Breeze-ASR-26**（transformers 路徑，預設）／faster-whisper ＋ Breeze-ASR-25（回滾路徑） | 專為台灣繁體中文設計，中英混用最佳 |
 
 ### LLM（大語言模型）
 
@@ -162,6 +162,8 @@ v主版本.次版本.修訂版本
 |----------|------|------|
 | 1️⃣ | **Gemma3-27B-it-QAT** (v4.0.0 已啟用) | Google 開發，QAT 量化適合 24GB VRAM |
 | 2️⃣ | Gemma3-12B | 備用，VRAM 不足時使用 |
+
+> ℹ️ 上表為 v4.0.0 的選型紀錄。**現行實際預設**請以 `backend/core/config.py` 為準：Ollama `LOCAL_LLM_MODEL=gemma4:31b`（`config.py:53-56`）、LM Studio 備援 `LMSTUDIO_MODEL=gpt-oss-20b`（`config.py:68-71`）。
 
 ### LLM 參數設定 (v4.0.0)
 
@@ -175,7 +177,7 @@ v主版本.次版本.修訂版本
 
 ### VAD（語音活動偵測）
 
-- 使用 **Silero VAD v6**（Faster-Whisper 內建）
+- 使用 **Silero VAD v6**（faster-whisper 路徑內建；macOS Apple 路徑不使用 VAD——helper 直接處理整檔，`use_vad=False` 語意）
 
 ---
 
@@ -215,4 +217,4 @@ v主版本.次版本.修訂版本
 |------|------|----------|
 | 2025-12-19 | v1.0.0 | 初版建立 |
 | 2025-12-19 | v1.1.0 | 更新為 v4.0.0 實際部署配置：Breeze-ASR-25 + Gemma3 QAT + 優化參數 |
-
+| 2026-09-13 | v1.2.0 | ASR 技術棧改為平台分流：macOS 26+ 唯一引擎 Apple SpeechAnalyzer（無 Whisper 選項、永不 fallback）；Windows/Linux 維持 Breeze-ASR-26／faster-whisper；VAD 僅 faster-whisper 路徑；當前版本改以 `VERSION` 檔為準（v4.7.2） |

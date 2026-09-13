@@ -207,4 +207,7 @@ python3 -c "import json; d=json.load(open('transcribe.out.json')); print(len(d['
 - 本機 zh_TW（及 zh_CN）模型已存在，因此本次 smoke **未觸發**首次下載；`transcribe` 輸出中 `asset_install_attempted=false`、`asset_install_seconds=null` 可佐證。於乾淨機器首次使用新 locale 時，預期需下載並耗費數分鐘（視網路而定），該路徑本次未實測。
 - 已實測離場碼：0（probe/transcribe success）、3（bad locale）、5（missing input、unknown flag）。其餘碼別依凍結契約與原始碼（`Sources/AppleSpeechKit/Errors.swift`）記載，未逐一實測。
 - 本次移植與母本（`yt_down_txt/apple_speech_cli`，HEAD 3465726）逐檔 SHA-256 比對全數一致，未修改任何 Swift 原始碼。
-- 版控注意：convert repo 根目錄 `.gitignore` 含 `.gitignore` 規則（Git 段），因此 `apple_speech_cli/.gitignore` 本身不會被納入版控；但該檔仍在本機生效（實測 `git status --ignored` 顯示 `!! apple_speech_cli/.build/`），binary 不會被誤提交。未來提交此套件時，請以 `git add -f apple_speech_cli/.gitignore` 一併收錄（或經授權在根目錄補規則），否則全新 clone 將失去 `.build/` 排除規則。
+- 版控注意（2026-09-13 更新）：convert repo 根目錄 `.gitignore` 雖含 `.gitignore` 規則（Git 段），
+  `apple_speech_cli/.gitignore` 已於 T20260912-2242-01 以 `git add -f` 納入版控（`git ls-files` 可查），
+  且根目錄 `.gitignore` 另補了 `apple_speech_cli/.build/` 與 `apple_speech_cli/apple-speech-cli` 兩條明確規則；
+  因此不論 clone 或本機（實測 `git status --ignored` 顯示 `!! apple_speech_cli/.build/`），binary 都不會被誤提交。
