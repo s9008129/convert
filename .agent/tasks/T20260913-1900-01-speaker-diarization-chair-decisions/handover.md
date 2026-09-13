@@ -65,6 +65,8 @@
 | baseline（舊版 Gemini、無標籤） | `data/outputs/0903-科務會議_42fbaee7.md`（10,598 B）＋`..._逐字稿.txt`（0 個「發言者」標籤） |
 | 模型檔 | `models/diarization/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`（28 MB）＋`models/diarization/sherpa-onnx-pyannote-segmentation-3-0/`；`models/` 已被 `.gitignore` 忽略 |
 | git | 本任務變更**尚未 commit**（19 個 modified ＋ 新增檔；見 §10） |
+| Stage 05 獨立驗收 | **已完成（attempt-01）：總 gate = `ACCEPTED`**（C1 PASS／C2 PARTIAL／C3 PASS／C4 PASS）；證據：`e2e/attempt-01/e2e_report.md`、`result.md` |
+| git commit | `4768e4a`（feat(diarization,cloud)…）已 push 至 `origin/main`；Stage 05 證據與本文件更新為第二個 commit |
 
 ---
 
@@ -117,7 +119,7 @@
 
 | # | 待辦 | 具體做法 | 完成定義 |
 |---|---|---|---|
-| 1 | **Stage 05 獨立驗收** | 派 fresh-context 子代理（唯讀）逐條稽核 C1–C4，寫 `.agent/tasks/<TASK_ID>/e2e/attempt-01/e2e_report.md` 與 `result.md` | 每個 CORE 有 PASS/PARTIAL/FAIL＋證據；gate ∈ {ACCEPTED, REJECTED, BLOCKED} |
+| 1 | ~~Stage 05 獨立驗收~~ **已完成** | 產物：`.agent/tasks/<TASK_ID>/e2e/attempt-01/e2e_report.md`、`result.md`；總 gate `ACCEPTED`（C2=PARTIAL：7 抽驗中 3 例非主席內容被寫成科長指示；`[00:42:51] 發言者3` 示範點、`[00:06:56] 發言者3` 公文會辦、文康活動細節） | 已完成；如需複驗，重派 fresh-context 子代理 |
 | 2 | 文件 §9 補 E2E 證據 | 若接手時 §9 仍是「待主線補填」，用 §2/§3 的實測數字與抽驗案例補上 | §9 有 task id、標籤樣本、裁示抽驗 3 案例、輸出檔名與大小 |
 | 3 | 文件一致性複核 | 對照 `doc/規格與設計/發言者分離與主席裁示-研究與設計.md` §2/§3/§5/§6 與程式碼現況（預設值、fp32、逾時/守門/快取、provider） | 無與程式碼矛盾的敘述；`doc/README.md` 有索引 |
 | 4 | 收尾清理 | 已刪 `data/uploads/minicheck-deadbeef.wav`；確認 `data/outputs/` 無重複殘檔（目前有 `_record.md/.docx` 兩份與 `_3d7f76d3.md/.docx` 相同的副本，可清可留） | 無測試殘檔 |
