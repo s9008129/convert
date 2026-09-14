@@ -400,7 +400,8 @@ def test_estimate_cloud_min_summary_chars_scales_with_transcript():
 async def test_cloud_pipeline_chunked_extraction_and_transcript_in_generation(monkeypatch):
     """回退路徑：CLOUD_LLM_SEGMENTED_EXTRACTION=true 時分段萃取；生成仍須雙輸入。"""
     service = SummarizationService()
-    transcript = "主席：討論專案里程碑。科長：建議維持月底上線。"
+    # 逐字稿需含年份：測試資料的紀錄寫「113年」，日期依據絆索要求逐字稿有同樣的年份
+    transcript = "主席：今天是113年3月1日，討論專案里程碑。科長：建議維持月底上線。"
     monkeypatch.setattr(settings, "CLOUD_LLM_SEGMENTED_EXTRACTION", True)
 
     chunk_notes_1 = _notes_with_two_actions()
@@ -435,7 +436,7 @@ async def test_cloud_pipeline_chunked_extraction_and_transcript_in_generation(mo
 async def test_cloud_pipeline_single_pass_extraction_by_default(monkeypatch):
     """v4.7.3：雲端預設不分段——整份逐字稿一次萃取，切塊函式不得被呼叫。"""
     service = SummarizationService()
-    transcript = "主席：討論專案里程碑。科長：建議維持月底上線。"
+    transcript = "主席：今天是113年3月1日，討論專案里程碑。科長：建議維持月底上線。"
     monkeypatch.setattr(settings, "CLOUD_LLM_SEGMENTED_EXTRACTION", False)
 
     chunk_splitter = Mock(side_effect=AssertionError("雲端預設不得呼叫切塊"))
@@ -468,7 +469,7 @@ async def test_cloud_pipeline_refines_when_summary_below_dynamic_floor(monkeypat
     """長會議的過薄輸出必須觸發補強輪，且補強訊息附上原始逐字稿。"""
     service = SummarizationService()
     # 約 2 萬 tokens 的長逐字稿 → 動態下限約 1,360 字（20400 // 15，未達 2000 上限）
-    transcript = "與會人員針對訪談流程、效益口徑與展示方式進行詳細討論。" * 800
+    transcript = "與會人員針對113年訪談流程、效益口徑與展示方式進行詳細討論。" * 800
 
     thin_summary = _complete_summary()  # 結構完整但僅約 7 百字 → 低於動態下限
     rich_summary = _complete_summary().replace(
@@ -1166,3 +1167,141 @@ def test_section_meeting_forbids_source_tags_inside_tracking_table():
     )
     issues = service._validate_summary_quality(polluted, "## 1. 會議資訊\n", template=template)
     assert any("彙整表內出現發言來源標註" in issue for issue in issues)
+
+
+# ========================================
+# 2026-09-14：會議日期杜撰防線（提示詞規則＋確定性絆索）
+# ========================================
+
+
+def test_extract_year_tokens_normalizes_arabic_chinese_and_excludes_decades():
+    """年份抽取：阿拉伯與國字等價比對；「年代」不算年份，避免誤判合法寫法。"""
+    extract = SummarizationService._extract_year_tokens
+
+    assert extract("時間：民國113年10月；生效日期為2026年度") == {"113", "2026"}
+    assert extract("一一三年、一百一十三年度、二〇二六年度") == {"113", "2026"}
+    assert extract("現場有2戶90年代長者，這是九〇年代的事") == set()
+    assert extract("生效日期是今年的 11 月 1 號") == set()
+    assert extract("") == set()
+
+
+def test_cloud_generation_requires_date_grounding_rule():
+    """日期依據規則必須進雲端生成與補強訊息；地端生成訊息不得被影響（地端不動）。"""
+    service = SummarizationService()
+    notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
+    transcript = "[00:00:00-00:01:00] 發言者1：生效日期是今年的 11 月 1 號"
+    rule = SummarizationService.CLOUD_DATE_GROUNDING_RULE
+
+    assert rule in service._build_cloud_summary_message(notes, transcript)
+    assert rule in service._build_cloud_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript
+    )
+    assert rule not in service._build_summary_from_notes_message(notes)
+    assert rule not in service._build_refinement_message("草稿", notes, ["缺少區塊：X"])
+
+
+def test_validate_cloud_date_grounding_flags_year_missing_from_transcript():
+    """實測失效模式：逐字稿只有「今年」，紀錄卻寫死年份 → 必須回報問題。"""
+    service = SummarizationService()
+    record = "時間：中華民國113年10月（待確認）日\n1. 生效日期為113年11月1日。"
+    transcript = "[00:00:00] 發言者1：生效日期是今年的 11 月 1 號"
+
+    issues = service._validate_cloud_date_grounding(record, transcript)
+    assert any("紀錄出現逐字稿沒有依據的年份：113年" in issue for issue in issues)
+
+    # 逐字稿有同樣的年份（阿拉伯或國字寫法）→ 不觸發
+    assert service._validate_cloud_date_grounding(record, "民國113年11月1日生效") == []
+    assert service._validate_cloud_date_grounding(record, "一百一十三年的11月1日生效") == []
+    # 紀錄本來就標「（待確認）」→ 不觸發
+    assert service._validate_cloud_date_grounding("時間：（待確認）年", transcript) == []
+
+
+def _summary_without_year() -> str:
+    """`_complete_summary()` 去識別年份版本，供日期絆索補強後的情境使用。"""
+    return (
+        _complete_summary()
+        .replace("113年度第1次", "（待確認）年度第1次")
+        .replace("中華民國113年3月1日", "中華民國（待確認）年（待確認）月（待確認）日")
+    )
+
+
+@pytest.mark.asyncio
+async def test_cloud_pipeline_refines_when_year_not_in_transcript(monkeypatch):
+    """紀錄寫入逐字稿沒有的年份時，絆索應觸發補強輪，補強後年份消失。"""
+    service = SummarizationService()
+    transcript = "主席：生效日期是今年的 11 月 1 號。科長：建議維持月底上線。"
+
+    responses = iter([_notes_with_two_actions(), _complete_summary(), _summary_without_year()])
+    gemini = AsyncMock(side_effect=lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(service, "_gemini_chat", gemini)
+
+    summary = await service._summarize_with_gemini(settings.DEFAULT_SYSTEM_PROMPT, transcript)
+
+    # 萃取 1 次＋生成 1 次＋補強 1 次
+    assert gemini.await_count == 3
+    refinement_message = gemini.await_args_list[-1].args[1]
+    assert "紀錄出現逐字稿沒有依據的年份：113年" in refinement_message
+    assert "113年" not in summary
+
+
+# ========================================
+# 2026-09-14：範本骨架佔位符外洩修復（雲端專用，確定性）
+# ========================================
+
+
+def test_cloud_finalize_repairs_leaked_template_placeholders():
+    """實測失效模式：模型把範本骨架原樣吐出（（年）（月）（日））→ 修回「（待確認）」。
+
+    Gemini 在逐字稿沒提日期時，頭欄位會整段抄提示詞骨架，例如
+    「時間：中華民國（年）年（月）月（日）日（星期）（時分）」——看似填了、
+    實際上整欄沒有可用資訊，比官方規定的「（待確認）」更糟。
+    """
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    leaked = (
+        "# 科務會議紀錄\n\n"
+        "（待確認）（待確認）年（月）月份第（次）次科務會議紀錄\n"
+        "時間：中華民國（年）年（月）月（日）日（星期）（時分）\n"
+        "地點：（待確認）\n"
+        "主持人：科長　紀錄：AI 會議助理\n"
+        "出席人員：如後附簽到表\n"
+        "歷次科務會議決議事項繼續列管案件：（待確認）\n"
+        "（待確認）（待確認）年（月）月份第（次）次科務會議決議事項辦理情形彙整表\n"
+        "決議事項：\n"
+        "| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 辦理文康活動（資管股） | 資管股： | | |\n"
+        "一、科長轉知局務會議工作報告及相關注意事項：無\n"
+        "散會：（待確認）\n"
+    )
+
+    fixed = service._finalize_cloud_record_text(leaked, template=template)
+
+    assert "（年）年" not in fixed
+    assert "（月）月" not in fixed
+    assert "（日）日" not in fixed
+    assert "第（次）次" not in fixed
+    assert "時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）" in fixed
+    assert "（待確認）年（待確認）月份第（待確認）次科務會議紀錄" in fixed
+
+    # 地端路徑（`_finalize_record_text`）不套用此修復：地端行為不變
+    assert "（年）年" in service._finalize_record_text(leaked, template=template)
+
+
+def test_placeholder_repair_leaves_body_lines_untouched():
+    """正文若剛好出現同名字樣（例如引述表格欄位）不得被改寫。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    record = (
+        "（待確認）年（待確認）月份第（待確認）次科務會議紀錄\n"
+        "時間：中華民國（年）年（月）月（日）日（星期）（時分）\n"
+        "地點：（待確認）\n"
+        "一、科長轉知局務會議工作報告及相關注意事項：\n"
+        "1. 表格欄位「（月）」的定義請人事室確認（科長，00:05:00）。\n"
+        "散會：（待確認）\n"
+    )
+
+    fixed = service._finalize_cloud_record_text(record, template=template)
+
+    assert "表格欄位「（月）」的定義請人事室確認（科長，00:05:00）。" in fixed
+    assert "（年）年" not in fixed

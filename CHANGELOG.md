@@ -1,6 +1,72 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
-## [Unreleased] - 2026-09-13
+## [v4.7.3] - 2026-09-14
+
+### 🎯 主題：雲端預設改回 Gemini、雲端萃取改單次呼叫、保留發言來源標註與會議日期防杜撰
+
+雲端模式預設 provider 改回 **Gemini**（`gemini-3.5-flash-lite`、金鑰 `GEMINI_API_KEY`）：
+Ollama Cloud 只是一個測試任務的臨時設定，使用者日常使用 Gemini；Ollama Cloud
+（`deepseek-v4.1-flash`）保留為可選 provider（`CLOUD_LLM_PROVIDER=ollama_cloud` 啟用）。
+雲端萃取同步改為「一次把整份逐字稿交給模型」（新增 `CLOUD_LLM_SEGMENTED_EXTRACTION`
+回退開關；地端流程完全不變），並補上兩個紀錄品質防線：正文保留發言來源標註（雲端＋
+科務會議模板）、會議日期不得杜撰（僅雲端）。警告清零與檔名規範一併收斂。
+
+### ✨ 新增
+
+- **雲端 provider 預設改回 Gemini**：`CLOUD_LLM_PROVIDER` 預設 `gemini`
+  （`gemini-3.5-flash-lite`、金鑰 `GEMINI_API_KEY`）；Ollama Cloud 保留為可選 provider
+  （`CLOUD_LLM_PROVIDER=ollama_cloud` 啟用、模型 `deepseek-v4.1-flash`）。背景：Ollama
+  Cloud 只是一個測試任務的臨時設定，使用者日常使用 Gemini。
+- **雲端萃取改為單次呼叫**：新增 `CLOUD_LLM_SEGMENTED_EXTRACTION`（預設 `False`）——
+  雲端模式一次把整份逐字稿交給模型萃取重點；`True` 可回退 v4.3.3 的分段併發萃取
+  （`CLOUD_LLM_CHUNK_TOKENS`／`CLOUD_LLM_MAX_CONCURRENT_REQUESTS` 僅在分段模式生效）。
+  **地端流程完全不變**。理由：分段的原始動機是地端記憶體不足＋小模型注意力集中度低，
+  雲端不存在這兩個限制。
+- **會議紀錄保留發言來源標註（雲端＋科務會議模板）**：正文各項指示／裁示／交辦／他人
+  意見句末加註「（發言者N，00:12:04）」，能判定身分時寫「（科長，00:12:04）」；新增
+  確定性絆索——正文完全沒有來源標註就自動觸發一次補強；彙整表內不得出現來源標註
+  （避免原樣流入列管資料附件）。開關：`MeetingTemplate.speaker_traceability`
+  （科務會議 True；一般會議／採購評選 False）。根因：生成提示詞原本只要求「發言者N
+  不得當人名」，從未要求保留歸屬，模型因此整段省略（實測 0 處）。
+- **會議日期不得杜撰（新增防線）**：紀錄中的年份（如「113年」）必須在逐字稿出現過；
+  逐字稿只用「今年／明年／去年」時，年份一律寫「（待確認）」，不得自行推算。做法＝
+  提示詞規則（`CLOUD_DATE_GROUNDING_RULE`）＋確定性絆索
+  （`_validate_cloud_date_grounding`，逐字稿沒有、紀錄卻出現的年份 → 觸發既有補強輪，
+  fail-soft 不讓任務失敗）。只檢查年份（月份與日期交由提示詞要求，避免誤判「這個月／
+  月底」等相對說法）。僅雲端流程。
+
+### 🔧 修正
+
+- **日期欄位不再吐出「範本骨架佔位符」（僅雲端）**：模型照抄提示詞骨架時，頭欄位會變成
+  「時間：中華民國（年）年（月）月（日）日（星期）（時分）」「第（次）次」——看起來有填、
+  實際上整欄沒有可用資訊，比官方規定的「（待確認）」更糟。新增確定性後處理
+  `normalize_unfilled_placeholders`（`backend/core/text_postprocess.py`）＋雲端收尾包裝
+  `_finalize_cloud_record_text`（`backend/services/summarization.py`）：把這些佔位符換回
+  「（待確認）」。只處理開頭欄位與標題行、只拿掉沒有資訊的佔位符、不新增任何事實。
+  地端仍走 `_finalize_record_text`，行為完全不變。
+- **警告清零**：Pydantic `class Config` → `model_config`、`TranscriptionResult` 加
+  `protected_namespaces=()`、websocket 測試關閉未 await 的 coroutine；
+  `scripts/check_docs.sh` 舊版號掃描排除 `CHANGELOG.md`（歷史帳本記錄舊版號屬正常內容）。
+
+### 📝 文件
+
+- **檔名規範**：`doc/規格與設計/Implement_Plan.md` → `implement_plan.md`、
+  `Tasks.md` → `tasks.md`（同步更新引用）。
+
+### ✅ 驗證
+
+- `PYTHONPATH=. DATA_DIR=./data .venv/bin/python -m pytest -q` → **798 passed, 2 skipped**
+  （0 warnings）。
+- `bash scripts/check_docs.sh` → 0 錯誤 0 警告。
+- 雲端 E2E（`0903-科務會議.m4a`、科務會議模板、Gemini，同一支音檔累計三次實跑）：
+  - `c7619708`（日期防線加入後）→ completed、73.8 秒；**紀錄中出現的年份全部有逐字稿依據**
+    （紀錄年份集合為空）；補強 2 輪皆因「待辦事項遺漏 3 項」而非日期問題。前一版
+    （`3f7f43ff`）同一支音檔曾寫出逐字稿沒有的「113年」。
+  - `c49ecde9`（補強日期規則句後）→ completed、58.7 秒；年份同樣全部有據；但頭欄位出現
+    骨架佔位符（「（年）年（月）月（日）日」），成為上列「範本骨架佔位符」修正的依據。
+  - `bed317d6`（骨架佔位符修復後）→ completed、83.8 秒；年份仍全部有據、**頭欄位再無任何
+    骨架佔位符**（「時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）」）、
+    26 組句末發言來源標註、彙整表 8 列；殘留的補強輪仍為既有「待辦事項遺漏」議題（非日期）。
 
 ### 🎯 主題：Apple SpeechAnalyzer 本機 ASR——macOS 26+ / Apple Silicon 唯一引擎（Windows 零影響）
 

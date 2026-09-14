@@ -343,6 +343,77 @@ def has_excessive_english(text: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# 範本骨架佔位符外洩修復（v4.7.3；2026-09-14 實測）
+# ---------------------------------------------------------------------------
+# 提示詞內含「紀錄骨架」示範，模型有時會把骨架原樣抄進成品：實測 Gemini 在逐字稿
+# 沒提到日期時，直接吐出「時間：中華民國（年）年（月）月（日）日（星期）（時分）」
+# 與「（待確認）年（月）月份第（次）次科務會議紀錄」。這種輸出看起來有填、實際上
+# 整欄沒有任何可用資訊，比官方規定的「（待確認）」更糟（讀者無法分辨「尚未填寫」
+# 與「系統吐了佔位符」）。此處以確定性規則把佔位符換回「（待確認）」——只拿掉沒有
+# 資訊的佔位符，不新增任何事實，故不違反忠實性原則（絕不杜撰）。
+_UNFILLED_PLACEHOLDER_PATTERN = re.compile(
+    r"[（(](?:機關及科別|機關科別|民國年|年|月|日|星期|時分|次)[）)]"
+)
+# 只修「紀錄開頭欄位」與「標題行」：正文若剛好出現同名字樣（例如引述表格欄位）
+# 一律不動，避免誤傷內容。
+_UNFILLED_PLACEHOLDER_FIELD_LINE_PATTERN = re.compile(
+    r"^(?:時間|地點|主持人|出席人員|紀\s*錄|散會)\s*[:：]"
+)
+_UNFILLED_PLACEHOLDER_TITLE_LINE_PATTERN = re.compile(r"(?:紀錄|彙整表)\s*$")
+_MISSING_TEXT = "（待確認）"
+
+
+def _is_unfilled_placeholder_line(stripped: str, template) -> bool:
+    """判斷某行是否屬於「該修」的紀錄欄位／標題行。"""
+    if _UNFILLED_PLACEHOLDER_FIELD_LINE_PATTERN.match(stripped):
+        return True
+    if _UNFILLED_PLACEHOLDER_TITLE_LINE_PATTERN.search(stripped):
+        return True
+    for spec in getattr(template, "record_header_fields", ()) or ():
+        if spec.pattern.search(stripped):
+            return True
+    return False
+
+
+def normalize_unfilled_placeholders(text: str, template=None) -> str:
+    """把模型照抄範本骨架留下的日期佔位符換成「（待確認）」（v4.7.3）。
+
+    只處理紀錄開頭欄位與標題行（含所選模板宣告的欄位樣式），正文完全不動；
+    沒有出現佔位符的行一個字都不改（不做多餘加工）。地端／雲端共用本函式，
+    但呼叫端目前僅雲端生成流程套用。
+    """
+    if not text or not _UNFILLED_PLACEHOLDER_PATTERN.search(text):
+        return text
+
+    normalized_lines: list[str] = []
+    fixed_lines = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if (
+            _UNFILLED_PLACEHOLDER_PATTERN.search(stripped)
+            and _is_unfilled_placeholder_line(stripped, template)
+        ):
+            fixed = _UNFILLED_PLACEHOLDER_PATTERN.sub(_MISSING_TEXT, line)
+            # 骨架中相鄰的佔位符（如（星期）（時分））修完會連成一串，
+            # 合併成一個「（待確認）」以免同一欄重複出現。
+            fixed = re.sub(
+                f"(?:{re.escape(_MISSING_TEXT)}){{2,}}", _MISSING_TEXT, fixed
+            )
+            if fixed != line:
+                fixed_lines += 1
+            normalized_lines.append(fixed)
+            continue
+        normalized_lines.append(line)
+
+    if fixed_lines:
+        log.info(
+            f"[品質] 修復範本骨架佔位符 {fixed_lines} 行"
+            f"（日期欄位改回「{_MISSING_TEXT}」）"
+        )
+    return "\n".join(normalized_lines)
+
+
 def ensure_record_structure(summary: str, template=None) -> str:
     """確保會議紀錄具有完整欄位結構（容錯比對，缺漏者依模板補骨架）。
 

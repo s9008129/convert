@@ -121,6 +121,31 @@ class SummarizationService:
     _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
     _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
 
+    # 日期依據規則（2026-09-14）：實測 Gemini 會把逐字稿的「今年」自行換算成民國年份
+    # ——逐字稿全篇沒有任何年份，正式紀錄卻寫「中華民國113年…」「生效日期為113年11月1日」，
+    # 這是最後一道防線守不到、卻會直接印成公文的事實錯誤。年份是逐字稿唯一無法事後查證、
+    # 又最容易由「今年／明年／去年」推算出來的欄位，因此以提示詞（本常數）＋確定性絆索
+    # （_validate_cloud_date_grounding）雙重把關；月份與日期同受提示詞約束，但不做硬攔，
+    # 以免把逐字稿有寫的合法月日表達誤判。僅套用於雲端生成；地端生成流程維持原樣。
+    CLOUD_DATE_GROUNDING_RULE = (
+        "- 日期與年份依據（強制）：紀錄中的年份（如「113年」「2026年」）必須是逐字稿"
+        "真的出現過的內容，直接照抄；逐字稿只用「今年／明年／去年／今年度」等相對說法、"
+        "或完全沒提到年份時，年份一律寫「（待確認）」，不得自行推算或填入。"
+        "月份與日期同理：逐字稿沒提到就寫「（待確認）」，不得臆測"
+        "（例：逐字稿說「今年的 11 月 1 號」→ 年份寫「（待確認）」，月日寫「11月1日」）。"
+        "查不到的日期、月份、次別等開頭欄位，一律保留系統預設的「（待確認）」字樣，"
+        "不得改寫成「（年）」「（月）」「（日）」這類沒有資訊的空括號佔位。"
+    )
+
+    # 年份偵測樣式（供日期依據絆索使用）：阿拉伯數字（113年／2026年度）與國字
+    # （一一三年／一百一十三年度）兩種寫法；「年代」（如 90 年代）不算年份，故排除。
+    _ARABIC_YEAR_PATTERN = re.compile(r"(?<!\d)(\d{2,4})\s*年(?!代)")
+    _CHINESE_YEAR_PATTERN = re.compile(r"([〇○零一二三四五六七八九十百兩]{2,4})\s*年(?!代)")
+    _CHINESE_DIGITS = {
+        "〇": 0, "○": 0, "零": 0, "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4,
+        "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+    }
+
     LOCAL_EXTRACTION_PROMPT = """你是會議逐字稿資訊萃取助理。你的任務只有一個：盡量完整抽取事實，不要直接寫成最終會議記錄。
 
 請直接輸出以下 Markdown：
@@ -877,6 +902,69 @@ class SummarizationService:
             "「（發言者N，00:12:04）」或「（科長，00:12:04）」，不得整體省略發言歸屬"
         ]
 
+    @classmethod
+    def _extract_year_tokens(cls, text: str) -> set[str]:
+        """抽取文字中的年份數字（阿拉伯數字＋國字）並正規化，供日期依據絆索比對。
+
+        「年」後面接著「代」時不算年份：「90 年代」是年代敘述，排除後才不會把逐字稿與
+        紀錄對同一件事的不同寫法（90 年代／九〇年代）誤判成杜撰。國字年份
+        （一一三年／一百一十三年度）換算成數字後與阿拉伯數字等價比對。
+        """
+        years: set[str] = set()
+        if not text:
+            return years
+        years.update(match.group(1) for match in cls._ARABIC_YEAR_PATTERN.finditer(text))
+        for match in cls._CHINESE_YEAR_PATTERN.finditer(text):
+            digits = cls._chinese_year_to_digits(match.group(1))
+            if digits:
+                years.add(digits)
+        return years
+
+    @classmethod
+    def _chinese_year_to_digits(cls, token: str) -> Optional[str]:
+        """國字年份轉數字：支援逐位唸法（一一三／二〇二六）與單位唸法（一百一十三）。"""
+        if all(char in cls._CHINESE_DIGITS for char in token):
+            return "".join(str(cls._CHINESE_DIGITS[char]) for char in token)
+        total = 0
+        section = 0
+        for char in token:
+            if char in cls._CHINESE_DIGITS:
+                section = cls._CHINESE_DIGITS[char]
+            elif char == "十":
+                total += (section or 1) * 10
+                section = 0
+            elif char == "百":
+                total += (section or 1) * 100
+                section = 0
+            else:
+                return None
+        total += section
+        return str(total) if total else None
+
+    def _validate_cloud_date_grounding(self, summary: str, transcript: str) -> list[str]:
+        """確定性絆索：紀錄裡的年份必須在逐字稿出現過（2026-09-14）。
+
+        實測失效模式：逐字稿只說「生效日期是今年的 11 月 1 號」、全篇沒有任何年份，
+        Gemini 仍在正式紀錄寫入「中華民國113年…」與「生效日期為113年11月1日」——
+        這是公文等級的事實錯誤，也不是提示詞能保證的（同一支音檔當日多次實測 7/8 次
+        出現同類現象）。比對方式：兩份文字各自抽出年份數字後取差集，逐字稿沒有、
+        紀錄卻出現的年份即回報問題並觸發既有補強輪（fail-soft：輪數用盡僅記 log）。
+
+        只檢查年份：月份與日期在逐字稿裡常以相對說法出現（「這個月」「月底」），
+        硬攔會誤判合法表達，因此交由 CLOUD_DATE_GROUNDING_RULE 要求標「（待確認）」。
+        僅套用於雲端流程；地端流程完全不呼叫。
+        """
+        fabricated = sorted(
+            self._extract_year_tokens(summary) - self._extract_year_tokens(transcript)
+        )
+        if not fabricated:
+            return []
+        return [
+            "紀錄出現逐字稿沒有依據的年份："
+            + "、".join(f"{year}年" for year in fabricated)
+            + "；逐字稿未提到的年份一律寫「（待確認）」，不得由「今年／明年／去年」推算"
+        ]
+
     @staticmethod
     def _contains_simplified_chinese(text: str) -> bool:
         """偵測簡體字漂移（P1-2：改用 OpenCC 全字覆蓋，取代 45 字硬編碼表）。"""
@@ -1084,6 +1172,7 @@ class SummarizationService:
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
 - 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
+{self.CLOUD_DATE_GROUNDING_RULE}
 {speaker_rule}
 萃取筆記：
 {extracted_notes}
@@ -1107,6 +1196,7 @@ class SummarizationService:
         base = self._build_refinement_message(current_summary, extracted_notes, issues, template=template)
         speaker_rule = self._speaker_traceability_rule(template)
         return f"""{base}
+{self.CLOUD_DATE_GROUNDING_RULE}
 {speaker_rule}
 原始逐字稿（補充細節時以此為準）：
 {transcript}"""
@@ -1685,6 +1775,22 @@ class SummarizationService:
             protected = set()
         return finalize_record(summary, protected_terms=protected, template=template)
 
+    def _finalize_cloud_record_text(
+        self, summary: str, template: Optional[MeetingTemplate] = None
+    ) -> str:
+        """雲端紀錄收尾：共用記錄級後處理＋範本骨架佔位符修復（v4.7.3）。
+
+        與 `_finalize_record_text` 唯一的差別是多一道「模型照抄範本骨架」修復：
+        實測 Gemini 在逐字稿沒提日期時，會把提示詞裡的骨架原樣吐出
+        （「時間：中華民國（年）年（月）月（日）日（星期）（時分）」），欄位看似
+        填了、其實沒有任何可用資訊。修復為確定性（佔位符→「（待確認）」），
+        不新增任何事實；地端流程仍走 `_finalize_record_text`，行為完全不變。
+        """
+        from backend.core.text_postprocess import normalize_unfilled_placeholders
+
+        return normalize_unfilled_placeholders(
+            self._finalize_record_text(summary, template=template), template=template
+        )
 
     async def generate_local(
         self,
@@ -2596,7 +2702,7 @@ class SummarizationService:
 
         # 第二段：筆記＋逐字稿雙輸入生成正式紀錄
         self._emit_progress(progress_callback, 84.0, "整理最終會議記錄...")
-        summary = self._finalize_record_text(
+        summary = self._finalize_cloud_record_text(
             self._clean_ollama_output(
                 await self._gemini_chat(
                     system_prompt,
@@ -2611,6 +2717,7 @@ class SummarizationService:
         min_chars = self._estimate_cloud_min_summary_chars(transcript)
         issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
         issues += self._validate_cloud_speaker_traceability(summary, template)
+        issues += self._validate_cloud_date_grounding(summary, transcript)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
@@ -2625,7 +2732,7 @@ class SummarizationService:
                 f"{settings.cloud_llm_provider_label} 摘要品質補強"
                 f"（第 {attempts} 輪），問題：{'; '.join(issues)}"
             )
-            summary = self._finalize_record_text(
+            summary = self._finalize_cloud_record_text(
                 self._clean_ollama_output(
                     await self._gemini_chat(
                         system_prompt,
@@ -2637,6 +2744,7 @@ class SummarizationService:
             )
             issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
             issues += self._validate_cloud_speaker_traceability(summary, template)
+            issues += self._validate_cloud_date_grounding(summary, transcript)
 
         if issues:
             log.warning(

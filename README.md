@@ -2,7 +2,7 @@
 
 把會議錄音變成「符合公文格式、有憑有據」的會議紀錄——選好會議類型、上傳錄音檔，就能下載 Word 或 Markdown 格式的紀錄。
 
-[![Version](https://img.shields.io/badge/version-4.7.2-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.7.3-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/操作手冊/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 
@@ -29,6 +29,9 @@
 - **雙格式下載**：Markdown（.md）與 Word（.docx）；部分類型另附附件（如科務會議的列管資料）。
 - **逐字稿可另外下載**：方便核對與存檔。
 - **多人會議發言者標註**：逐字稿可自動標出「發言者1／2／3…」與時間戳，方便核對誰說了什麼（標籤是系統自動分群編號，不是姓名）。
+- **雲端紀錄保留發言來源**：雲端模式的會議紀錄會在句末保留發言來源標註「（發言者1，00:12:04）」，方便回溯是誰說的（標籤是系統自動分群編號，不是姓名）。
+- **不亂編年份**：查不到的資訊（包含會議日期）一律標「（待確認）」，系統不會自己推算或編造年份。
+- **雲端一次讀完整份逐字稿**：雲端模式一次把整份逐字稿交給 AI 萃取重點（分段方式是給本地模式、記憶體有限的場合使用）。
 - **即時進度顯示**：處理到哪一步，畫面都看得到。
 - **排隊處理**：任務會排隊依序處理，畫面顯示排隊件數與順位。
 - **支援常見音訊格式**：MP3、MP4、WAV、M4A、MKV、WebM、FLAC、OGG、AVI、MOV。
@@ -85,11 +88,11 @@ cd apple_speech_cli && swift build -c release
 
 ### 選擇 AI 處理模式
 
-- **雲端模式**（需要網路）：先複製設定檔並填入「目前雲端 provider」的金鑰
-  （預設 Ollama Cloud，需 `OLLAMA_API_KEY`；切回 Gemini 時改填 `GEMINI_API_KEY`）：
+- **雲端模式**（需要網路）：先複製設定檔並填入雲端 provider 的金鑰
+  （預設使用 Gemini，需 `GEMINI_API_KEY`；也可切換 Ollama Cloud，改填 `OLLAMA_API_KEY`）：
   ```bash
   cp .env.example .env
-  # 編輯 .env，填入 OLLAMA_API_KEY（使用 Gemini 時改填 GEMINI_API_KEY）
+  # 編輯 .env，填入 GEMINI_API_KEY（改用 Ollama Cloud 時改填 OLLAMA_API_KEY）
   ```
 - **本地模式**（完全離線）：
   - **Windows／Docker**：安裝 Ollama 後執行 `ollama pull gemma4:31b`。
@@ -113,7 +116,7 @@ cd apple_speech_cli && swift build -c release
 ## ❓ 常見問題
 
 **一定要連網嗎？**
-不一定。本地模式可全程離線；雲端模式才需要網路，以及目前雲端 provider 的金鑰（預設 Ollama Cloud，需 `OLLAMA_API_KEY`）。Mac 第一次使用內建語音引擎時，系統可能需要先連線下載一次語音資源（僅此一次，之後即可離線使用）。
+不一定。本地模式可全程離線；雲端模式才需要網路，以及雲端 provider 的金鑰（預設使用 Gemini，需 `GEMINI_API_KEY`；也可切換 Ollama Cloud，改填 `OLLAMA_API_KEY`）。Mac 第一次使用內建語音引擎時，系統可能需要先連線下載一次語音資源（僅此一次，之後即可離線使用）。
 
 **Mac 為什麼要先建置一個小工具？**
 Mac 版使用 macOS 內建的 Apple 語音引擎，需要一個小工具負責呼叫。這是「一次性」步驟，完成後就不用再處理。
@@ -145,4 +148,4 @@ MP3、MP4、WAV、M4A、MKV、WebM、FLAC、OGG、AVI、MOV。
 
 **政府智慧會議紀錄生成系統**
 
-Last updated: 2026-09-13
+Last updated: 2026-09-14
