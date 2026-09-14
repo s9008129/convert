@@ -24,7 +24,7 @@
    - cd /Users/hsiaojohnny/dev/convert && DATA_DIR=./data .venv/bin/python -m pytest tests/ -q
 3. 依交接文件 §5「待辦」逐項完成。優先序：Stage 05 獨立驗收（fresh-context 子代理）→ 文件 §9 證據 → 一致性複核 → 收尾 → 最終回報。
 4. 硬性限制（違反即算做錯）：
-   - 雲端 LLM 一律用 Ollama Cloud（deepseek-v4.1-flash）；**不要用 Gemini**。
+   - 雲端 LLM：本任務（2026-09-13）驗收用 Ollama Cloud（deepseek-v4.1-flash）、不得用 Gemini；**2026-09-14 使用者指示已把預設 provider 改回 Gemini（其日常設定）**，Ollama Cloud 僅該任務測試用（見 §11 末註）。
    - 地端 LM Studio 沒開，不要測地端模型；`LOCAL_LLM_PROVIDER=auto` 解析到 lmstudio 失敗是預期現象，不得當成 bug。語意／錯字校正的方向（使用者 2026-09-13 補充修正）：**跟隨使用者選擇的處理模式**——地端模式→地端模型、雲端模式→雲端模型；本任務不執行校正。
    - 不得印出任何 API key；不得 git reset/stash/覆寫使用者的工作；不得 commit 未經確認的無關檔案。
    - diarization 是 fail-soft 加值層：任何失敗都要退回純文字逐字稿、任務照常完成（C4）。
@@ -44,7 +44,7 @@
 3. 以真實音檔 `~/Downloads/0903-科務會議.m4a`（2695s）＋「科務會議」模板（`section_meeting`）完成雲端模式 E2E，並留下證據。
 
 **中途修訂（當前最高優先）**
-4. 雲端 LLM **改用 Ollama Cloud `deepseek-v4.1-flash`**（使用者同時在跑另一個任務，Gemini 免費層會 429）。Gemini 保留為可切回的 provider，但**本任務一律用 Ollama Cloud**。
+4. 雲端 LLM **改用 Ollama Cloud `deepseek-v4.1-flash`**（使用者同時在跑另一個任務，Gemini 免費層會 429）。Gemini 保留為可切回的 provider，但**本任務一律用 Ollama Cloud**。（2026-09-14 使用者指示：預設已改回 Gemini；見 §11 末註。）
 5. 使用者允許（並鼓勵）大量使用 subagent 平行處理來加速；額度充足。
 
 ---
@@ -241,3 +241,4 @@ curl -s -m 120 -X POST http://localhost:9527/api/upload \
 - 文件健康檢查：`bash scripts/check_docs.sh` → 0 errors、4 個既有 warning（v3.5.x 歷史引用與 2 個大寫檔名，皆非本任務新增）。
 - 新方向登載（使用者 2026-09-13 補充，修正同日稍早指示）：校正引擎**跟隨使用者選擇的模式**（地端模式→地端模型；雲端模式→雲端模型），見 §0／§4 #7／§6 #7／§9-4。現況實作：語意校正一律注入 `generate_local`（`backend/services/task_processor.py:259`）→ 落地屬語意契約變更，須另開任務／計畫修訂。
 - 未提交變更（docs only，4 檔）：本 handover、`goal.md`、`e2e/attempt-01/e2e_report.md`、研究設計文件；是否 commit 待使用者指示。
+- **2026-09-14 使用者指示（provider 復原）**：雲端 provider 預設**改回 Gemini**（Ollama Cloud 僅該任務測試用）；同步更新 `backend/core/config.py` default、`tests/test_cloud_provider_switch.py`、`.env.example`／`.env.local.example`、研究設計文件 §5／§7.0；重啟後 `/api/health` 顯示 `cloud_llm_provider=gemini`，並以 Gemini 重跑同一支音檔做驗證。

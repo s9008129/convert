@@ -328,6 +328,8 @@ class TestWebSocketEndpoint:
         async def mock_wait_for(*args, **kwargs):
             nonlocal call_count
             call_count += 1
+            if args and asyncio.iscoroutine(args[0]):
+                args[0].close()
             if call_count >= 2:
                 raise asyncio.TimeoutError()
             raise asyncio.TimeoutError()

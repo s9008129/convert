@@ -7,7 +7,7 @@ API 資料模型定義。
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.core.version import __version__
 
@@ -54,6 +54,7 @@ class TaskInfo(BaseModel):
 
 class TranscriptionResult(BaseModel):
     """轉錄結果"""
+    model_config = ConfigDict(protected_namespaces=())
     task_id: str
     filename: str
     transcript: str

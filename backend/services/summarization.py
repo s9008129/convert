@@ -98,6 +98,29 @@ class SummarizationService:
     支援本地模式（Ollama/LM Studio）和雲端模式（Ollama Cloud／Gemini API）
     """
 
+    # 雲端生成階段的發言來源標註規則（2026-09-14 使用者需求）。
+    # 背景（實測根因）：逐字稿帶「發言者N」標籤、萃取筆記也保留標籤，但生成
+    # 階段原本只被要求「發言者N 不是姓名、不得當人名寫入」，沒有任何一處要求
+    # 保留發言歸屬——Gemini 因此把來源資訊整段省略（實測 0 處；Ollama 只是
+    # 沒完全遵守規則才殘留 5~10 處，屬不穩定行為）。
+    # 改為「不得當人名使用，但必須以固定格式保留為回溯依據」；
+    # A/B 實測：模糊版要求 0/2 生效、本版 2/2 生效（每次 15~19 個來源標註）。
+    # 僅套用於雲端生成；地端生成流程維持原樣（使用者指示：地端不動）。
+    CLOUD_SPEAKER_TRACEABILITY_RULE = (
+        "- 發言來源標註（強制）：正文的每一項指示、裁示、交辦與他人意見／建議，"
+        "句末必須加註來源，格式固定為「（發言者N，00:12:04）」，N 與時間照逐字稿填寫；"
+        "若該處能由內容確定身分（如科長、股別、單位或姓名），則寫成「（科長，00:12:04）」。"
+        "發言者N 只是回溯依據、不是姓名，不得當人名使用，"
+        "也不得為版面簡潔而整體省略發言來源標註；"
+        "除句末來源標註外，不得在開頭欄位（時間、地點、主持人、出席人員）"
+        "與彙整表內出現「發言者N」。"
+    )
+
+    # 來源標註偵測樣式：句末「（…HH:MM(:SS)…）」形式，供確定性檢查使用；
+    # 同時涵蓋「（發言者1，00:00:00）」與「（科長，00:00:00）」兩種寫法。
+    _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
+    _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
+
     LOCAL_EXTRACTION_PROMPT = """你是會議逐字稿資訊萃取助理。你的任務只有一個：盡量完整抽取事實，不要直接寫成最終會議記錄。
 
 請直接輸出以下 Markdown：
@@ -819,6 +842,41 @@ class SummarizationService:
 
         return issues
 
+    def _validate_cloud_speaker_traceability(
+        self, summary: str, template: Optional[MeetingTemplate] = None
+    ) -> list[str]:
+        """確定性檢查：雲端最終紀錄是否保留了發言來源（2026-09-14）。
+
+        設計立場：發言歸屬的保證不能只靠提示詞、更不能靠第二個 LLM 判定
+        （研究設計文件 §4.2 的 V1/V3 原則）。本檢查是最輕量的絆索
+        （tripwire）：只要正文出現任一「（來源，HH:MM:SS）」標註即通過，
+        完全沒有才回報問題並觸發既有補強輪——用來攔住「模型把來源資訊
+        整段省略」這種實測確實發生過的失效模式。
+
+        刻意排除開頭欄位（時間／地點／主持人／出席人員）與彙整表列：
+        前者本來就不該出現發言者標籤，後者是四欄固定表格；
+        模型只把標籤寫在這些地方不算數（實測 Gemini 對照組就是如此）。
+
+        僅套用於雲端流程與開啟 speaker_traceability 的模板；地端流程與
+        其他模板的驗證行為完全不變。
+        """
+        if template is None or not template.speaker_traceability:
+            return []
+
+        cleaned = self._clean_ollama_output(summary)
+        for line in cleaned.splitlines():
+            stripped = line.strip()
+            if not stripped or "|" in stripped:
+                continue
+            if self._RECORD_HEADER_FIELD_PATTERN.match(stripped):
+                continue
+            if self._SOURCE_TAG_PATTERN.search(stripped):
+                return []
+        return [
+            "缺少發言來源標註：正文各項指示、裁示、交辦與他人意見必須在句末加註"
+            "「（發言者N，00:12:04）」或「（科長，00:12:04）」，不得整體省略發言歸屬"
+        ]
+
     @staticmethod
     def _contains_simplified_chinese(text: str) -> bool:
         """偵測簡體字漂移（P1-2：改用 OpenCC 全字覆蓋，取代 45 字硬編碼表）。"""
@@ -950,6 +1008,17 @@ class SummarizationService:
             return template.generation_message_extra
         return ""
 
+    @classmethod
+    def _speaker_traceability_rule(cls, template: Optional[MeetingTemplate]) -> str:
+        """雲端生成用的發言來源標註規則行（模板未開啟時回空字串）。
+
+        僅在模板明確開啟 speaker_traceability 時注入；地端生成訊息完全不呼叫
+        本方法，確保地端輸出行為不變。
+        """
+        if template is not None and template.speaker_traceability:
+            return cls.CLOUD_SPEAKER_TRACEABILITY_RULE
+        return ""
+
     def _build_summary_from_notes_message(
         self,
         extracted_notes: str,
@@ -1005,6 +1074,7 @@ class SummarizationService:
         本地因 context 有限只能餵筆記；雲端長上下文沒有這個限制——
         逐字稿一併附上，生成時才有細節可以引用，而不是被迫轉寫筆記骨架。
         """
+        speaker_rule = self._speaker_traceability_rule(template)
         return f"""請根據以下「萃取筆記」與「原始逐字稿」，輸出最終版本的會議記錄。
 
 要求：
@@ -1014,7 +1084,7 @@ class SummarizationService:
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
 - 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
-
+{speaker_rule}
 萃取筆記：
 {extracted_notes}
 
@@ -1035,8 +1105,9 @@ class SummarizationService:
         必須回到原文找細節才補得回來。
         """
         base = self._build_refinement_message(current_summary, extracted_notes, issues, template=template)
+        speaker_rule = self._speaker_traceability_rule(template)
         return f"""{base}
-
+{speaker_rule}
 原始逐字稿（補充細節時以此為準）：
 {transcript}"""
 
@@ -2440,19 +2511,26 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """雲端分段併發萃取（v4.3.3）。
+        """雲端萃取筆記（v4.7.3 起預設「單次呼叫」，分段改為可選回退路徑）。
 
-        分塊密度沿用地端實證值（settings.CLOUD_LLM_CHUNK_TOKENS）：
-        LLM 輸出長度不會隨輸入等比放大，唯有把逐字稿切小段、逼模型
-        對每一段都做完整萃取，筆記的資訊密度才有結構性保證。
-        雲端上下文充足，分段筆記直接零損串接，不需要地端的有損整併。
+        2026-09-14 使用者決策：選雲端模型時不再分段萃取——地端分段的
+        原始動機（記憶體不足、小模型注意力集中度低）在雲端不存在，且
+        逐字稿規模遠低於雲端上下文上限，單次呼叫即可完成萃取。
+        v4.3.3 的分段併發萃取（LLM 輸出長度不隨輸入等比放大的對策）
+        保留為回退路徑：settings.CLOUD_LLM_SEGMENTED_EXTRACTION=true
+        即恢復分段，此時分塊密度沿用地端實證值
+        （settings.CLOUD_LLM_CHUNK_TOKENS），分段筆記零損串接。
         """
-        chunks = self._split_transcript_into_chunks(
-            transcript, settings.CLOUD_LLM_CHUNK_TOKENS
-        ) or [transcript]
+        if settings.CLOUD_LLM_SEGMENTED_EXTRACTION:
+            chunks = self._split_transcript_into_chunks(
+                transcript, settings.CLOUD_LLM_CHUNK_TOKENS
+            ) or [transcript]
+        else:
+            chunks = [transcript]
         total_chunks = len(chunks)
+        stage_label = f"共 {total_chunks} 段" if total_chunks > 1 else "單次呼叫"
         self._emit_progress(
-            progress_callback, 68.0, f"萃取逐字稿重點（雲端，共 {total_chunks} 段）..."
+            progress_callback, 68.0, f"萃取逐字稿重點（雲端，{stage_label}）..."
         )
 
         semaphore = asyncio.Semaphore(max(1, settings.CLOUD_LLM_MAX_CONCURRENT_REQUESTS))
@@ -2532,6 +2610,7 @@ class SummarizationService:
 
         min_chars = self._estimate_cloud_min_summary_chars(transcript)
         issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
+        issues += self._validate_cloud_speaker_traceability(summary, template)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
@@ -2557,6 +2636,7 @@ class SummarizationService:
                 template=template,
             )
             issues = self._validate_summary_quality(summary, notes, min_chars=min_chars, template=template)
+            issues += self._validate_cloud_speaker_traceability(summary, template)
 
         if issues:
             log.warning(

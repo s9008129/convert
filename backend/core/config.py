@@ -7,7 +7,7 @@
 
 import os
 from typing import Optional, List
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator, SecretStr
 from pydantic import Field, AliasChoices
 
@@ -153,12 +153,12 @@ class Settings(BaseSettings):
     # ========================================
     # 雲端 LLM provider（v4.7.1，T20260913-1900-01）
     # ========================================
-    # 雲端模式預設改用 Ollama Cloud（OpenAI 相容端點）；Gemini 保留為可選 provider，
-    # 以 CLOUD_LLM_PROVIDER=gemini 切回。所有雲端呼叫一律透過下方的
+    # 雲端模式預設為 Gemini（使用者日常設定）；Ollama Cloud 保留為可選 provider，
+    # 以 CLOUD_LLM_PROVIDER=ollama_cloud 啟用。所有雲端呼叫一律透過下方的
     # cloud_llm_* 屬性取值，不得再直接讀 GEMINI_*。
     CLOUD_LLM_PROVIDER: str = Field(
-        default="ollama_cloud",
-        description="雲端 LLM provider（ollama_cloud/gemini）"
+        default="gemini",
+        description="雲端 LLM provider（gemini/ollama_cloud）"
     )
     OLLAMA_API_KEY: Optional[str] = Field(
         default=None,
@@ -174,11 +174,15 @@ class Settings(BaseSettings):
     )
     CLOUD_LLM_CHUNK_TOKENS: int = Field(
         default=3200,
-        description="雲端萃取分塊大小（tokens）；沿用地端實證的分塊密度——分段萃取是筆記豐富度的結構保證（v4.3.3）"
+        description="雲端萃取分塊大小（tokens）；僅在 CLOUD_LLM_SEGMENTED_EXTRACTION=true 時生效（v4.3.3 沿用地端實證的分塊密度）"
     )
     CLOUD_LLM_MAX_CONCURRENT_REQUESTS: int = Field(
         default=3,
         description="雲端分段萃取的併發請求數上限（避免觸發 API rate limit）"
+    )
+    CLOUD_LLM_SEGMENTED_EXTRACTION: bool = Field(
+        default=False,
+        description="雲端萃取是否分段（預設 False＝單次呼叫整份逐字稿；設 True 可回退 v4.3.3 分段併發萃取）"
     )
     DEFAULT_MODE: str = Field(default="local", description="預設處理模式 (local/cloud)")
     LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: int = Field(
@@ -567,10 +571,11 @@ class Settings(BaseSettings):
     def asr_safe_deny_patterns_list(self) -> List[str]:
         return [pattern.strip() for pattern in self.ASR_SAFE_DENY_PATTERNS.split(",") if pattern.strip()]
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # 全域設定實例

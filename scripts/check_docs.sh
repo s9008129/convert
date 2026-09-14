@@ -74,9 +74,10 @@ else
 fi
 
 # 搜尋舊版本號
+# 排除 CHANGELOG.md：它是歷史帳本，記錄舊版號屬正常內容，不應視為文件過時
 OLD_VERSIONS=("3.5.4" "3.5.3" "3.5.2")
 for old_ver in "${OLD_VERSIONS[@]}"; do
-    COUNT=$(grep -r "v${old_ver}" . --include="*.md" --exclude-dir={node_modules,.git,old,歷史封存,venv,.venv,archive,venv.backup.*} 2>/dev/null | grep -v "歷史" | grep -v "版本" | wc -l | tr -d ' ')
+    COUNT=$(grep -r "v${old_ver}" . --include="*.md" --exclude="CHANGELOG.md" --exclude-dir={node_modules,.git,old,歷史封存,venv,.venv,archive,venv.backup.*} 2>/dev/null | grep -v "歷史" | grep -v "版本" | wc -l | tr -d ' ')
     if [ "$COUNT" -gt 0 ]; then
         echo -e "  ${YELLOW}⚠️ 發現 v${old_ver} 引用: ${COUNT} 處${NC}"
         WARNINGS=$((WARNINGS + 1))

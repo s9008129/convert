@@ -23,8 +23,8 @@
 | 文件 | 說明 |
 |------|------|
 | [spec](規格與設計/spec.md) | 功能規格（需求、驗收標準） |
-| [Implement_Plan](規格與設計/Implement_Plan.md) | 實作計畫 |
-| [Tasks](規格與設計/Tasks.md) | 任務清單 |
+| [implement_plan](規格與設計/implement_plan.md) | 實作計畫 |
+| [tasks](規格與設計/tasks.md) | 任務清單 |
 | [系統架構與程式設計書](規格與設計/系統架構與程式設計書.md) | 系統架構、處理管線、API、部署設計的完整技術文件（開發者必讀） |
 | [發言者分離與主席裁示 研究與設計](規格與設計/發言者分離與主席裁示-研究與設計.md) | 說話者分離（sherpa-onnx）、發言者標註逐字稿與主席裁示歸屬：選型實測、fail-soft 契約、風險與驗收方式 |
 | [Apple SpeechAnalyzer 維運手冊](apple-speech-analyzer-operations.md) | macOS 26+／Apple Silicon 唯一 ASR 引擎的維運視角：平台矩陣、錯誤碼、fail-closed 與排障 |

@@ -6,7 +6,7 @@
 > **版本**：v1.0  
 > **建立日期**：2025-12-19  
 > **狀態**：📋 待 CEO 批准  
-> **前置文件**：`doc/Implement_Plan.md`（已批准）  
+> **前置文件**：`doc/規格與設計/implement_plan.md`（已批准）  
 > **目標版本**：v3.5.5 → v4.0.0
 
 ---
@@ -443,7 +443,7 @@ class Settings(BaseSettings):
 
 **變更內容**：
 - 更新 `doc/升級計畫.md` 狀態為「✅ 已完成」
-- 更新 `doc/Implement_Plan.md` 狀態為「✅ 已完成」
+- 更新 `doc/規格與設計/implement_plan.md` 狀態為「✅ 已完成」
 - 建立 `doc/Test_Report.md`
 
 **預估時間**：30 分鐘

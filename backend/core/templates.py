@@ -162,6 +162,11 @@ class MeetingTemplate:
     result_title: str = "# 會議紀錄"
     # 附件輸出（v4.5.0）：None 表示此會議類型無附件
     attachment: Optional[AttachmentSpec] = None
+    # 最終紀錄是否要求保留發言來源標註（2026-09-14）。
+    # True＝雲端生成階段會要求「（發言者N，00:12:04）」／「（科長，00:12:04）」
+    # 句末標註，且缺漏時觸發補強輪；地端生成流程不受影響。
+    # 預設 False：採購評選會等場合委員身分不宜逐句具名歸屬，須逐模板明確開啟。
+    speaker_traceability: bool = False
     # 表單式 DOCX 版面（v4.6.0）：None 表示採一般公文段落式渲染
     form_layout: Optional[FormLayoutSpec] = None
 
@@ -376,6 +381,7 @@ _PROCUREMENT_TEMPLATE = MeetingTemplate(
 _SECTION_MEETING_TEMPLATE = MeetingTemplate(
     id="section_meeting",
     display_name="科務會議",
+    speaker_traceability=True,
     description="科室內部科務會議紀錄（含決議事項辦理情形彙整表與列管資料附件）",
     local_only=False,
     system_prompt=section_meeting.SECTION_MEETING_SYSTEM_PROMPT,
@@ -390,7 +396,18 @@ _SECTION_MEETING_TEMPLATE = MeetingTemplate(
         ("科長指示及提醒事項", re.compile(r"指示及提醒")),
         ("散會", re.compile(r"散會\s*[:：]")),
     ),
-    forbidden_patterns=(),
+    # 彙整表列不得出現發言來源標註（2026-09-14）：來源標註只屬於正文，
+    # 一旦寫進四欄表格就會原樣流入「列管資料」附件（附件是確定性抽取，
+    # 不會清洗），因此以確定性檢查攔下並觸發補強輪。
+    forbidden_patterns=(
+        (
+            "彙整表內出現發言來源標註",
+            re.compile(
+                r"^\|.*（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）",
+                re.MULTILINE,
+            ),
+        ),
+    ),
     record_header_fields=(
         RecordFieldSpec(
             f"{_MISSING_CONFIRM}{_MISSING_CONFIRM}年{_MISSING_CONFIRM}月份第{_MISSING_CONFIRM}次科務會議紀錄",

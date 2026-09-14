@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from backend.core.config import settings
+from backend.core.templates import get_template
 from backend.services.summarization import LocalContextPlan, SummarizationService
 
 
@@ -397,9 +398,10 @@ def test_estimate_cloud_min_summary_chars_scales_with_transcript():
 
 @pytest.mark.asyncio
 async def test_cloud_pipeline_chunked_extraction_and_transcript_in_generation(monkeypatch):
-    """雲端第一段須分段萃取；第二段生成須同時看到筆記與原始逐字稿。"""
+    """回退路徑：CLOUD_LLM_SEGMENTED_EXTRACTION=true 時分段萃取；生成仍須雙輸入。"""
     service = SummarizationService()
     transcript = "主席：討論專案里程碑。科長：建議維持月底上線。"
+    monkeypatch.setattr(settings, "CLOUD_LLM_SEGMENTED_EXTRACTION", True)
 
     chunk_notes_1 = _notes_with_two_actions()
     chunk_notes_2 = _notes_with_two_actions()
@@ -427,6 +429,38 @@ async def test_cloud_pipeline_chunked_extraction_and_transcript_in_generation(mo
     assert "萃取筆記：" in generation_message
     assert "原始逐字稿：" in generation_message
     assert transcript in generation_message
+
+
+@pytest.mark.asyncio
+async def test_cloud_pipeline_single_pass_extraction_by_default(monkeypatch):
+    """v4.7.3：雲端預設不分段——整份逐字稿一次萃取，切塊函式不得被呼叫。"""
+    service = SummarizationService()
+    transcript = "主席：討論專案里程碑。科長：建議維持月底上線。"
+    monkeypatch.setattr(settings, "CLOUD_LLM_SEGMENTED_EXTRACTION", False)
+
+    chunk_splitter = Mock(side_effect=AssertionError("雲端預設不得呼叫切塊"))
+    monkeypatch.setattr(service, "_split_transcript_into_chunks", chunk_splitter)
+
+    responses = iter([_notes_with_two_actions(), _complete_summary()])
+    gemini = AsyncMock(side_effect=lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(service, "_gemini_chat", gemini)
+
+    summary = await service._summarize_with_gemini(settings.DEFAULT_SYSTEM_PROMPT, transcript)
+
+    assert summary.startswith("會議名稱：")
+    # 萃取 1 次＋最終生成 1 次（品質無問題，不進補強輪）
+    assert gemini.await_count == 2
+    assert chunk_splitter.call_count == 0
+
+    # 單次萃取必須看到整份逐字稿，且仍使用雲端豐富度提示詞
+    extraction_prompt, extraction_message = gemini.await_args_list[0].args[:2]
+    assert "豐富度" in extraction_prompt
+    assert transcript in extraction_message
+
+    # 生成階段：筆記＋逐字稿雙輸入不變
+    generation_message = gemini.await_args_list[-1].args[1]
+    assert "萃取筆記：" in generation_message
+    assert "原始逐字稿：" in generation_message
 
 
 @pytest.mark.asyncio
@@ -995,3 +1029,140 @@ async def test_gemini_chat_does_not_retry_non_transient_errors(monkeypatch):
         await service._gemini_chat("system", "user")
 
     assert once.await_count == 1
+
+
+def test_cloud_generation_message_requires_speaker_traceability():
+    """開啟旗標的模板（科務會議）雲端生成／補強訊息必須帶發言來源標註規則。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
+    transcript = "[00:00:00-00:01:00] 發言者1：請各股配合辦理"
+
+    cloud = service._build_cloud_summary_message(notes, transcript, template=template)
+    cloud_refine = service._build_cloud_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript, template=template
+    )
+
+    rule = SummarizationService.CLOUD_SPEAKER_TRACEABILITY_RULE
+    assert rule in cloud
+    assert rule in cloud_refine
+
+
+def test_speaker_traceability_rule_is_template_gated():
+    """旗標未開啟的模板（含 general）與地端生成訊息都不得被雲端規則影響。"""
+    service = SummarizationService()
+    notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
+    transcript = "[00:00:00-00:01:00] 發言者1：請各股配合辦理"
+    rule = SummarizationService.CLOUD_SPEAKER_TRACEABILITY_RULE
+
+    for template_id in ("general", "procurement_evaluation"):
+        template = get_template(template_id)
+        assert template.speaker_traceability is False
+        assert rule not in service._build_cloud_summary_message(notes, transcript, template=template)
+        assert service._validate_cloud_speaker_traceability("會議紀錄正文", template) == []
+
+    local = service._build_summary_from_notes_message(notes, template=get_template("section_meeting"))
+    assert rule not in local, "地端生成流程不得被雲端規則影響"
+
+
+def test_validate_cloud_speaker_traceability_accepts_body_source_tag():
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    record = """科務會議紀錄
+時間：中華民國115年9月3日
+主持人：科長　紀錄：AI 會議助理
+| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |
+| --- | --- | --- | --- |
+| 配合組織規程調整 | 資管股： | | |
+
+二、科長指示及提醒事項：
+（一）組織規程調整
+1. 請各相關股別提早預約準備（發言者1，00:00:00）。
+2. 印花稅業務移撥（科長，00:01:30）。
+"""
+    assert service._validate_cloud_speaker_traceability(record, template) == []
+
+
+def test_validate_cloud_speaker_traceability_flags_omitted_attribution():
+    """標籤只出現在開頭欄位／彙整表不算數（實測 Gemini 對照組的失效樣態）。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    record = """科務會議紀錄
+時間：中華民國115年9月3日
+主持人：發言者1（科長）　紀錄：AI 會議助理
+出席人員：發言者1、發言者2、發言者3
+| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |
+| --- | --- | --- | --- |
+| 配合組織規程調整（發言者1，00:00:00） | 資管股： | | |
+
+二、科長指示及提醒事項：
+1. 請各相關股別提早預約準備。
+"""
+    issues = service._validate_cloud_speaker_traceability(record, template)
+    assert any("缺少發言來源標註" in issue for issue in issues)
+
+
+def _section_meeting_record(with_sources: bool) -> str:
+    tag = "（發言者1，00:00:00）。" if with_sources else "。"
+    filler = "本次會議就組織規程與編制表生效後之系統權限、設備調整與人員配置逐項確認，並請各相關股別依分工於期限內完成配合事項，如有疑義應即時向科長反映。" * 2
+    return f"""（待確認）科（待確認）年（待確認）月份第（待確認）次科務會議紀錄
+時間：中華民國（待確認）年（待確認）月（日）日（星期）（待確認）
+地點：（待確認）
+主持人：科長　紀錄：AI 會議助理
+出席人員：如後附簽到表
+歷次科務會議決議事項繼續列管案件：（待確認）
+（待確認）年（待確認）月份第（待確認）次科務會議決議事項辦理情形彙整表
+決議事項：
+| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |
+| --- | --- | --- | --- |
+| 組織規程調整配合事項｜各相關股別： | | |
+一、科長轉知局務會議工作報告及相關注意事項：無
+二、科長指示及提醒事項：
+（一）組織規程與編制表生效配合事項
+1. 請各相關股別就系統權限與設備提早預約準備{tag}
+{filler}
+散會：（待確認）
+"""
+
+
+@pytest.mark.asyncio
+async def test_cloud_pipeline_refines_when_speaker_attribution_missing(monkeypatch):
+    """科務會議缺發言來源標註時，應觸發補強輪並在補強後通過（確定性絆索）。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    transcript = "[00:00:00-00:01:00] 發言者1：請各股配合組織規程調整"
+    notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
+
+    responses = iter([
+        notes,
+        _section_meeting_record(with_sources=False),
+        _section_meeting_record(with_sources=True),
+    ])
+    gemini = AsyncMock(side_effect=lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(service, "_gemini_chat", gemini)
+
+    summary = await service._summarize_with_gemini(
+        template.resolve_system_prompt(), transcript, template=template
+    )
+
+    # 萃取 1 次＋生成 1 次＋補強 1 次
+    assert gemini.await_count == 3
+    refinement_message = gemini.await_args_list[-1].args[1]
+    assert "缺少發言來源標註" in refinement_message
+    assert "（發言者1，00:00:00）" in summary
+
+
+def test_section_meeting_forbids_source_tags_inside_tracking_table():
+    """來源標註只能出現在正文：寫進彙整表會原樣流入列管附件，必須被攔下。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    base = _section_meeting_record(with_sources=True)
+    clean_issues = service._validate_summary_quality(base, "## 1. 會議資訊\n", template=template)
+    assert not any("機敏" in issue or "彙整表內出現" in issue for issue in clean_issues)
+
+    polluted = base.replace(
+        "| 組織規程調整配合事項｜各相關股別： | | |",
+        "| 組織規程調整配合事項｜各相關股別：（科長，00:00:00） | | |",
+    )
+    issues = service._validate_summary_quality(polluted, "## 1. 會議資訊\n", template=template)
+    assert any("彙整表內出現發言來源標註" in issue for issue in issues)

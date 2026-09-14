@@ -79,8 +79,17 @@ def _fake_client(stream, captured=None):
 # ---------------------------------------------------------------------------
 # 設定解析
 # ---------------------------------------------------------------------------
-def test_default_cloud_provider_is_ollama_cloud():
+def test_default_cloud_provider_is_gemini():
     cfg = Settings(_env_file=None)
+    assert cfg.cloud_llm_provider_id == "gemini"
+    assert cfg.cloud_llm_model == "gemini-3.5-flash-lite"
+    assert "generativelanguage.googleapis.com" in cfg.cloud_llm_base_url
+    assert cfg.cloud_llm_api_key_env_name == "GEMINI_API_KEY"
+    assert cfg.cloud_llm_provider_label == "Gemini"
+
+
+def test_ollama_cloud_provider_still_selectable():
+    cfg = Settings(_env_file=None, CLOUD_LLM_PROVIDER="ollama_cloud")
     assert cfg.cloud_llm_provider_id == "ollama_cloud"
     assert cfg.cloud_llm_model == "deepseek-v4.1-flash"
     assert cfg.cloud_llm_base_url == "https://ollama.com/v1"
@@ -107,7 +116,11 @@ def test_unknown_cloud_provider_rejected():
 
 
 def test_cloud_base_url_normalized_without_trailing_slash():
-    cfg = Settings(_env_file=None, OLLAMA_CLOUD_BASE_URL="https://example.invalid/v1/")
+    cfg = Settings(
+        _env_file=None,
+        CLOUD_LLM_PROVIDER="ollama_cloud",
+        OLLAMA_CLOUD_BASE_URL="https://example.invalid/v1/",
+    )
     assert cfg.cloud_llm_base_url == "https://example.invalid/v1"
 
 

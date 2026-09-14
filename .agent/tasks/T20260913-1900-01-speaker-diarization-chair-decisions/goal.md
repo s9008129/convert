@@ -22,7 +22,7 @@
 7. **回報**：先講 primary outcome（發言者標籤＋裁示歸屬的實證），再講任務閉環狀態，最後列殘留風險（無 ground truth、8 群≠真實人數、`發言者4–8` 可能是碎裂、摘要品質驗證仍回報遺漏、ASR 同音錯字、重疊語音未處理）。
 
 ## 硬性限制（違反即失敗）
-- 雲端 LLM：**只用 Ollama Cloud `deepseek-v4.1-flash`**；不得呼叫 Gemini；不得把 provider 改回 gemini。
+- 雲端 LLM：本任務（2026-09-13）**只用 Ollama Cloud `deepseek-v4.1-flash`**、不得呼叫 Gemini。**2026-09-14 使用者指示：預設 provider 已改回 Gemini（其日常設定）；Ollama Cloud 僅該任務測試用。**
 - 地端 LM Studio 沒開：**不要測地端模型**；`LOCAL_LLM_PROVIDER=auto` 解析失敗是預期現象，不得當 bug。
 - 不得印出任何 API key；不得 `git reset`/`stash`/覆寫使用者未提交的工作；不得把 `data/` 產物或模型檔加入版控。
 - 「發言者N」是自動分群編號、**不是姓名**；不得當人名寫入紀錄或文件。
