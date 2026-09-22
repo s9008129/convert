@@ -1,0 +1,31 @@
+{
+  "plan": {
+    "mode": "full",
+    "dry_run": false,
+    "upload_mode": "api",
+    "inject_revision": true,
+    "host": "127.0.0.1",
+    "port": 52120,
+    "expected_build_revision": "57cadec7ad7a1994a02aa2834874f85211b415c1",
+    "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C4-cloud-baseline",
+    "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p3-cloud-baseline-04",
+    "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p3-cloud-baseline-04/backend_data",
+    "audio": "/Users/hsiaojohnny/Downloads/0903-科務會議.m4a",
+    "processing_mode": "cloud",
+    "health_timeout_seconds": 120.0,
+    "task_timeout_seconds": 7200.0,
+    "poll_interval_seconds": 5.0,
+    "browser_upload_timeout_seconds": 7200.0
+  },
+  "started_at": "2026-09-23T03:24:20.408725+08:00",
+  "finished_at": "2026-09-23T03:24:20.439228+08:00",
+  "child_pid": null,
+  "checks": {
+    "backend_started": false
+  },
+  "failure_reasons": [
+    "repo worktree 不是 clean（E2E decision-validity gate）：1 個未提交變更——請先形成 clean HEAD 再驗收"
+  ],
+  "verdict": "FAIL",
+  "note": "preflight fail closed：backend 未啟動、無任何 upload"
+}
