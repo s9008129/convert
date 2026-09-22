@@ -1,0 +1,160 @@
+{
+  "attempt": "attempt-D1-gemma31b-p3",
+  "task_id": "T20260922-2037-02-local-model-quality-parity",
+  "purpose": "D1＝Gemma 4 31B 在 P3 修復後的複驗，含新量尺（plan rev 7 §8.0 N-3／§8.5 W11：同音檔、同模板、同模式，並以 coverage-1.0.0 量測事實涵蓋率）",
+  "head_sha": "c298cc81a12beae4d83d00def07cda73bb56d0a9",
+  "branch": "fix/qwen-local-quality-parity",
+  "command": "uv run python scripts/e2e/run_owned_e2e.py --audio \"/Users/hsiaojohnny/Downloads/0903-科務會議.m4a\" --template section_meeting --processing-mode local --artifacts-dir .agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-D1-gemma31b-p3 --runtime-dir data/cache/e2e/p3-gemma31b-d1",
+  "command_source": "依 run_summary.json（artifacts_dir／runtime_dir／mode=full／upload_mode=api／port=64459／child_pid=88307）與 task_final.json（template_id／processing_mode）逐值重建；runner 為自有子程序模式（child_terminated=true）。",
+  "started_at": "2026-09-23T01:35:25.863960+08:00",
+  "finished_at": "2026-09-23T01:55:53.081220+08:00",
+  "duration_seconds": 1227.2,
+  "duration_source": "finished_at − started_at ＝ 1,227.217 s（run_summary.json 兩欄位相減，非估算）",
+  "task_started_at": "2026-09-23T01:35:31.100202",
+  "task_completed_at": "2026-09-23T01:55:49.667113",
+  "task_duration_seconds": 1218.6,
+  "task_duration_source": "task_completed_at − task_started_at ＝ 1,218.567 s（task_final.json）；與 backend.log「任務 ab5571ea 處理完成，耗時: 1218.6秒」相符",
+  "exit_code": null,
+  "exit_code_note": "run_summary.json／task_final.json 未提供 exit code；本檔不代填（verdict=PASS、failure_reasons=[]）。",
+  "verdict": "PASS",
+  "failure_reasons": [],
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "formal_docx_valid": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "model": "gemma-4-31B-it-MLX-4bit",
+  "model_key": "gemma-4-31b-it-mlx",
+  "model_display": "gemma-4-31B-it-MLX-4bit（lmstudio-community，4bit MLX，arch=gemma4）",
+  "lmstudio_instance_context_length": 71936,
+  "meeting_template": "section_meeting",
+  "processing_mode": "local",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "record_md": "data/cache/e2e/p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea.md",
+  "transcript_txt": "data/cache/e2e/p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea_逐字稿.txt",
+  "docx": "data/cache/e2e/p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea.docx",
+  "core1": {
+    "metric_version": "tag_traceability-1.1.0",
+    "tags_total": 24,
+    "traceable_tag_ratio": 1.0,
+    "on_start_tag_ratio": 0.9583,
+    "on_start_tag_ratio_excluding_zero": 0.9474,
+    "tags_on_real_segment_start": 23,
+    "tags_on_real_segment_start_excluding_zero": 18,
+    "body_source_tag_count": 24,
+    "table_source_tag_count": 0,
+    "tagged_item_ratio": 1.0,
+    "instruction_item_count": 19,
+    "char_count": 1955,
+    "known_term_fix_left_hits": 0,
+    "zero_time_tag_count": 5,
+    "distinct_tag_time_count": 16,
+    "distinct_tag_time_ratio": 0.6667,
+    "exact_tag_ratio": 0.0417,
+    "unsupported_entities": [
+      "徵收股",
+      "煙酒分管股",
+      "稽查股"
+    ],
+    "gates": {
+      "on_start_tag_ratio>=0.95": "PASS (0.9583)",
+      "on_start_tag_ratio_excluding_zero>=0.9": "PASS (0.9474)",
+      "traceable_tag_ratio>=0.95": "PASS (1.000)",
+      "body_source_tag_count>=17": "PASS (24)",
+      "table_source_tag_count==0": "PASS (0)"
+    },
+    "source": "我重跑 scripts/e2e/measure_record_quality.py（DATA_DIR=/tmp/probe_scratch uv run --frozen python）；stdout 與同目錄 record_quality.json byte 相同",
+    "notes": "單次抽樣（extraction temp 0.6／final temp 0.7）。唯一 off-start 標註＝00:04:53（自寫解析複核 23/24、18/19 與儀器一致）。"
+  },
+  "coverage": {
+    "metric_version": "coverage-1.0.0",
+    "coverage_core": 0.6786,
+    "coverage_all": 0.5075,
+    "coverage_supporting": 0.3846,
+    "missing_core_ids": [
+      "F001",
+      "F019",
+      "F021",
+      "F025",
+      "F044",
+      "F060",
+      "F061",
+      "F065",
+      "F066"
+    ],
+    "checklist_sha256": "cf012d1f6983f67ecb47cc7a6486e48c110a6b2782ad94cccf0332a4ec6ec001",
+    "record_sha256": "010a5224969efe4ec47e5efb8edf47dbf011fcd47d16fd377f0d3bbdab65ae51",
+    "transcript_self_check": {
+      "coverage_core": 1.0,
+      "coverage_all": 0.9851
+    },
+    "source": "我重跑 scripts/e2e/measure_coverage.py --label D1-gemma31b；與 quality/coverage/coverage_gemma31b_d1.json 同值",
+    "note": "單次抽樣；不得外推。D1 與 C1（同模型）差 7.1／6.0 個百分點＝抽樣變異，不得解讀為修復造成品質退化。"
+  },
+  "snap_log": [
+    "地端紀錄後處理（最終輸出，01:55:49）：術語修正 0 處、出處標註吸附 7 處（段落內 0／最近段落 0／跨發言者 7；全域段首保護 16 筆不動；往前收 7 筆／最大 75 s；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條"
+  ],
+  "refinement": {
+    "rounds_executed": 0,
+    "note": "本波預期行為：守衛未誤攔、不收斂保護未觸發；log 無「本地摘要品質補強」行、無「仍有待補強」、無「連續兩輪問題集合相同仍繼續補強」；符合驗收「補強輪數 ≤ 1」。單場觀測，非「一律 0 輪」保證。"
+  },
+  "timing_breakdown": {
+    "asr_seconds": 15.595,
+    "diarization_seconds": 151.7,
+    "diarization_segments": 682,
+    "diarization_speakers": 8,
+    "diarization_rtf": 0.056,
+    "transcript_semantic_correction_seconds": 311,
+    "transcript_semantic_correction_detail": "45 段中 8 段有修正、1 段放棄、採納 27 處替換（12 次小呼叫，間隔約 21–31 s；01:38:19→01:43:30）",
+    "extraction_seconds": 346.4,
+    "extraction_prompt_tokens": 12583,
+    "final_call_seconds": 392.4,
+    "final_call_prompt_tokens": 16242,
+    "refinement_rounds": 0,
+    "pipeline_total_seconds": 738.8,
+    "pipeline_metrics": "chunk_count=1, logical_generations=2, semantic_attempts=0, network_retries=0, merge_rounds=0, merge_groups_last_round=0, duration_seconds={'extraction': 346.4, 'merge': 0.0, 'final_and_refine': 392.4, 'total': 738.8}",
+    "task_total_seconds": 1218.6,
+    "runner_total_seconds": 1227.2,
+    "note": "每階段 wall-clock 由 backend.log 時間戳與 pipeline metrics 重建；final_and_refine 392.4 即最終生成（本場無補強輪）。"
+  },
+  "observations": {
+    "off_start_tag": "唯一 off-start 標註＝00:04:53（落 [00:00:00-00:05:36] 內、非段首）＝ rev 10 重跑診斷之 kept_far=1（位移 293 s > 120 s 精度保護；見 quality/snap_interval_variant_check.md §rev 10）；16（規則 0 保護）＋7（吸附）＝23 筆落段首，與量測 23/24 一致。",
+    "transcript_identical_to_C1": "本場逐字稿 sha256 199d37b5… 與 C1 逐字稿 byte 相同（diff 無差異）；兩場差異全在 LLM 生成端。",
+    "coverage_gap_qualitative": "逐字稿有、md 完全沒有：嘉義／選舉／視察／露臺／藤蔓／李飛（grep 驗證）；另有 20 處「（待確認）」。C1 完全缺席的省員／小秘書／排水管本場已寫入。",
+    "prefill_note": "本場未另行分解 prefill／decode（未重跑 LM Studio server log 分析）。"
+  },
+  "instrument_metric_version": {
+    "value": "tag_traceability-1.1.0 ＋ coverage-1.0.0（新量尺）",
+    "note": "兩支量測皆由我重跑（DATA_DIR=/tmp/probe_scratch uv run --frozen python）。"
+  },
+  "rev10_applicability": {
+    "source": "quality/snap_interval_variant_check.md §rev 10（Planner 落檔）＋我自己的無秒標註檢查",
+    "claim": "D1 在 rev 9（c298cc8）上執行；rev 10 只動無秒標註路徑，而本場 24 個標註無一為無秒格式（我逐筆檢查：全部 HH:MM:SS）→ rev 10 對本場數字無影響。",
+    "recheck_values": "kept_on_start=23、kept_far=1、二次套用 changed=0（byte 相同）——取自 snap_interval_variant_check.md §rev 10；本檔未重跑吸附函式。",
+    "independent_check": "見同目錄 verify_independent.md（由驗證方另行產出；本檔不代為判決）。"
+  },
+  "what_this_does_not_prove": [
+    "涵蓋率／忠實度（coverage 是字面量尺；無 ground truth 的忠實度量尺）",
+    "與雲端 Gemini 的相對差距（C2 因 Gemini 503 失敗，未取得可比基線；需 attempt-C3 重跑）",
+    "模型本質優劣（單次抽樣，temperature 0.6／0.7）",
+    "Ollama／Windows 實機行為（本場仍為 macOS ＋ LM Studio）",
+    "DOCX 視覺版面品質（僅驗 zip 結構／word/document.xml）"
+  ],
+  "independent_verification": {
+    "file": "verify_independent.md",
+    "status": "由驗證方另行產出於同目錄（非本檔作者撰寫）；本檔不重複其判決。"
+  }
+}

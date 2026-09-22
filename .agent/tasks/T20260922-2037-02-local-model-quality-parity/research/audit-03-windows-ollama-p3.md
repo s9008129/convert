@@ -136,7 +136,8 @@
 
 ## ⑦ 建議（最小、可執行，皆不需改產品程式）
 
-1. Windows 首驗（實機）依序：確認容器內 `models/diarization` 兩個模型檔存在 → 以「科務會議＋本地模式」跑一份錄音 → 用 `measure_record_quality.py`（`tag_traceability`）與 `measure_coverage.py` 各量一次，並確認 `kept_on_start`（已是段首的標註未被搬動）＋ `backward_moves`／`max_backward_seconds`（後退僅限段落內吸附、幅度受觀測）。（舊名 `snapped_across_segment`＝rev 8 工作名，恆 0 無鑑別力，已移除。）
+ 1. Windows 首驗（實機）依序：確認容器內 `models/diarization` 兩個模型檔存在 → 以「科務會議＋本地模式」跑一份錄音 → 用 `measure_record_quality.py`（`tag_traceability`）與 `measure_coverage.py` 各量一次，並確認 `kept_on_start`（已是段首的標註未被搬動）＋ `backward_moves`／`max_backward_seconds`（後退僅限段落內吸附、幅度受觀測）。（舊名 `snapped_across_segment`＝rev 8 工作名，恆 0 無鑑別力，已移除。）
+    - **rev 12 errata（2026-09-23）**：上述「後退僅限段落內吸附」不成立於規則 2（nearest 容忍 180 s 可跨段後退；只有規則 1／3 的後退在段落內）；首驗只需看 `backward_moves`／`max_backward_seconds` 的**幅度**，別推論落點在段落內／不跨段——見 `plan.md` §8.7 風險⑤ 與研究文件 §11.7。
 2. 量尺在 Windows 一律加 `PYTHONUTF8=1`（或 `set PYTHONIOENCODING=utf-8`）；checklist 存成 UTF-8 無 BOM。
 3. 跨平台比對只比數值欄位（`coverage_*`／`tag_*`），忽略 `*_path`、`*_sha256`、`record_char_count` 與 `generated_at`。
 4. 在 `.env` 明確設 `LOCAL_LLM_PROVIDER=ollama`（compose 未寫死此鍵，`env_file` 生效；改 `.env` 後記得 `up -d`）。

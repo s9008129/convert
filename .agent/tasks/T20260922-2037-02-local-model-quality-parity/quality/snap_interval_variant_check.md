@@ -478,3 +478,575 @@ print("stats:", st)
 ```
 
 </details>
+## rev 10 增補量測（2026-09-23）：規則 4 精度保護
+
+> **版本對照（必讀）**：本節全部數字對應 **rev 10 實作（工作樹未提交變更）**——`snap_source_tags_to_transcript`
+> 於「採用 replacement 之前」新增**規則 4 精度保護**：原標註是 **`HH:MM`（無秒）**且吸附目標段首
+> **不是整分鐘**（`target % 60 != 0`）→ **原樣保留**並計入新 stats 欄位 `kept_precision`；
+> 僅在 render/parse 可逆（含秒，或目標為整分鐘）時才採用 replacement。
+> 根因＝審查 `review/attempt-08` R1：無秒標註吸附後**非冪等**（`00:03 → 00:02 → 00:00` 鏈式後退）。
+> **上方所有節（§1–§9、§rev 9）的數字對應 rev 8／rev 9 實作，勿與本節混用。本節為檔尾追加，未改動任何既有內容。**
+
+- 量測基準：HEAD `c298cc81a12beae4d83d00def07cda73bb56d0a9`；受測實作＝**工作樹** `backend/core/text_postprocess.py`
+  （rev 10；sha256 `44a5de3cd00f07a128ac7181bb78cee9c735f950fda8af2aef6920f8d480bd4b`）。
+  規則 4 現址：`text_postprocess.py:987-989`（`with_seconds` 判定之後；其後 990 行才是 `replacement` 指派）：
+
+  ```python
+  if not with_seconds and target % 60 != 0:
+      stats["kept_precision"] += 1
+      return tag
+  ```
+
+- 全數以 repo 真函式 `tp.snap_source_tags_to_transcript(紀錄, 逐字稿, get_template("section_meeting"))` 執行；
+  探針腳本置於 `/tmp/p3_probe/`（**未進 repo**）；命令一律 `DATA_DIR=/tmp/probe_scratch uv run --frozen python ...`。
+- 工作樹另有 `backend/services/summarization.py`／`tests/test_t20260922_2037_p3_parity.py` 未提交變更；
+  本節只呼叫吸附函式，與它們無關。
+- **[VERIFIED]**：以下所有數字（五素材 stats、二次套用 byte 比較、合成探針、最小反例複現）均由 §rev10.E 腳本
+  實際執行輸出，非轉抄。
+
+### rev10.A 受測物（三既有＋A1＋D1 新素材）
+
+| 紀錄 | 路徑（相對 repo） | md sha256 前 16 | 逐字稿 | 逐字稿 md5 | 段落數 |
+|---|---|---|---|---|---|
+| 27B | `data/cache/e2e/p2-27b-fix-01/backend_data/outputs/0903-科務會議_dc3c8f7a.md` | `b0ac8563c190e0c6` | 同目錄 `..._逐字稿.txt` | `1f15658303d84075c7a19c9d1fe2e325` | 183 |
+| Gemma | `data/cache/e2e/p2-gemma31b-fix-01/backend_data/outputs/0903-科務會議_ac1edcec.md` | `7d2de68463ada245` | 同目錄 `..._逐字稿.txt` | `07ba4e3f7afd257a551288cb204fb15a` | 183 |
+| MoE | `data/cache/e2e/p2-moe-fix-01/backend_data/outputs/0903-科務會議_0cc199da.md` | `94d2f96d1c0960c2` | 同目錄 `..._逐字稿.txt` | `864a0325fdd175e0697f93528a582a6c` | 183 |
+| A1（p2 舊執行產物） | `data/cache/e2e/p2-27b-01/backend_data/outputs/0903-科務會議_f012e80c.md` | `d48913472857df0c` | 同目錄 `..._逐字稿.txt` | `1f15658303d84075c7a19c9d1fe2e325` | 183 |
+| **D1（本波 P3 D1 E2E 產物）** | `data/cache/e2e/p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea.md` | `010a5224969efe4e` | 同目錄 `..._逐字稿.txt` | `07ba4e3f7afd257a551288cb204fb15a` | 183 |
+
+- D1 md 由 `e2e/attempt-D1-gemma31b-p3/`（`run_summary.json`：Gemma 4 31B、HEAD `c298cc8`、`task_completed=true`）產出；
+  md mtime `01:55:49` 早於 rev 10 工作樹變更（`text_postprocess.py` mtime `01:59:33`）→ **D1 輸出由 rev 9 build 產生**（吸附後標註已是 rev 9 fixpoint）。
+- A1 逐字稿 md5 與 27B 相同、D1 與 Gemma 相同：同模型同場次之 ASR 逐字稿檔重用（byte 相同，非筆誤）。
+
+### rev10.B 五素材吸附統計（rev 10 真函式）
+
+| 素材 | segments | tags | snapped | changed | kept_on_start | **kept_precision** | kept_far | backward_moves | max_backward_seconds | forward_moves | untraceable | 二次套用 byte 相同 | 二次 changed |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 27B | 183 | 52 | 0 | **0** | 52 | **0** | 0 | 0 | 0 | 0 | 0 | True | 0 |
+| Gemma | 183 | 20 | 0 | **0** | 20 | **0** | 0 | 0 | 0 | 0 | 0 | True | 0 |
+| MoE | 183 | 14 | 0 | **0** | 14 | **0** | 0 | 0 | 0 | 0 | 0 | True | 0 |
+| A1 | 183 | 61 | 3 | **3** | 58 | **0** | 0 | 3 | 70 | 0 | 0 | True | 0 |
+| D1 | 183 | 24 | 0 | **0** | 23 | **0** | 1 | 0 | 0 | 0 | 0 | True | 0 |
+
+- **[VERIFIED] 與事先預期逐項一致**：`kept_precision` 五素材全 0（輸入域掃描 171 個標註中 **0 個無秒**）；
+  `changed` 依序 0／0／0／3／0；D1 `kept_on_start=23`、`kept_far=1`；五個二次套用皆 **byte 相同、`changed=0`**（冪等）。
+- A1 的 3 筆 changed（[VERIFIED] 逐筆診斷）：tag#24／#25／#53，`（發言者1，00:25:21）→（發言者1，00:24:11）`（Δ=-70 s、snapped_exact）；
+  原值＝段落 `(1451,1521,發言者1)` 的 **end** 且非任何段 start（閉區間邊界吸附，rev 9 已記載）。三筆皆**含秒**標註，
+  規則 4 不涉入 → **與 rev 9 輸出完全一致；rev 10 未對既有素材新增任何改寫**。
+- D1 唯一 `kept_far`（[VERIFIED] 逐筆診斷）：tag#10 `（科長，00:04:53）`（orig=293 s），落點段首 0 s、位移 293 s > `TAG_SNAP_MAX_SHIFT_SECONDS=120`
+  → 依既有位移上限原樣保留（先於規則 4 判定，屬 rev 9 既有保護，非規則 4 之功）。
+- 三份既有 P2 檔（27B／Gemma／MoE）標註 100% 已落在真實段首 → 規則 0 全數接住、`changed=0`（fixpoint 結構性結果，同 rev 9）。
+
+### rev10.C 合成探針：規則 4 生效證據與最小反例
+
+fixture 自建於 `/tmp`（合成逐字稿＋合成紀錄；`/tmp/p3_probe/rev10_minute_probe.py`，見 §rev10.E）。
+「rev9sim」＝以現行函式原始碼**機械移除規則 4 區塊**重建（`assert src.count(BLOCK) == 1` 防定位錯誤；非人為改寫）。
+
+| 案例 | 逐字稿（段首；目標＝落點候選段） | 紀錄標註 | rev10 `f(x)` | rev10 `f(f(x))` | rev10 changed 1→2 | rev10 `kept_precision` | rev9sim `f(x)` → `f(f(x))` | 判讀 |
+|---|---|---|---|---|---|---|---|---|
+| A｜attempt-08 R1 原 fixture（5 段；目標段首 `00:02:42` 非整分鐘） | `00:00:12／00:00:42／00:02:42／00:03:18／00:04:48` | `（科長，00:03）` | `（科長，00:03）`（原樣） | 同左 | 0→0 | **1** | `00:02` → `00:00`（1→1；**f(f(x))≠f(x)**） | 規則 4 擋下；審查反例鏈完整複現 |
+| B｜自建最小反例（2 段；目標段首 `00:02:42`） | `00:00:42／00:02:42` | `（科長，00:03）` | `（科長，00:03）` | 同左 | 0→0 | **1** | `00:02` → `00:00`（1→1；**非冪等**） | 最小型反例（兩段即可）；即 `00:03→00:02→00:00` |
+| C｜合成②：目標段首**整分鐘** | `00:02:00` | `（科長，00:03）` | `（科長，00:02）`（snapped=1） | `（科長，00:02）`（第二輪由規則 0 接住） | 1→0 | 0 | `00:02` → `00:02`（1→0） | 整分鐘目標可吸附且冪等（`parse(render(120s))==120s`） |
+| D｜合成①單段版：目標段首非整分鐘 | `00:02:42` | `（科長，00:03）` | `（科長，00:03）` | 同左 | 0→0 | **1** | `00:02` → `00:02`（1→0） | 規則 4 原樣保留；rev9 會做一次「值失真」後退（120 s 非任何段首）後靜止 |
+
+- **[VERIFIED] ①（非整分鐘 → 原樣保留）**：A／B／D 三案例 `kept_precision=1`、標註原樣、`changed=0`、二次套用 byte 相同。
+- **[VERIFIED] ②（整分鐘 → 可吸附）**：C 案例 `snapped=1`、`kept_precision=0`、`changed=1`，`00:03→00:02` 落點＝目標段首；二次套用 byte 相同（規則 0 接手）。
+- **[VERIFIED] ③（冪等）**：A～D 四案例二次套用皆 byte 相同（A／B／D 靠規則 4，C 靠規則 0）。
+- **[VERIFIED] 最小反例（無規則 4 時 non-idempotent；本節自行複現）**：B（自建，僅 2 段）rev9sim `f(x)=（科長，00:02）`
+  → `f(f(x))=（科長，00:00）`、`changed1=1／changed2=1`；與 `review/attempt-08` R1 記載之 `00:03 → 00:02 → 00:00` 鏈一致，
+  A 則為該審查原 fixture 之逐字複現（同鏈）。機理：`00:03`（180 s）被吸到段首 162 s → `with_seconds=False` 渲染捨秒成
+  `00:02`（120 s）→ 第二輪 120 s 落回更前段 `[42,162]` → 段首 42 s → `00:00`（0 s 不在任何段內才停）。
+
+### rev10.D 如實邊界（不得外推）
+
+- **[VERIFIED] 規則 4 在五個真實素材上完全未觸發（`kept_precision=0`；輸入域掃描 171 個標註中 0 個無秒）**
+  → 它**不是**既有素材品質改善的來源，只是把「無秒標註（`HH:MM`）」這個**可達輸入域**的冪等宣稱補齊；
+  **不得宣稱它改善了既有素材**。既有素材輸出與 rev 9 逐項相同（27B／Gemma／MoE `changed=0`、A1 `changed=3`、
+  D1 `kept_on_start=23／kept_far=1`）。
+- 規則 4 的**生效證據全部來自合成 fixture**（A～D）；真實素材只有「未觸發（=0）」這一項證據。**不得外推**為
+  「真實會議曾發生無秒標註鏈退」。
+- rev9sim 為「機械移除規則 4 區塊」之行為重建，未以 `git stash`／checkout 舊版檔實跑；僅作「若無規則 4」對照。
+- `[UNKNOWN]`：含秒＋無秒混雜之長紀錄、無秒標註的目標段首恰為整分鐘但原標註本身非段首之真實案例
+  （C 為合成）、其他會議／多會議批次、規則 4 與 `kept_far` 同時成立時的行為（現行碼 `kept_far` 先判，未以 fixture 交叉驗證）。
+
+### rev10.E 可重現指令（本次實際執行）
+
+`rev10_snap.py`（§rev10.A／B 主腳本）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && DATA_DIR=/tmp/probe_scratch uv run --frozen python /tmp/p3_probe/rev10_snap.py
+```
+
+<details><summary>rev10_snap.py 全文</summary>
+
+```python
+"""rev 10 增補量測：五素材（27B／Gemma／MoE／A1／D1）真實素材吸附統計（工作樹 rev 10 實作）。
+
+呼叫 repo 真函式 backend.core.text_postprocess.snap_source_tags_to_transcript；
+輸出 JSON（含首輪 stats、二次套用 byte 相同、輸入域無秒標註計數）。"""
+import hashlib, json, sys
+sys.path.insert(0, "/Users/hsiaojohnny/dev/convert")
+from pathlib import Path
+from backend.core import text_postprocess as tp
+from backend.core.templates import get_template
+
+REPO = Path("/Users/hsiaojohnny/dev/convert")
+P = REPO / "data/cache/e2e"
+MATS = [
+    ("27B",   P/"p2-27b-fix-01/backend_data/outputs/0903-科務會議_dc3c8f7a.md"),
+    ("Gemma", P/"p2-gemma31b-fix-01/backend_data/outputs/0903-科務會議_ac1edcec.md"),
+    ("MoE",   P/"p2-moe-fix-01/backend_data/outputs/0903-科務會議_0cc199da.md"),
+    ("A1",    P/"p2-27b-01/backend_data/outputs/0903-科務會議_f012e80c.md"),
+    ("D1",    P/"p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea.md"),
+]
+tpl = get_template("section_meeting")
+out = {}
+for name, rp in MATS:
+    raw = rp.read_bytes()
+    rec = raw.decode("utf-8")
+    trp = rp.with_name(rp.stem + "_逐字稿.txt")
+    tr = trp.read_text(encoding="utf-8")
+    # 輸入域掃描：無秒（HH:MM）標註筆數
+    no_sec = 0
+    for m in tp.SOURCE_TAG_PATTERN.finditer(rec):
+        tm = tp.SOURCE_TAG_TIME_PATTERN.search(m.group()[1:-1])
+        if tm and tm.group(3) is None:
+            no_sec += 1
+    new, st = tp.snap_source_tags_to_transcript(rec, tr, tpl)
+    new2, st2 = tp.snap_source_tags_to_transcript(new, tr, tpl)
+    out[name] = {
+        "md": str(rp.relative_to(REPO)),
+        "md_sha256": hashlib.sha256(raw).hexdigest(),
+        "md_sha256_16": hashlib.sha256(raw).hexdigest()[:16],
+        "transcript_md5": hashlib.md5(tr.encode("utf-8")).hexdigest(),
+        "no_second_tags_in_input": no_sec,
+        "stats1": st,
+        "byte_identical_second": new2 == new,
+        "stats2": st2,
+    }
+print(json.dumps(out, ensure_ascii=False, indent=1))
+print()
+for name, _ in MATS:
+    r = out[name]
+    s = r["stats1"]
+    print(
+        f"{name:5s} segs={s['segments']} tags={s['tags']} snapped={s['snapped']} changed={s['changed']} "
+        f"kept_on_start={s['kept_on_start']} kept_precision={s['kept_precision']} kept_far={s['kept_far']} "
+        f"backward={s['backward_moves']} max_back={s['max_backward_seconds']} forward={s['forward_moves']} "
+        f"untraceable={s['untraceable']} | 2nd byte==1st: {r['byte_identical_second']} (changed2={r['stats2']['changed']}) "
+        f"| no-sec in input: {r['no_second_tags_in_input']}"
+    )
+```
+
+</details>
+
+`rev10_minute_probe.py`（§rev10.C 合成探針，含 rev9sim 機械重建）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && DATA_DIR=/tmp/probe_scratch uv run --frozen python /tmp/p3_probe/rev10_minute_probe.py
+```
+
+<details><summary>rev10_minute_probe.py 全文</summary>
+
+```python
+"""rev 10 規則 4（精度保護）合成探針：無秒標註（HH:MM）的冪等。
+
+(a) 工作樹 rev 10 實作（repo 真函式）；
+(b) rev 9 模擬：以「現行函式原始碼機械移除規則 4 區塊」重建（非人為改寫），
+    用於複現 review/attempt-08 R1 的鏈式後退（00:03 → 00:02 → 00:00）。
+
+案例：
+  A = attempt-08 R1 原 fixture（reviewer 的 5 段逐字稿）——本節自行複現一次。
+  B = 自建最小非冪等反例（2 段：目標段首 00:02:42 非整分鐘 + 其前段）。
+  C = 合成②：目標段首為整分鐘（00:02:00）→ 規則 4 不擋、可吸附，且冪等。
+  D = 合成①單段版：目標段首非整分鐘 → rev10 原樣保留（kept_precision=1），
+      對照 rev9 會先搬到 00:02（120s，非任何段首／非段落內 → 值失真後靜止）。
+"""
+import inspect, json, sys
+sys.path.insert(0, "/Users/hsiaojohnny/dev/convert")
+from backend.core import text_postprocess as tp
+from backend.core.templates import get_template
+
+src = inspect.getsource(tp.snap_source_tags_to_transcript)
+BLOCK = (
+    '        if not with_seconds and target % 60 != 0:\n'
+    '            stats["kept_precision"] += 1\n'
+    '            return tag\n'
+)
+assert src.count(BLOCK) == 1, "規則 4 區塊定位失敗，中止"
+src2 = src.replace(BLOCK, "")
+ns = dict(vars(tp))
+exec(compile(src2, "<rev9-sim>", "exec"), ns)
+snap_rev9 = ns["snap_source_tags_to_transcript"]
+
+tpl = get_template("section_meeting")
+
+CASES = {
+    "A_attempt08_R1原fixture": {
+        "tr": (
+            "[00:00:12-00:00:42] 發言者1：話。\n"
+            "[00:00:42-00:02:42] 發言者2：話。\n"
+            "[00:02:42-00:04:42] 發言者2：話。\n"
+            "[00:03:18-00:03:19] 發言者1：話。\n"
+            "[00:04:48-00:04:49] 發言者2：話。\n"
+        ),
+        "rec": "會議紀錄。1.（科長，00:03）",
+    },
+    "B_自建最小反例_2段": {
+        "tr": (
+            "[00:00:42-00:02:42] 發言者2：話。\n"
+            "[00:02:42-00:04:42] 發言者2：話。\n"
+        ),
+        "rec": "會議紀錄。1.（科長，00:03）",
+    },
+    "C_合成②目標段首整分鐘": {
+        "tr": "[00:02:00-00:04:42] 發言者2：話。\n",
+        "rec": "會議紀錄。1.（科長，00:03）",
+    },
+    "D_合成①單段非整分鐘": {
+        "tr": "[00:02:42-00:04:42] 發言者2：話。\n",
+        "rec": "會議紀錄。1.（科長，00:03）",
+    },
+}
+KEYS = ("changed", "kept_precision", "kept_on_start", "kept_far",
+        "snapped", "snapped_speaker_mismatch", "untraceable")
+out = {}
+for name, c in CASES.items():
+    f1, s1 = tp.snap_source_tags_to_transcript(c["rec"], c["tr"], tpl)
+    f2, s2 = tp.snap_source_tags_to_transcript(f1, c["tr"], tpl)
+    f3, s3 = tp.snap_source_tags_to_transcript(f2, c["tr"], tpl)
+    r1, r1s = snap_rev9(c["rec"], c["tr"], tpl)
+    r2, r2s = snap_rev9(r1, c["tr"], tpl)
+    r3, r3s = snap_rev9(r2, c["tr"], tpl)
+    out[name] = {
+        "transcript": c["tr"], "record": c["rec"],
+        "rev10": {
+            "f1": f1, "f2": f2, "f3": f3,
+            "changed1": s1["changed"], "changed2": s2["changed"], "changed3": s3["changed"],
+            **{k: s1[k] for k in KEYS},
+            "idempotent": f2 == f1 and f3 == f2,
+        },
+        "rev9sim": {
+            "f1": r1, "f2": r2, "f3": r3,
+            "changed1": r1s["changed"], "changed2": r2s["changed"], "changed3": r3s["changed"],
+            "idempotent": r2 == r1 and r3 == r2,
+        },
+    }
+print(json.dumps(out, ensure_ascii=False, indent=1))
+print()
+for name in CASES:
+    r = out[name]
+    a, b = r["rev10"], r["rev9sim"]
+    print(f"== {name}")
+    print(f"   rev10  f1={a['f1']!r}")
+    print(f"          f2={a['f2']!r}  changed1={a['changed1']} changed2={a['changed2']} "
+          f"kept_precision={a['kept_precision']} kept_on_start={a['kept_on_start']} snapped={a['snapped']} "
+          f"kept_far={a['kept_far']} idempotent={a['idempotent']}")
+    print(f"   rev9sim f1={b['f1']!r}")
+    print(f"          f2={b['f2']!r}  changed1={b['changed1']} changed2={b['changed2']} idempotent={b['idempotent']}")
+```
+
+</details>
+
+`rev10_detail.py`（A1 changed／D1 kept_far 逐筆診斷）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && DATA_DIR=/tmp/probe_scratch uv run --frozen python /tmp/p3_probe/rev10_detail.py
+```
+
+<details><summary>rev10_detail.py 全文</summary>
+
+```python
+"""rev 10 補充診斷：A1 三筆 changed 與 D1 kept_far 的逐筆落點（真函式）。"""
+import sys
+sys.path.insert(0, "/Users/hsiaojohnny/dev/convert")
+from pathlib import Path
+from backend.core import text_postprocess as tp
+from backend.core.templates import get_template
+REPO = Path("/Users/hsiaojohnny/dev/convert")
+P = REPO / "data/cache/e2e"
+tpl = get_template("section_meeting")
+
+def tag_list(text):
+    out = []
+    for m in tp.SOURCE_TAG_PATTERN.finditer(text):
+        tm = tp.SOURCE_TAG_TIME_PATTERN.search(m.group()[1:-1])
+        out.append((m.group(), tm.group() if tm else None,
+                    tp._hms_to_seconds(tm.group(1), tm.group(2), tm.group(3) or "0") if tm else None))
+    return out
+
+for name, rel in [
+    ("A1", "p2-27b-01/backend_data/outputs/0903-科務會議_f012e80c"),
+    ("D1", "p3-gemma31b-d1/backend_data/outputs/0903-科務會議_ab5571ea"),
+]:
+    rp = P / (rel + ".md"); tpth = P / (rel + "_逐字稿.txt")
+    rec, tr = rp.read_text(encoding="utf-8"), tpth.read_text(encoding="utf-8")
+    segs = tp.iter_transcript_segments(tr); starts = {s for s, _, _ in segs}
+    new, st = tp.snap_source_tags_to_transcript(rec, tr, tpl)
+    before, after = tag_list(rec), tag_list(new)
+    print(f"### {name}  stats1={st}")
+    print(f"    changed 逐筆:")
+    for i, (tb, ta) in enumerate(zip(before, after)):
+        if tb[2] is not None and ta[2] is not None and tb[2] != ta[2]:
+            print(f"      tag#{i} {tb[0]} -> {ta[0]}  on_start_before={tb[2] in starts}")
+    print(f"    kept_far 候選（規則 0 未命中、有 target、位移>120s）逐筆:")
+    # 重新標定 kept_far 為哪一筆：以「規則 0 未命中且有落點但未改寫」逐一檢查
+    for i, tb in enumerate(before):
+        if tb[2] is None: continue
+        if tb[2] in starts: continue
+        inner = tb[0][1:-1]; tm = tp.SOURCE_TAG_TIME_PATTERN.search(inner)
+        speaker = tp._normalize_speaker_label(inner[:tm.start()].strip(tp._SPEAKER_LABEL_STRIP_CHARS))
+        by_spk = {}
+        for s in segs: by_spk.setdefault(tp._normalize_speaker_label(s[2]), []).append(s)
+        same = by_spk.get(speaker, ())
+        target = None
+        if same:
+            c = tp._pick_containing_segment(same, tb[2])
+            if c is not None: target = c[0]
+            else:
+                n = min(same, key=lambda s: abs(s[0]-tb[2]))
+                if abs(n[0]-tb[2]) <= tp.TAG_SNAP_TOLERANCE_SECONDS: target = n[0]
+        if target is None:
+            c = tp._pick_containing_segment(segs, tb[2])
+            if c is not None: target = c[0]
+        if target is not None and abs(target-tb[2]) > tp.TAG_SNAP_MAX_SHIFT_SECONDS and after[i][2] == tb[2]:
+            print(f"      tag#{i} {tb[0]}  orig={tb[2]}s target={target}s shift={abs(target-tb[2])}s")
+```
+
+</details>
+
+**標註總表**：[VERIFIED] rev10.A／B／C 全部數字、規則 4 程式碼位置與 sha256 綁定、rev9sim 反例鏈複現；
+[UNKNOWN] 見 §rev10.D 最後一條。本節未宣稱任何既有素材品質改善。
+## rev 12 增補（2026-09-23）：規則 2 nearest 跨段後退的如實界定
+
+> **版本對照（必讀）**：本節對應 **rev 12 工作樹**——`snap_source_tags_to_transcript` 在 rev 10（規則 4）之上，
+> 於 docstring／行內註解新增「規則 2 nearest 容忍**仍可跨段後退**」的如實界定（**未改任何行為分支**）。
+> **與 §rev 9／§rev 10 的關係＝只限縮宣稱、不改行為**：rev 9 起「一般輸入不跨段後退」的宣稱須限縮為
+> 「**已是全域真實段首的值不被搬動**」＋「規則 1／3 的落點必在時間戳所屬段落內或其段首」；
+> **規則 2（nearest，容差 180 s）例外**，仍可跨段後退（v1.0 即有）。rev 10 的冪等宣稱不受影響
+> （本節反例輸出二次套用 byte 相同）。**本節未宣稱任何既有素材品質改善。** 本節為檔尾追加，未改動任何既有內容。
+
+- 量測基準：HEAD `c298cc81a12beae4d83d00def07cda73bb56d0a9`；受測實作＝工作樹 `backend/core/text_postprocess.py`
+  （rev 12；sha256 `f08a873cd2526328a963847a893a506c84213de0ac7231f1988f40b7b5bf4510`）。
+  規則 2 分支現址：`text_postprocess.py:972-974`（`nearest = min(...)`／容差 `TAG_SNAP_TOLERANCE_SECONDS=180`）。
+- 全數以 repo 真函式 `tp.snap_source_tags_to_transcript(紀錄, 逐字稿, get_template("section_meeting"))` 實跑；
+  探針腳本：`/tmp/p3_probe/rev12_nearest_probe.py`（**未進 repo**）；一律 `DATA_DIR=/tmp/probe_scratch uv run --frozen python ...`。
+- **[VERIFIED]**：以下數字（吸附結果、stats、Δ、冪等、HEAD／v1.0 重建對照、log 計數）皆為本節實跑輸出，非轉抄。
+
+### rev12.A 最小反例（兩段）與 Δ 量測
+
+fixture（合成；最小兩段，內建於探針腳本）：
+
+```text
+[00:00:02-00:00:32] 發言者2：話。
+[00:00:32-00:01:02] 發言者1：話。
+```
+
+| 案例 | 紀錄標註 | 吸附後 `f(x)` | Δ（後退秒數） | stats1 關鍵欄位 | 二次套用 byte 相同 |
+|---|---|---|---|---|---|
+| N1（本節最小反例） | `（發言者2，00:00:34）` | `（發言者2，00:00:02）` | **32 s** | `snapped_nearest=1／changed=1／backward_moves=1／max_backward_seconds=32` | True |
+| N2 | `（發言者2，00:00:47）` | `（發言者2，00:00:02）` | **45 s** | 同 N1，`max_backward_seconds=45` | True |
+| N3 | `（發言者2，00:00:57）` | `（發言者2，00:00:02）` | **55 s** | 同 N1，`max_backward_seconds=55` | True |
+
+N1 實際 `stats1`（原樣貼出）：
+
+```python
+{'segments': 2, 'tags': 1, 'snapped': 1, 'changed': 1, 'snapped_exact': 0, 'snapped_nearest': 1, 'snapped_speaker_mismatch': 0, 'kept_on_start': 0, 'kept_precision': 0, 'backward_moves': 1, 'forward_moves': 0, 'max_backward_seconds': 32, 'kept_far': 0, 'untraceable': 0}
+```
+
+- 機理：`00:00:34` 落在**別位**發言者（發言者1）的段落 `[32,62]` 內；同發言者清單僅 `[2,32]`、不含 34
+  → 規則 1 不命中；nearest `|2-34|=32 ≤ 180` → 規則 2 吸到 `00:00:02`＝**跨越段落邊界（32 s）的後退**。
+  N2／N3 同型（Δ=45／55；均 ≤ `TAG_SNAP_MAX_SHIFT_SECONDS=120`，故未被 `kept_far` 擋下）。
+
+### rev12.B 冪等：二次套用 byte 相同
+
+| 案例 | `f(f(x))` | 二次 stats（重點） | byte 相同 |
+|---|---|---|---|
+| N1／N2／N3 | `會議紀錄。1.（發言者2，00:00:02）`（與 `f(x)` 相同） | `kept_on_start=1、changed=0、snapped=0` | True（三例皆然） |
+
+- 落點 `00:00:02` 是全域真實段首 → 第二輪由**規則 0** 接住；rev 10 的冪等宣稱在此類輸入仍成立（`f³(x)` 亦相同）。
+
+### rev12.C 非本波引入：HEAD 對照（本 repo 無 `v1.0` tag）
+
+- [VERIFIED] `git tag -l` 實跑：僅 `v0.1.0／v2.1.3／v2.2.0／v3.1.0／v3.5.4-stable`，**無 `v1.0` tag** →
+  依任務指示改用 HEAD（`c298cc8`）對照並如實說明（此為 rev 9 基線，非 P3 前 v1.0 提交）。
+- [VERIFIED] HEAD 對照（`git show HEAD:backend/core/text_postprocess.py` → AST 取出函式原文 `exec`，未重寫）：
+  N1／N2／N3 輸出與工作樹**逐位元組相同**；stats 除 HEAD 無 `kept_precision` 鍵外**逐欄相同**。
+  N1 的 HEAD `stats1`：
+
+  ```python
+  {'segments': 2, 'tags': 1, 'snapped': 1, 'changed': 1, 'snapped_exact': 0, 'snapped_nearest': 1, 'snapped_speaker_mismatch': 0, 'kept_on_start': 0, 'backward_moves': 1, 'forward_moves': 0, 'max_backward_seconds': 32, 'kept_far': 0, 'untraceable': 0}
+  ```
+
+- [VERIFIED] 規則 2 分支原文在 HEAD 與工作樹**逐字元相同**（探針內 `assert` 與
+  `rule2_block_identical_head_vs_worktree=True`）→ rev 10／rev 12 未動此分支。
+- 補充（標示為**重建**、非 checkout）：v1.0 重建＝HEAD 原文機械移除規則 0 區塊（`assert count==1`）
+  ＋`_pick_containing_segment` 換回 P3 前 inline 行為（沿用本檔 §1／§rev9.B 既有手法）→ 三案例亦**同輸出**。
+
+### rev12.D 實務未觸發：三次真實 E2E log `最近段落`=0
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && grep -n "最近段落" data/cache/e2e/p2-27b-fix-01/backend.log data/cache/e2e/p2-gemma31b-fix-01/backend.log data/cache/e2e/p2-moe-fix-01/backend.log
+```
+
+| 真實 E2E log | 命中行（`最近段落` 值） |
+|---|---|
+| `data/cache/e2e/p2-27b-fix-01/backend.log` | L273（0）／L350（0）／L425（0） |
+| `data/cache/e2e/p2-gemma31b-fix-01/backend.log` | L324（0）／L413（0） |
+| `data/cache/e2e/p2-moe-fix-01/backend.log` | L137（0）／L157（0）／L174（0） |
+| （補充）`data/cache/e2e/p3-gemma31b-d1/backend.log` | L319（0） |
+
+- [VERIFIED] `grep -o "最近段落 [0-9]*" … | sort | uniq -c` 實跑：全部 9 個出現值皆 `0`（27B×3、Gemma×2、MoE×3、D1×1）
+  → 三次（＋D1）真實 E2E 中規則 2 nearest **從未命中**；本節界定屬**可達輸入類**（合成 fixture 可達），
+  非既有素材已發生之缺陷。
+
+### rev12.E 如實邊界
+
+- 本節**只限縮宣稱、不改行為**：五素材（27B／Gemma／MoE／A1／D1）以**現行工作樹**重跑 §rev 10 腳本，
+  `stats1` 與二次套用 byte 結果與 §rev 10 節**逐欄相同**（`/tmp/p3_probe/rev12_resnap_out.json` 對
+  `/tmp/p3_probe/rev10_snap_out.json` 實跑比對）；既有素材數字不重貼，亦**未宣稱任何品質改善**。
+- **[UNKNOWN]**：其他會議／其他 ASR 之「標註發言者與時間戳錯位且距離 ≤ 180 s」實際出現率；
+  規則 2 與 `kept_far`／規則 4 的先後組合窮舉；此跨段後退在真實輸出的可觀察品質影響
+  （三次 E2E 未觸發，無樣本可量）。
+- 規則 2 反例為合成 fixture；不得外推為「真實會議曾發生」。HEAD 對照為 rev 9（非 P3 前 v1.0 提交）；
+  「非本波引入」的正面證據＝規則 2 分支原文 HEAD↔工作樹逐字元相同 ＋ v1.0 重建同輸出。
+
+### rev12.F 可重現指令（本次實際執行）
+
+`rev12_nearest_probe.py`（§rev12.A／B／C 主腳本；含 HEAD 原文 exec 與 v1.0 重建對照）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && DATA_DIR=/tmp/probe_scratch uv run --frozen python /tmp/p3_probe/rev12_nearest_probe.py
+```
+
+<details><summary>rev12_nearest_probe.py 全文</summary>
+
+```python
+"""rev 12 增補探針：規則 2（nearest 容忍）跨段後退的如實界定。
+
+(a) 工作樹 rev 12 實作（repo 真函式，含 rule 4；rule 2 未改）；
+(b) HEAD（c298cc8，rev 9）函式原文對照：以 AST 取出 `git show HEAD:backend/core/text_postprocess.py`
+    的函式原文後 exec（未重寫），驗證同輸出（「非本波引入」）；
+(c) v1.0 重建（補充，非 checkout）：HEAD 函式原文「機械移除規則 0 區塊」＋
+    `_pick_containing_segment` 換回 P3 前 inline 行為（本檔 §1 既有手法），
+    標示為重建值。
+
+fixture（兩段，最小）：
+  [00:00:02-00:00:32] 發言者2
+  [00:00:32-00:01:02] 發言者1
+標註（發言者2，00:00:34／00:00:47／00:00:57）：時間戳落在別的發言者段落內、
+同發言者清單無命中 → 走規則 2 nearest → 吸回 00:00:02（Δ=32／45／55 s）。
+"""
+import ast, inspect, json, subprocess, sys
+sys.path.insert(0, "/Users/hsiaojohnny/dev/convert")
+from backend.core import text_postprocess as tp
+from backend.core.templates import get_template
+
+REPO = "/Users/hsiaojohnny/dev/convert"
+TR = (
+    "[00:00:02-00:00:32] 發言者2：話。\n"
+    "[00:00:32-00:01:02] 發言者1：話。\n"
+)
+FIXTURES = [
+    ("N1_最小反例_Δ32s", "會議紀錄。1.（發言者2，00:00:34）", 34),
+    ("N2_Δ45s",         "會議紀錄。1.（發言者2，00:00:47）", 47),
+    ("N3_Δ55s",         "會議紀錄。1.（發言者2，00:00:57）", 57),
+]
+
+# --- HEAD（c298cc8）函式原文 ---
+head_src = subprocess.run(
+    ["git", "show", "HEAD:backend/core/text_postprocess.py"],
+    cwd=REPO, capture_output=True, text=True, check=True).stdout
+open("/tmp/p3_probe/rev12_head_text_postprocess.py", "w", encoding="utf-8").write(head_src)
+tree = ast.parse(head_src)
+fn = next(n for n in tree.body
+          if isinstance(n, ast.FunctionDef) and n.name == "snap_source_tags_to_transcript")
+head_fn_src = ast.get_source_segment(head_src, fn)
+ns_head = dict(vars(tp))
+exec(compile(head_fn_src, "<head-c298cc8>", "exec"), ns_head)
+snap_head = ns_head["snap_source_tags_to_transcript"]
+
+# --- v1.0 重建（補充）：HEAD 原文 − 規則 0 區塊 ＋ 舊 pick 策略 ---
+BLOCK0 = (
+    '        if any(seg[0] == seconds for seg in segments):\n'
+    '            stats["kept_on_start"] += 1\n'
+    '            return tag\n'
+)
+assert head_fn_src.count(BLOCK0) == 1, "HEAD 規則 0 區塊定位失敗"
+v1_src = head_fn_src.replace(BLOCK0, "")
+
+def old_pick(segments, seconds):  # v1.0：閉區間＋清單第一個命中段落
+    for seg in segments:
+        if tp._segment_contains(seg, seconds):
+            return seg
+    return None
+
+ns_v1 = dict(vars(tp))
+ns_v1["_pick_containing_segment"] = old_pick
+exec(compile(v1_src, "<v1.0-sim>", "exec"), ns_v1)
+snap_v1 = ns_v1["snap_source_tags_to_transcript"]
+
+# --- 規則 2 區塊：HEAD 原文 vs 工作樹現行原文，逐字比對 ---
+NEAREST_BLOCK = (
+    "                nearest = min(same_speaker, key=lambda seg: abs(seg[0] - seconds))\n"
+    "                if abs(nearest[0] - seconds) <= TAG_SNAP_TOLERANCE_SECONDS:\n"
+    '                    target, status = nearest[0], "nearest"\n'
+)
+cur_fn_src = inspect.getsource(tp.snap_source_tags_to_transcript)
+assert head_fn_src.count(NEAREST_BLOCK) == 1, "HEAD 規則 2 區塊定位失敗"
+assert cur_fn_src.count(NEAREST_BLOCK) == 1, "工作樹規則 2 區塊定位失敗"
+
+tpl = get_template("section_meeting")
+
+def tag_seconds(text):
+    out = []
+    for m in tp.SOURCE_TAG_PATTERN.finditer(text):
+        tm = tp.SOURCE_TAG_TIME_PATTERN.search(m.group()[1:-1])
+        out.append(tp._hms_to_seconds(tm.group(1), tm.group(2), tm.group(3) or "0") if tm else None)
+    return out
+
+out = {"rule2_block_identical_head_vs_worktree": True, "fixtures": {}}
+for name, rec, orig_secs in FIXTURES:
+    f1, s1 = tp.snap_source_tags_to_transcript(rec, TR, tpl)
+    f2, s2 = tp.snap_source_tags_to_transcript(f1, TR, tpl)
+    f3, s3 = tp.snap_source_tags_to_transcript(f2, TR, tpl)
+    h1, hs1 = snap_head(rec, TR, tpl)
+    v1, v1s = snap_v1(rec, TR, tpl)
+    out["fixtures"][name] = {
+        "record_in": rec, "orig_seconds": orig_secs,
+        "worktree": {"f1": f1, "f2": f2, "f3": f3, "stats1": s1, "stats2": s2,
+                     "idempotent_f2_eq_f1": f2 == f1, "idempotent_f3_eq_f2": f3 == f2,
+                     "delta": orig_secs - tag_seconds(f1)[0] if tag_seconds(f1)[0] is not None else None},
+        "head_c298cc8": {"f1": h1, "stats1": hs1, "same_output_as_worktree": h1 == f1},
+        "v1.0_sim": {"f1": v1, "stats1": v1s, "same_output_as_worktree": v1 == f1},
+    }
+print(json.dumps(out, ensure_ascii=False, indent=1))
+print()
+for name, rec, orig in FIXTURES:
+    r = out["fixtures"][name]
+    w = r["worktree"]
+    print(f"== {name}  標註原值 {orig}s")
+    print(f"   worktree f1={w['f1']!r}  Δ={w['delta']}s  冪等={w['idempotent_f2_eq_f1']}")
+    print(f"   stats1={w['stats1']}")
+    print(f"   HEAD(c298cc8) 同輸出={r['head_c298cc8']['same_output_as_worktree']} | "
+          f"HEAD stats1={r['head_c298cc8']['stats1']}")
+    print(f"   v1.0重建 同輸出={r['v1.0_sim']['same_output_as_worktree']}")
+```
+
+</details>
+
+log 計數（§rev12.D）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && grep -n "最近段落" data/cache/e2e/p2-27b-fix-01/backend.log data/cache/e2e/p2-gemma31b-fix-01/backend.log data/cache/e2e/p2-moe-fix-01/backend.log data/cache/e2e/p3-gemma31b-d1/backend.log
+cd /Users/hsiaojohnny/dev/convert && grep -o "最近段落 [0-9]*" data/cache/e2e/p2-27b-fix-01/backend.log data/cache/e2e/p2-gemma31b-fix-01/backend.log data/cache/e2e/p2-moe-fix-01/backend.log data/cache/e2e/p3-gemma31b-d1/backend.log | sort | uniq -c
+```
+
+五素材「不改行為」對照（§rev12.E；腳本見 §rev 10.E）：
+
+```bash
+cd /Users/hsiaojohnny/dev/convert && DATA_DIR=/tmp/probe_scratch uv run --frozen python /tmp/p3_probe/rev10_snap.py > /tmp/p3_probe/rev12_resnap_out.json
+```
+
+**標註總表**：[VERIFIED] rev12.A／B／C／D 全部數字與程式碼原文比對；[UNKNOWN] 見 §rev12.E。
+本節未宣稱任何既有素材品質改善；未修改 repo 任何程式碼／測試／文件。

@@ -71,6 +71,7 @@
 - 證據：`backend/core/text_postprocess.py:868`、`:876` 用**閉區間** `seg[0] <= seconds <= seg[1]` 取第一個命中段落 → 時間戳恰等於前段 `end` 時被拉回前段 `start`；`:883` 位移 >120s 保留原值。C1 獨立驗收：`.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C1-gemma31b-fix/verify_independent.md:123-145`（7 個改變值中 6 個是倒退、非冪等）；工作樹 `plan.md` R24（`:273`）。
 - 影響：時間精度受損（主指標 `on_start_tag_ratio` 無感＝指標盲區），對已吸附文字再跑一次會再退一格。**與平台／引擎無關**，Windows/Ollama 一樣會中。
 - 現況：工作樹有**未提交** P3 修復（`git diff backend/core/text_postprocess.py`）：新增 `_segment_contains`（半開區間 `[start,end)`、零長度段落退化單點；rev 9 定稿改回閉區間 `[start,end]`）、`_pick_containing_segment`（`start == seconds` 優先→冪等）、規則 0 全域段首保護與新觀察值 `kept_on_start`／`backward_moves`／`max_backward_seconds`（舊名 `snapped_across_segment`＝rev 8 工作名，恆 0 無鑑別力，已移除）；docstring 改 v1.1。上線時應確認「修復是否納入部署快照」，並在驗收檢查 `kept_on_start`（已是段首的標註未被搬動）與 `backward_moves`／`max_backward_seconds`（後退僅限段落內吸附、幅度受觀測）。
+  - **rev 12 errata（2026-09-23）**：上述「後退僅限段落內吸附」**不成立於規則 2**（nearest 容忍 180 s 可跨段後退；只有規則 1／3 的後退在段落內）。驗收看 `backward_moves`／`max_backward_seconds` 的**幅度**即可，**勿**據此推論落點在段落內或「不跨段後退」；如實界定與最小反例見 `plan.md` §8.7 風險⑤、研究文件 §11.7、`review/attempt-09`（R4；已以回歸 fixture 釘住、本波未改行為）。
 
 ### R-04 Windows 不能直接跑 full E2E（runner 為 LM Studio 專用） — [VERIFIED]
 
@@ -167,6 +168,7 @@
      驗收閘門：`table_source_tag_count == 0`、`body_source_tag_count >= 17`、`traceable_tag_ratio >= 0.95`、`on_start_tag_ratio >= 0.95`、`on_start_tag_ratio_excluding_zero >= 0.9`；研究文件 §10.5 的 `>= 0.9` 是「換引擎前哨」寬鬆線（同一指標、用途不同，plan.md `:117-119` 已釐清）。
    - `uv run python scripts/e2e/check_record_output.py --md <紀錄.md> --docx <紀錄.docx>`（`:708-709`）。
    - 若部署快照含 P3 修復，另確認 `kept_on_start`／`backward_moves`（後退僅限段落內吸附，幅度另見 `max_backward_seconds`；舊名 `snapped_across_segment`＝rev 8 工作名，恆 0 無鑑別力，已移除）。
+     - **rev 12 errata（2026-09-23）**：`backward_moves` 的「後退僅限段落內吸附」不成立於規則 2（nearest 容忍可跨段後退；規則 1／3 才在段落內）；`kept_on_start` 的敘述仍成立——見 `plan.md` §8.7 風險⑤。
 4. **不可用 full E2E 作 Windows 首驗**（R-04：LM Studio 快照閘門會失敗），除非先接受已知限制或補 runner 支援。
 
 ## 5. 既有文件待補（只回報，未修改檔案）
