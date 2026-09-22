@@ -1105,3 +1105,72 @@ def test_nominal_formal_run_passes_all_gates(monkeypatch, capsys, tmp_path):
     assert result.summary["verdict"] == "PASS", (
         f"nominal fake flow 應 PASS，實際 reasons：{_failure_reasons(result)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# v4.8.1：驗收場景必須等於使用場景（--template 須送出且須相符）
+# ---------------------------------------------------------------------------
+
+def _template_flow(tmp_path, *, task_template_id):
+    """組出一次帶自訂 template 的 fake flow（client 的 task 回傳指定模板）。"""
+    flow = _standard_flow(tmp_path)
+    client = FakeUploadClient(
+        upload_json=_upload_json(),
+        task_json={**_default_task_json(), "template_id": task_template_id},
+        transcript_response=_transcript_response(),
+        docx_response=_docx_response(),
+        backend_log_path=flow["data_dir"].parent / "e2e-artifacts" / "backend.log",
+        uploads_dir=flow["data_dir"] / "uploads",
+        metrics_lines=[METRICS_OK_LINE],
+    )
+    flow["client"] = client
+    return flow
+
+
+def test_template_argument_is_posted_and_verified(monkeypatch, capsys, tmp_path):
+    """`--template section_meeting` 時：表單須帶 meeting_template，且
+    task_final.template_id 相符才 PASS（驗收場不得誤用預設 general）。"""
+    flow = _template_flow(tmp_path, task_template_id="section_meeting")
+    result = _run_runner(
+        monkeypatch, capsys, tmp_path,
+        audio_path=flow["audio_path"],
+        data_dir=flow["data_dir"],
+        health_json=flow["health_json"],
+        client=flow["client"],
+        extra_args=("--template", "section_meeting"),
+    )
+
+    assert flow["client"].upload_calls, "必須真的上傳音檔"
+    posted = flow["client"].upload_calls[0]["data"] or {}
+    assert posted.get("meeting_template") == "section_meeting", (
+        f"上傳表單未帶 meeting_template，實際 data={posted!r}——"
+        "驗收場若不指定模板，產物品質與使用者真實路徑（section_meeting）不同"
+    )
+    assert result.summary is not None, "runner 必須寫出 run_summary.json"
+    assert result.summary.get("meeting_template") == "section_meeting", (
+        "run_summary 必須記錄本次驗收使用的模板，供事後判定可比性"
+    )
+    assert result.summary["verdict"] == "PASS", (
+        f"模板相符的 nominal flow 應 PASS，實際 reasons：{_failure_reasons(result)}"
+    )
+
+
+def test_template_mismatch_must_fail_verdict(monkeypatch, capsys, tmp_path):
+    """要求 section_meeting 但任務實際用 general → 必須 FAIL（場景不一致）。"""
+    flow = _template_flow(tmp_path, task_template_id="general")
+    result = _run_runner(
+        monkeypatch, capsys, tmp_path,
+        audio_path=flow["audio_path"],
+        data_dir=flow["data_dir"],
+        health_json=flow["health_json"],
+        client=flow["client"],
+        extra_args=("--template", "section_meeting"),
+    )
+
+    assert result.summary is not None, "runner 必須寫出 run_summary.json"
+    assert result.summary["verdict"] == "FAIL", (
+        "模板未生效時仍判 PASS，等於用錯誤場景的產物背書品質"
+    )
+    assert _reasons_match(result, ("模板未生效", "meeting_template")), (
+        f"FAIL 原因必須指向模板不一致，實際：{_failure_reasons(result)}"
+    )

@@ -692,6 +692,7 @@ def run_full_e2e(
     upload_mode: str,
     audio_path: Optional[Path],
     processing_mode: str,
+    meeting_template: Optional[str] = None,
     expected_audio_sha: Optional[str],
     data_dir: Path,
     evidence_dir: Path,
@@ -702,6 +703,11 @@ def run_full_e2e(
     browser_upload_timeout: float,
 ) -> tuple:
     """上傳（API）或偵測（browser）→ stored bytes SHA → 終態 → 下載 → 正式性驗收。
+
+    meeting_template（v4.8.1）：API mode 會以表單欄位 `meeting_template` 上傳，
+    並在終態後以 `task_final.json` 的 `template_id` 做「模板已生效」確定性檢查
+    ——驗收場若誤用預設模板（general），產物品質會與使用者真實路徑
+    （section_meeting 等）不同，這種「驗收場景與使用場景不一致」必須是 FAIL。
 
     API 與 browser mode 共用同一條 monitor/validation path（plan CM-02）：
     browser 模式不 POST 音檔，僅 bounded 解析 isolated backend 既有
@@ -727,11 +733,14 @@ def run_full_e2e(
             failure_reasons.append(f"Browser upload-log mapping 驗證失敗：{exc}")
             return checks, failure_reasons
     else:
+        upload_form = {"processing_mode": processing_mode}
+        if meeting_template:
+            upload_form["meeting_template"] = meeting_template
         with open(audio_path, "rb") as fh:
             resp = client.post(
                 f"{base_url}/api/upload",
                 files={"file": (audio_path.name, fh)},
-                data={"processing_mode": processing_mode},
+                data=upload_form,
             )
         if resp.status_code != 200:
             failure_reasons.append(f"上傳失敗：HTTP {resp.status_code} {resp.text[:500]}")
@@ -814,6 +823,16 @@ def run_full_e2e(
         )
         return checks, failure_reasons
     save_json(evidence_dir / "task_final.json", task)
+    # 模板生效檢查（API 與 browser mode 共用；browser mode 不 POST，只能靠此檢查）
+    if meeting_template:
+        actual_template = str(task.get("template_id") or "")
+        if actual_template != meeting_template:
+            failure_reasons.append(
+                f"會議模板未生效：要求 {meeting_template!r}，實際 {actual_template or '(空)'}；"
+                "驗收場景與使用場景不一致"
+            )
+        else:
+            checks["template_applied"] = True
     if status != "completed":
         failure_reasons.append(f"任務終態為 {status}（非 completed）")
         _write_transcript_and_docx(
@@ -977,6 +996,12 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=None, help="backend 端口（預設自動選 free port）")
     parser.add_argument("--expected-revision", default=None, help="expected Git revision（預設 git rev-parse HEAD）")
     parser.add_argument("--processing-mode", default="local", choices=["local", "cloud"], help="上傳處理模式（預設 local）")
+    parser.add_argument(
+        "--template", default=None,
+        help="會議模板 id（如 section_meeting／procurement_evaluation／general）。"
+        "未指定＝沿用產品預設（general）；指定後會在終態驗證 task_final.template_id "
+        "必須相符，不符即 FAIL（驗收場景須等於使用場景）",
+    )
     parser.add_argument("--health-timeout", type=float, default=120.0, help="health gate 逾時秒數（預設 120）")
     parser.add_argument("--task-timeout", type=float, default=7200.0, help="任務終態 poll 逾時秒數（預設 7200）")
     parser.add_argument("--poll-interval", type=float, default=5.0, help="health/task poll 間隔秒數（預設 5）")
@@ -1176,6 +1201,7 @@ def main() -> int:
                         upload_mode=args.upload_mode,
                         audio_path=audio_path,
                         processing_mode=args.processing_mode,
+                        meeting_template=args.template,
                         expected_audio_sha=expected_audio_sha,
                         data_dir=data_dir,
                         evidence_dir=artifacts_dir,
@@ -1219,6 +1245,8 @@ def main() -> int:
             "metrics_valid",
             "model_snapshot_consistent",
         ]
+        if args.template:
+            required = required + ["template_applied"]
     missing = [name for name in required if not checks.get(name)]
     if missing:
         failure_reasons.append(f"缺少必要檢查：{missing}")
@@ -1227,6 +1255,7 @@ def main() -> int:
     summary = {
         "mode": "smoke" if args.smoke else "full",
         "upload_mode": args.upload_mode,
+        "meeting_template": args.template,
         "started_at": started_at,
         "finished_at": finished_at,
         "port": port,
