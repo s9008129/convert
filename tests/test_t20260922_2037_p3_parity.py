@@ -5,9 +5,14 @@
 
 - **CORE-5（R24／R26）**：出處標註吸附的兩層保證——①**全域段首保護**（時間戳
   若已是任一真實段落起點 → 原樣保留）＋②**段首命中優先**（落點一律是某段 ``start``）。
-  兩者合起來才保證「一般輸入不跨段後退」與**冪等** ``f(f(x)) == f(x)``；
+  兩者合起來才保證「**已是段首的值不被搬動**」；**冪等** ``f(f(x)) == f(x)`` 另需
+  ③**精度保護**（``HH:MM`` 標註的目標段首必須是整分鐘才採用；否則 render 捨秒
+  會讓二次套用再往後退，獨立審查 attempt-08 R1 的反例 ``00:03 → 00:02 → 00:00``）。
+  **如實界定（rev 12／審查 attempt-09 R4）**：後退幅度**不保證**只在段落內——規則 2
+  （nearest 容忍 180 s）在「時間戳落在別的發言者段落內」時會吸到該發言者**較早**的真實段首
+  （跨段後退；非本波引入，v1.0 同）。本檔以 fixture 釘住此已知限制。
   只做②會被跨發言者交界（後一段屬別的發言者）擊穿（獨立審查 attempt-07 的反例）。
-  ③時間戳恰為某段 ``end`` 但非任何段 ``start``（段落間空隙的邊界）仍落在真實
+  ④時間戳恰為某段 ``end`` 但非任何段 ``start``（段落間空隙的邊界）仍落在真實
   段落內（不可回溯率不得因此上升）。
   （既有 `tests/test_platform_provider_routing.py` 只驗「同一輸入跑兩次相同」，
   純函式必然成立，因此抓不到這些缺陷——這裡驗的是 ``f(f(x)) == f(x)``。）
@@ -134,6 +139,85 @@ GAP_TRANSCRIPT = (
     "[00:00:00-00:00:30] 發言者1：甲。\n"
     "[00:01:00-00:01:30] 發言者2：丙。\n"
 )
+
+
+# 獨立審查 attempt-08（R1）的最小反例：**無秒標註**（``HH:MM``）＋目標段首不是
+# 整分鐘。只做「全域段首保護＋段首優先」仍會鏈式後退：00:03 → 00:02 → 00:00。
+MINUTE_PRECISION_TRANSCRIPT = (
+    "[00:00:12-00:00:42] 發言者1：甲。\n"
+    "[00:00:42-00:02:42] 發言者2：乙。\n"
+    "[00:02:42-00:04:42] 發言者2：丙。\n"
+    "[00:03:18-00:03:19] 發言者1：丁。\n"
+    "[00:04:48-00:04:49] 發言者2：戊。\n"
+)
+
+
+def test_snap_無秒標註_目標非整分鐘時必須原樣保留_避免鏈式後退():
+    """0 秒資訊的標註（``HH:MM``）不得被吸到非整分鐘的段首。"""
+    template = get_template("section_meeting")
+    text = "會議紀錄。一、1.丙（科長，00:03）。"
+
+    once, first_stats = snap_source_tags_to_transcript(
+        text, MINUTE_PRECISION_TRANSCRIPT, template
+    )
+    twice, second_stats = snap_source_tags_to_transcript(
+        once, MINUTE_PRECISION_TRANSCRIPT, template
+    )
+
+    assert once == text, "無秒標註的目標不是整分鐘時，必須原樣保留（精度保護）"
+    assert first_stats["kept_precision"] == 1
+    assert first_stats["snapped"] == 0
+    assert first_stats["changed"] == 0
+    assert twice == once, "冪等：第二次套用不得再改動任何字元"
+    assert second_stats["changed"] == 0
+
+
+def test_snap_無秒標註_目標為整分鐘時可吸附且冪等():
+    """同樣是無秒標註，但落點是整分鐘 → render 可逆，因此可吸附且仍為不動點。"""
+    template = get_template("section_meeting")
+    transcript = "[00:01:00-00:01:30] 發言者2：乙。\n"
+    text = "會議紀錄。一、1.乙（發言者2，00:02）。"
+
+    once, first_stats = snap_source_tags_to_transcript(text, transcript, template)
+    twice, second_stats = snap_source_tags_to_transcript(once, transcript, template)
+
+    assert "（發言者2，00:01）" in once, "整分鐘落點可精確以 HH:MM 表示，應吸附"
+    assert first_stats["changed"] == 1
+    assert first_stats["kept_precision"] == 0
+    assert twice == once, "冪等：第二輪由規則 0（段首保護）接住"
+    assert second_stats["changed"] == 0
+    assert second_stats["kept_on_start"] == 1
+
+
+# 獨立審查 attempt-09（R4）的最小反例：**規則 2（nearest 容忍）可跨段後退**——
+# 時間戳落在別的發言者段落內時，會吸到「該發言者最近的真實段首」，
+# 該段首可能早於原時間戳所在的段落。已知限制（非回歸：v1.0 同輸出），
+# 本測試把它釘住，避免「後退只發生在段落內」的宣稱再次出現。
+RULE2_NEAREST_TRANSCRIPT = (
+    "[00:00:02-00:00:32] 發言者2：甲。\n"
+    "[00:00:32-00:01:02] 發言者1：乙。\n"
+)
+
+
+def test_snap_規則2_nearest_可跨段後退_落點仍是該發言者真實段首且冪等():
+    """已知限制：nearest 容忍會跨段後退；但落點仍是真實段首，且仍為不動點。"""
+    template = get_template("section_meeting")
+    text = "會議紀錄。一、1.甲（發言者2，00:00:34）。"
+
+    once, stats = snap_source_tags_to_transcript(
+        text, RULE2_NEAREST_TRANSCRIPT, template
+    )
+    twice, second_stats = snap_source_tags_to_transcript(
+        once, RULE2_NEAREST_TRANSCRIPT, template
+    )
+
+    assert "（發言者2，00:00:02）" in once, "nearest 容忍會吸到該發言者最近的真實段首"
+    assert stats["snapped_nearest"] == 1
+    assert stats["backward_moves"] == 1
+    assert stats["max_backward_seconds"] == 32
+    assert once != text, "規則 2 屬於會改寫的路徑（本測試釘住其存在，非背書其精度）"
+    assert twice == once, "冪等：第二輪由規則 0（段首保護）接住"
+    assert second_stats["changed"] == 0
 
 
 def test_量尺與吸附共用同一份閉區間定義_空隙邊界仍可回溯():
