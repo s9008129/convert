@@ -1,0 +1,43 @@
+{
+  "mode": "full",
+  "upload_mode": "api",
+  "meeting_template": "section_meeting",
+  "started_at": "2026-09-23T00:12:43.166153+08:00",
+  "finished_at": "2026-09-23T00:23:25.557647+08:00",
+  "port": 61702,
+  "child_pid": 54895,
+  "expected_build_revision": "b3db34a93fa2df1280fe057235171f8662aa252e",
+  "actual_build_revision": "b3db34a93fa2df1280fe057235171f8662aa252e",
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C2-cloud-baseline",
+  "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p3-cloud-baseline-01",
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p3-cloud-baseline-01/backend.log",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p3-cloud-baseline-01/backend_data",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [
+    "summary_failed=true：transcript fallback 已安全保存，但正式會議紀錄生成失敗——E2E 驗收必須判 FAIL（產品 fallback 語意不變）",
+    "Content-Disposition 下載檔名含 fallback label（逐字稿）：attachment; filename*=utf-8''20260923001248_%E9%80%90%E5%AD%97%E7%A8%BF%28%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84%E7%94%9F%E6%88%90%E5%A4%B1%E6%95%97%29.docx",
+    "DOCX OOXML 內容為 transcript fallback：偵測到 fallback title／錯誤標記（逐字稿（會議紀錄生成失敗））",
+    "DOCX OOXML 的 section_meeting 模板 section「一、科長轉知」缺少非空後續內容",
+    "DOCX OOXML 的 section_meeting 模板 section「二、科長指示及提醒事項」缺少非空後續內容",
+    "DOCX OOXML 的 section_meeting 模板 section「案由及承辦單位」缺少非空後續內容",
+    "DOCX OOXML 的 section_meeting 模板 section「散會」缺少非空後續內容",
+    "structured metrics 缺失：backend log 找不到『本地摘要 pipeline metrics』行（缺少 logical_generations／semantic_attempts／merge_rounds 驗收證據）",
+    "缺少必要檢查：['task_summary_failed_false', 'formal_docx_valid', 'metrics_valid']"
+  ],
+  "verdict": "FAIL"
+}
