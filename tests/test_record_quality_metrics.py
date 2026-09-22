@@ -47,6 +47,8 @@ EXPECTED_KEYS = {
     "known_term_fix_hits",
     "tag_traceability",
     "unsupported_entities",
+    "unsupported_entities_registry_aware",
+    "fidelity",
     "notes",
 }
 

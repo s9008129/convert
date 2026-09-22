@@ -1,0 +1,227 @@
+{
+  "schema_version": "1.0.0",
+  "metric_version": "fidelity-1.0.0",
+  "role": "P4-B 忠實度絆索（A 自創專名）實體白名單：產品（backend/core/fidelity_checks.py）與量尺（scripts/e2e/measure_record_quality.py）共用同一份資料。",
+  "consumer": "backend/core/fidelity_checks.py :: load_entity_registry()",
+  "provenance": {
+    "task": "T20260922-2037-02-local-model-quality-parity（plan §9.4 P4-B；handoff §4.1）",
+    "sources": [
+      ".agent/tasks/T20260922-2037-02-local-model-quality-parity/plan.md §9.4",
+      ".agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json（F002/F003/F005/F006/F014/F021/F042/F045/F060/F061/F065/F066/F067）",
+      "doc/規格與設計/地端會議紀錄品質對齊雲端-研究與優化規劃.md:57,638,661,1104,1136-1146",
+      "backend/core/prompt_templates/section_meeting.py:111-146（TERMS／CORRECTIONS／RECORD_TERM_FIXES）",
+      "data/glossary/公務詞彙.txt（機關簡稱；行政院:47 主計總處:48 人事總處:49 財政部:53 賦稅署:54 國稅局:55 稽徵所:56 資訊室:57 秘書室:58 政風室:59 人事室:60 會計室:61）",
+      "backend/core/templates.py:385-483（_SECTION_MEETING_TEMPLATE）"
+    ],
+    "integrity_note": "repo 內查無官方股別／村里／科室清單檔；本清單全部由 repo 可證來源反推，逐條附 source，官方正名待人工提供（見 decisions／known_limitations）。",
+    "runtime_augmented": "runtime registry＝本檔 entity_whitelist ∪ fold(模板 glossary_terms) ∪ fold(glossary_corrections 右側) ∪ fold(record_term_fixes 右側) ∪ fold(data/glossary/*.txt 全部條目含 => 兩側)。"
+  },
+  "fold_map": {
+    "裏": "里",
+    "裡": "里",
+    "理": "里",
+    "徵": "征",
+    "菸": "煙",
+    "臺": "台",
+    "檯": "台",
+    "note": "只用於比對、不改文字。理→里 依據：0903 逐字稿「瑞裏／瑞理」並存（研究文件:1104）。"
+  },
+  "support_test": [
+    "fold(tok) ∈ fold(逐字稿)（字面命中，允許引號內分隔符差異）",
+    "fold(stem) ∈ fold(逐字稿)（正確改寫／變體：逐字稿「內稽」→紀錄「內稽科」）",
+    "fold(tok) 或 fold(stem) ∈ registry（官名白名單）",
+    "逐字稿同後綴候選 Dice ≥ thresholds.variant_dice（極近變體備援；僅產品 A 絆索使用）"
+  ],
+  "thresholds": {
+    "variant_dice": 0.75,
+    "near_miss_ratio": 0.5,
+    "entity_max": 3,
+    "attribution_max": 3,
+    "number_max": 6,
+    "number_min_count": 10
+  },
+  "entity_whitelist": [
+    {
+      "name": "稽查股",
+      "kind": "股別",
+      "confidence": "[DECIDED]",
+      "source": "研究文件:1146（明示為正式股名；逐字稿雞茶股／雞查股為 ASR 誤寫）；plan §9.4",
+      "note": "量尺 raw unsupported_entities 的假陽性來源之一（逐字稿 0 次）；缺它 registry-aware 無法達到 ≤1 目標。"
+    },
+    {
+      "name": "稽徵股",
+      "kind": "股別",
+      "confidence": "[INFERRED]",
+      "source": "quality/fact_checklist.json F006:49-54",
+      "note": "與「稽查股」來源衝突（研究文件:1146 vs F006）→ 兩者皆收（寧可少報不可亂報）；官方正名待人工確認。"
+    },
+    {
+      "name": "徵收股",
+      "kind": "股別",
+      "confidence": "[VERIFIED]",
+      "source": "backend/core/prompt_templates/section_meeting.py:142（征收股→徵收股、增收股→徵收股）；研究文件:638,1146；fact_checklist F006",
+      "note": "fold 徵→征：白名單存「征收股」；逐字稿寫「征收股／增收股」時亦須放行（模板已證為正確改寫）。"
+    },
+    {
+      "name": "菸酒稽徵股",
+      "kind": "股別",
+      "confidence": "[DECIDED]",
+      "source": "plan §9.4（實測四場紀錄之「煙酒稽徵股」為正確名）",
+      "note": "fold 菸→煙，涵蓋紀錄常見寫法「煙酒稽徵股」。"
+    },
+    {
+      "name": "欠稅管理股",
+      "kind": "股別",
+      "confidence": "[DECIDED]",
+      "source": "逐字稿 0903×4 場各 1 次；fact_checklist F002/F005 語境",
+      "note": "逐字稿實測有依據；A 絆索須放行，避免把真實承辦股別當自創。"
+    },
+    {
+      "name": "內稽",
+      "kind": "活動／專案名",
+      "confidence": "[DECIDED]",
+      "source": "fact_checklist F021:169-174；研究文件:1104（內稽→內機 為逐字稿 ASR 變體）",
+      "note": "stem 正確改寫案例：紀錄「內稽科」→ stem「內稽」命中逐字稿；ASR 變體「內機」不在此，由 Dice 備援處理。"
+    },
+    {
+      "name": "使用牌照稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F003:25-30；逐字稿 0903×4 場",
+      "note": "A 正例來源：紀錄「消耗稅科更名為『使用牌照稅科』」時，新名須放行、舊名「消耗稅科」才回報。"
+    },
+    {
+      "name": "土地增值稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F002:17-22",
+      "note": "官方科室名；逐字稿未出現時不得判為自創（A 絆索放行）。"
+    },
+    {
+      "name": "地價稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F002:17-22",
+      "note": "官方科室名；逐字稿未出現時不得判為自創（A 絆索放行）。"
+    },
+    {
+      "name": "房屋稅科",
+      "kind": "科室",
+      "confidence": "[DECIDED]",
+      "source": "fact_checklist F006:49-54 語境",
+      "note": "來源為語境推得（[DECIDED]）；收錄以免官方科室名誤報，官方清單待人工覆核。"
+    },
+    {
+      "name": "土地稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F002/F067:537-542；逐字稿 0903×4 場",
+      "note": "四場逐字稿皆有（golden fixture 亦用此名）；A 正例「土地稅科配合辦理交接」須放行。"
+    },
+    {
+      "name": "消費稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F003:25-30（逐字稿作校費稅科）",
+      "note": "紀錄寫「消耗稅科」＝真失真、不得進白名單（實測 C1／D1 各 1 次）。"
+    },
+    {
+      "name": "印花稅科",
+      "kind": "科室",
+      "confidence": "[INFERRED]",
+      "source": "plan §9.4 白名單建議清單",
+      "note": "來源僅設計建議；官方清單待人工確認。"
+    },
+    {
+      "name": "瑞里",
+      "kind": "村里",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F014:113-118；backend/core/prompt_templates/section_meeting.py:145（瑞裏→瑞里）",
+      "note": "fold 裏／裡／理→里，涵蓋紀錄常見寫法「瑞裏」「瑞理」。"
+    },
+    {
+      "name": "瑞吉",
+      "kind": "村里",
+      "confidence": "[DECIDED]",
+      "source": "plan §9.4 白名單建議清單",
+      "note": "研究文件:661 早期曾列為未確證專名（衝突已登記）→ 收錄但待人工覆核。"
+    },
+    {
+      "name": "財管科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F061:489-494/F065:521-526/F067:537-542；逐字稿 0903×4 場",
+      "note": "反例來源：紀錄「財管科搬入處」為後綴複合詞，A 絆索不得回報（test_A_一般複合詞與限定詞不報）。"
+    },
+    {
+      "name": "工產科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F060:481-486/F061/F065；逐字稿 0903×4 場",
+      "note": "官方科室簡稱；逐字稿未出現時不得判為自創（A 絆索放行）。"
+    },
+    {
+      "name": "新聞行銷處",
+      "kind": "處",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F066:529-534；逐字稿 0903×4 場",
+      "note": "官方處名；逐字稿未出現時不得判為自創（A 絆索放行）。"
+    },
+    {
+      "name": "煙酒及稅務管理科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F005:41-46",
+      "note": "fold 菸→煙，涵蓋「菸酒及稅務管理科」。"
+    },
+    {
+      "name": "法務科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F005:41-46（煙酒管理科併入法務科）",
+      "note": "組織調整語境來源；A 絆索放行。"
+    },
+    {
+      "name": "銷售稅科",
+      "kind": "科室",
+      "confidence": "[VERIFIED]",
+      "source": "fact_checklist F042:337-342",
+      "note": "官方科室名；A 絆索放行。"
+    },
+    {
+      "name": "人事總處",
+      "kind": "機關",
+      "confidence": "[VERIFIED]",
+      "source": "backend/core/prompt_templates/section_meeting.py:144（人事總數→人事總處）；data/glossary/公務詞彙.txt:49；fact_checklist F045:361-366",
+      "note": "glossary 公務詞彙已收；亦為模板 CORRECTIONS「人事總數→人事總處」右側。"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "decision": "「稽查股」與「稽徵股」皆納入白名單",
+      "rationale": "研究文件:1146 判「稽查股」為正式官名（逐字稿為 ASR 誤寫）、fact_checklist F006 記為「稽徵股」；兩來源衝突時取聯集（寧可少報不可亂報）；官方正名待人工確認。"
+    },
+    {
+      "id": "D2",
+      "decision": "量尺 registry-aware 欄位與產品 A 絆索共用 fidelity_checks 的同一支支持測試；raw unsupported_entities 保留為觀察值",
+      "rationale": "plan §9.4／handoff §4.1 單一真實來源；raw 無法區分捏造與 ASR 變體重建（字面比對天生限制）。"
+    },
+    {
+      "id": "D3",
+      "decision": "「消耗稅科」「煙酒分管股」「煙酒文神股」不進 registry",
+      "rationale": "實測四場為真失真；已知限制：煙酒文神股 因 stem 規則（煙酒文神 ⊆ 逐字稿 煙酒文神穀）成假陰性（見 known_limitations）。"
+    },
+    {
+      "id": "D4",
+      "decision": "「印花稅科」「瑞吉」收錄但標 INFERRED／DECIDED",
+      "rationale": "來源僅設計建議清單；等人工官方清單覆核。"
+    }
+  ],
+  "known_limitations": [
+    "煙酒文神股 假陰性：stem「煙酒文神」⊆ 逐字稿「煙酒文神穀」→ 被支持測試放行（真失真漏報）。",
+    "同音自創盲區：模型若以同音字自創（如 笑費稅科），落入 fold 變體表時不報；讀音層屬 P4-E 詞表治理範圍。",
+    "「人事總務」型失真抓不到（不以組織後綴結尾）→ 需 P4-E 的 record_term_fixes／glossary 擴充。",
+    "校準僅 0903 一場（四份輸出）：不得泛化宣稱；換會議需重跑四場基準觀察。"
+  ]
+}

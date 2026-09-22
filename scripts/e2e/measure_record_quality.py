@@ -13,8 +13,9 @@
     * ``--record``（必要）：Markdown 是權威來源。DOCX 因 python-docx 會把
       段落／表格儲存格合併成段落，行結構（表格列 vs 正文列）遺失、標註數
       不可信 → 印出 SKIP 並以 exit 0 結束（不假裝量測）。
-    * ``--transcript``（選用）：提供時才有 ``unsupported_entities`` 觀察值，
-      並附逐字稿的 ``known_term_fix_hits``（同一套字面規則）。
+    * ``--transcript``（選用）：提供時才有 ``unsupported_entities`` 觀察值、
+      registry-aware 的 ``unsupported_entities_registry_aware``（P4-B）與 ``fidelity``
+      忠實度絆索摘要，並附逐字稿的 ``known_term_fix_hits``（同一套字面規則）。
     * ``--template``（選用）：決議／主席裁示跨章節去重（W5）需要模板語意；
       未知 id 只記錄，不影響其他指標。
     * ``--out``（選用）：另寫一份 JSON 檔；stdout 一律輸出同一份 JSON。
@@ -77,6 +78,10 @@ from backend.core.text_postprocess import (  # noqa: E402
     TABLE_ROW_PATTERN,
     dedupe_cross_section_items,
     measure_tag_traceability,
+)
+from backend.core.fidelity_checks import (  # noqa: E402
+    FIDELITY_METRIC_VERSION,
+    analyze_fidelity,
 )
 
 # 開頭欄位排除（plan rev6 W6 記法，不含冒號；為 summarization.py:130
@@ -261,9 +266,30 @@ def measure_record_quality(
     if transcript_text is not None:
         term_hits["transcript"] = count_known_term_fix_hits(transcript_text)
         unsupported_entities: Optional[list] = find_unsupported_entities(record_text, transcript_text)
+        # P4-B（additive）：同一份 fidelity_checks 模組（產品補強清單與量尺共用）——
+        # raw unsupported_entities 保留為觀察值（歷史相容），registry-aware 為新欄位。
+        fidelity_report = analyze_fidelity(record_text, transcript_text, template_id)
+        unsupported_entities_registry_aware: Optional[list] = fidelity_report[
+            "registry_aware_unsupported_entities"
+        ]
+        fidelity: Optional[dict] = {
+            "metric_version": fidelity_report["metric_version"],
+            "entity_flags": len(fidelity_report["fabricated_entities"]),
+            "entity_names": fidelity_report["fabricated_entities"],
+            "entity_kinds": fidelity_report["fabricated_entity_kinds"],
+            "attribution_flags": len(fidelity_report["attribution_violations"]),
+            "attribution_kinds": fidelity_report["attribution_kinds"],
+            "number_fabricated": len(fidelity_report["fabricated_numbers"]),
+            "number_missing": len(fidelity_report["missing_numbers"]),
+            "number_missing_tokens": fidelity_report["missing_numbers"],
+            "attribution_overlap_median": fidelity_report["attribution_overlap_median"],
+            "problems": fidelity_report["problems"],
+        }
     else:
         term_hits["transcript"] = None
         unsupported_entities = None
+        unsupported_entities_registry_aware = None
+        fidelity = None
 
     notes = {
         "definitions": {
@@ -314,6 +340,21 @@ def measure_record_quality(
             "（字面比對無法區分捏造與 ASR 變體重建，plan §1／W6）。"
             "未提供 --transcript 時為 null。"
         ),
+        "unsupported_entities_registry_aware": (
+            "P4-B 新欄位：以與 ``unsupported_entities`` **同一份 raw 抽取**為候選，"
+            "再過 ``backend.core.fidelity_checks.is_supported_entity``（fold 變體／stem 正確改寫／"
+            "官方白名單 ``data/entities/entity_registry.json``＋既有 glossary）；"
+            "仍未被支持者才列出。產品忠實度絆索（A 自創專名）與本欄位共用同一支函式。"
+            "raw 欄位保留為觀察值；未提供 --transcript 時為 null。"
+        ),
+        "fidelity": (
+            "P4-B 忠實度絆索摘要（``backend.core.fidelity_checks.analyze_fidelity``；"
+            "metric_version＝%s）：entity_flags／attribution_flags／number_fabricated／"
+            "number_missing 為各絆索計數；entity_kinds＝variant｜unsupported；"
+            "attribution_overlap_median 為未校準觀察值。"
+            "products 端僅取 ``problems`` 併入補強問題清單（不改寫、不刪句）。"
+            "未提供 --transcript 時為 null。" % FIDELITY_METRIC_VERSION
+        ),
         "non_prefixed_tableish_source_tag_count": (
             "觀察值：行內含 '|'（ASCII）或 '｜'（全形）、具表格樣態"
             "（行首為管線字元，或行內 ≥2 個管線字元）但**不符合**表格列"
@@ -337,6 +378,8 @@ def measure_record_quality(
         "known_term_fix_hits": term_hits,
         "tag_traceability": tag_traceability,
         "unsupported_entities": unsupported_entities,
+        "unsupported_entities_registry_aware": unsupported_entities_registry_aware,
+        "fidelity": fidelity,
         "notes": notes,
     }
 

@@ -129,6 +129,16 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("LOCAL_LLM_RECORD_COVERAGE_MODE")
+    @classmethod
+    def validate_record_coverage_mode(cls, value: str) -> str:
+        normalized = (value or "enforce").strip().lower()
+        if normalized not in {"off", "observe", "enforce"}:
+            raise ValueError(
+                "LOCAL_LLM_RECORD_COVERAGE_MODE 必須是 off、observe 或 enforce"
+            )
+        return normalized
+
     @field_validator("LMSTUDIO_MODEL", mode="before")
     @classmethod
     def normalize_lmstudio_model(cls, value: Optional[str]) -> Optional[str]:
@@ -270,6 +280,41 @@ class Settings(BaseSettings):
     LOCAL_LLM_MAX_REFINEMENT_ROUNDS: int = Field(
         default=2,
         description="本地摘要品質驗證後的最大補強輪數"
+    )
+    # ========================================
+    # P4 波（T20260922-2037-02）：逐條對帳（覆蓋率）與忠實度絆索開關（§4.2 凍結介面）
+    # ========================================
+    LOCAL_LLM_RECORD_COVERAGE_MODE: str = Field(
+        default="enforce",
+        description="地端紀錄覆蓋率對帳（議題／決議／數字／日期）模式："
+                    "enforce＝問題併入補強清單｜observe＝只記 log／metrics（品質零變化）"
+                    "｜off＝完全不跑（一行回本波前 byte 級行為）"
+    )
+    LOCAL_LLM_RECORD_COVERAGE_CATEGORIES: str = Field(
+        default="topic,decision,number,date",
+        description="地端覆蓋率對帳類別（逗號分隔；可用子集 topic,decision,number,date）；"
+                    "未知名稱一律過濾"
+    )
+    LOCAL_LLM_RECORD_COVERAGE_ITEM_LIMIT: int = Field(
+        default=12,
+        ge=1,
+        le=50,
+        description="覆蓋率問題字串每類別最多列出的項目數（超出以「其餘 N 項」帶過）"
+    )
+    LOCAL_FIDELITY_TRIPWIRES: bool = Field(
+        default=True,
+        description="地端忠實度絆索（P4-B：自創專名／無依據歸屬／數字單位）；"
+                    "false＝完全不呼叫檢查器（產品輸出 byte 級回本波前）"
+    )
+    LOCAL_SOURCE_TAG_DIVERSIFY_ENABLED: bool = Field(
+        default=True,
+        description="地端出處標註吸附「規則 6：同標籤同時戳去重複化」（P4-D；由 text_postprocess 消費）；"
+                    "false＝一行回 P3 byte 級"
+    )
+    LOCAL_LLM_SAMPLING_REPEAT_PENALTY: Optional[float] = Field(
+        default=1.08,
+        description="Ollama repeat_penalty（P4-C／W-1 與 LM Studio 同源設定；None＝不送，沿用端點預設）。"
+                    "LM Studio Splash 引擎對 penalty 類欄位回 400，故僅 Ollama 路徑讀取"
     )
     LOCAL_LLM_KEEP_ALIVE: str = Field(
         default="30m",

@@ -164,6 +164,40 @@ class SummarizationService:
     _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
     _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
 
+    # P4 波（T20260922-2037-02 §9.3）：逐條對帳（覆蓋率）由「只查待辦」擴為
+    # 議題／決議／數字／日期＋既有待辦。設計要點（實測校準）：
+    # ①議題／決議取萃取筆記「議題與決議」區塊條列（逐字稿關鍵詞法已被否證：
+    #   真實逐字稿「決議／裁示／結論」出現 0 次）；②數字／日期取逐字稿段落列、
+    #   單位錨定；③比對重用既有比對器（對稱正規化＋滑窗 LCS 0.6＋否定詞／數字守衛）；
+    # ④數字比對前必須先剝來源標註（`_SOURCE_TAG_PATTERN`）＋NFKC＋去千分位逗號，
+    #   否則「（科長，00:17:52）」的「17」會把逐字稿真數字洗成已涵蓋（實測）；
+    # ⑤日期等價展開（`11月1日 ≡ 11/1`、`下週一 ≡ 下個禮拜一`）；⑥空期望集合一律
+    #   log.warning＋cov_* 指標（不得靜默 no-op）。
+    RECORD_COVERAGE_MIN_ITEM_CHARS = 6
+    # fallback 值；實際預覽上限讀 settings.LOCAL_LLM_RECORD_COVERAGE_ITEM_LIMIT
+    RECORD_COVERAGE_ITEM_PREVIEW_LIMIT = ACTION_ISSUE_PREVIEW_LIMIT
+    # 「數字緊鄰單位」錨定（單位白名單；含千分位寫法如 13,600）
+    _RECORD_COVERAGE_NUMBER_UNIT_PATTERN = re.compile(
+        r"(\d{1,3}(?:,\d{3})+|\d{2,6})\s*(?:元|塊|萬元|個人|人|％|%|個|孔|樓)"
+    )
+    _RECORD_COVERAGE_ANY_NUMBER_PATTERN = re.compile(r"\d{1,3}(?:,\d{3})+|\d{2,6}")
+    _RECORD_COVERAGE_DATE_MD_PATTERN = re.compile(r"(\d{1,2})\s*月\s*(\d{1,2})(?:\s*[日號号])?")
+    _RECORD_COVERAGE_DATE_END_PATTERN = re.compile(r"(\d{1,2})\s*月\s*底")
+    _RECORD_COVERAGE_DATE_SLASH_PATTERN = re.compile(r"(?<![\d/])(\d{1,2})\s*/\s*(\d{1,2})(?![\d/])")
+    _RECORD_COVERAGE_WEEKDAY_PATTERN = re.compile(r"下\s*(?:個)?\s*(?:週|周|星期|禮拜)\s*([一二三四五六日天])")
+    _RECORD_COVERAGE_SENTENCE_SPLIT_PATTERN = re.compile(r"[。！？!?；;]")
+    # 筆記佔位語（空骨架 `_empty_extraction_notes` 就是「逐字稿未提及／（待確認）」；
+    # 佔位若未濾除會產生假期望集合）
+    _RECORD_COVERAGE_PLACEHOLDER_TERMS = ("逐字稿未提及", "（待確認）", "未於本段確認", "未明確")
+    _RECORD_COVERAGE_NUMBER_ALL_ZERO_PATTERN = re.compile(r"^0+$")
+
+    # P4-C（§9.5／W-1）：Ollama 取樣參數與 LM Studio 同源——實際值讀 settings
+    # （LOCAL_LLM_SAMPLING_TOP_P／TOP_K／LOCAL_LLM_SAMPLING_REPEAT_PENALTY，
+    # None＝不送、沿用端點預設）。下列常數只是**一行 rollback 路徑**：本波前
+    # Ollama 寫死 top_p=0.95／top_k=64／repeat_penalty=1.08，要回退舊行為時把
+    # `_ollama_sampling_options()` 改成 `return dict(self.LEGACY_OLLAMA_SAMPLING_OPTIONS)`。
+    LEGACY_OLLAMA_SAMPLING_OPTIONS = {"top_p": 0.95, "top_k": 64, "repeat_penalty": 1.08}
+
     # 日期依據規則（2026-09-14）：實測 Gemini 會把逐字稿的「今年」自行換算成民國年份
     # ——逐字稿全篇沒有任何年份，正式紀錄卻寫「中華民國113年…」「生效日期為113年11月1日」，
     # 這是最後一道防線守不到、卻會直接印成公文的事實錯誤。年份是逐字稿唯一無法事後查證、
@@ -1219,6 +1253,18 @@ class SummarizationService:
             normalized_summary,
             local_sentences=self._split_record_sentences(cleaned),
         )
+        # P4-A（§2.1-①）：期望集合空集合不得再是靜默 no-op——零告警會讓「筆記沒有
+        # 待辦表格／只剩佔位列／走了 _empty_extraction_notes 骨架」永遠無人發現。
+        # 只加 log、不改 issues（雲端共用本方法亦不受影響）；mode=off 時完全靜音
+        # （維持「off＝回本波前 byte 級行為」）。
+        if not expected_actions and (
+            getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_MODE", "enforce") or ""
+        ).strip().lower() != "off":
+            log.warning(
+                "紀錄覆蓋率檢查：待辦期望集合為空（來源：萃取筆記待辦表格）→ "
+                "本類別不產生補強問題；請確認筆記有無待辦表格／是否只剩佔位列／"
+                "是否走 _empty_extraction_notes 骨架"
+            )
         if missing_actions:
             # 校準用觀察值：把「未被判定涵蓋」的項目與其最佳覆蓋比例寫進日誌，
             # 讓下一次調門檻有真實分布可以看（不影響判定本身）。
@@ -1254,6 +1300,437 @@ class SummarizationService:
             )
 
         return issues
+
+    # ------------------------------------------------------------------
+    # P4-A（T20260922-2037-02 §9.3）：逐條對帳（覆蓋率）擴類
+    # 議題／決議（取萃取筆記）＋數字／日期（取逐字稿）＋既有待辦（不動）
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _parse_notes_items(cls, notes: str, heading_keywords, marker_keywords) -> list:
+        """從萃取筆記抽取指定標記（議題／決議）的條目文字（P4-A）。
+
+        來源格式＝`LOCAL_EXTRACTION_PROMPT`「## 2. 議題與決議」區塊的
+        `- **議題**：…`／`- *決議*：…` 條列。先以「標題行是否含關鍵詞」限定
+        區塊（無此類標題＝退化為全篇掃描）；佔位列（逐字稿未提及／（待確認）／
+        未於本段確認／未明確）與過短條目一律濾除——`_empty_extraction_notes`
+        骨架就是「逐字稿未提及／（待確認）」，不濾會產生假期望集合。最後以
+        `_normalize_action_key` 去重（保留首現）。
+        """
+        heading_keywords = tuple(heading_keywords)
+        marker_pattern = re.compile(
+            r"^\s*(?:[-*+]\s*)?(?:\*{1,2})?(?:"
+            + "|".join(re.escape(marker) for marker in marker_keywords)
+            + r")(?:\*{1,2})?\s*[:：]\s*(.+?)\s*$"
+        )
+        heading_pattern = re.compile(r"^\s*#{1,6}\s")
+        lines = (notes or "").splitlines()
+        scoped = any(
+            heading_pattern.match(line) and any(keyword in line for keyword in heading_keywords)
+            for line in lines
+        )
+        in_scope = not scoped
+        items: list = []
+        seen_keys: set = set()
+        for line in lines:
+            if heading_pattern.match(line):
+                in_scope = any(keyword in line for keyword in heading_keywords)
+                continue
+            if not in_scope:
+                continue
+            match = marker_pattern.match(line)
+            if not match:
+                continue
+            item = match.group(1).strip()
+            if not item or len(item) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
+                continue
+            if any(term in item for term in cls._RECORD_COVERAGE_PLACEHOLDER_TERMS):
+                continue
+            key = cls._normalize_action_key(item)
+            if not key or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            items.append(item)
+        return items
+
+    @classmethod
+    def _extract_notes_topic_items(cls, notes: str) -> list:
+        """議題期望集合（來源：萃取筆記「議題與決議」區塊）。"""
+        return cls._parse_notes_items(notes, heading_keywords=("議題", "決議"), marker_keywords=("議題",))
+
+    @classmethod
+    def _extract_notes_decision_items(cls, notes: str) -> list:
+        """決議期望集合（來源同上）；`*討論重點*` 刻意不列入。"""
+        return cls._parse_notes_items(notes, heading_keywords=("議題", "決議"), marker_keywords=("決議",))
+
+    @classmethod
+    def _fold_record_for_number_matching(cls, record_markdown: str) -> str:
+        """數字／日期比對用的紀錄折疊（覆蓋率契約）：
+        `_SOURCE_TAG_PATTERN.sub("")`（先剝來源標註）→ NFKC（全形→半形）→
+        去千分位逗號 → 去所有空白。
+
+        為什麼必須先剝來源標註（實測）：B2 紀錄唯一的「17」在
+        「麻煩則改發禮券（科長，00:17:52）。」，折疊後成 `…科長001752`，
+        會把逐字稿真有的「17」判成已涵蓋（假陰性）；剝除後「17」正確判缺。
+        候選 literal 亦以同規則折疊後做子字串判定，因此 `13,600 ≡ 13600`。
+        """
+        folded = cls._SOURCE_TAG_PATTERN.sub("", record_markdown or "")
+        folded = unicodedata.normalize("NFKC", folded)
+        folded = folded.replace(",", "")
+        return re.sub(r"\s+", "", folded)
+
+    @classmethod
+    def _iter_transcript_segment_bodies(cls, transcript: str):
+        """逐字稿段落列（`[start-end] 發言者：`）正文迭代（已切掉行首時間戳）。
+
+        只認 `TRANSCRIPT_SEGMENT_PATTERN` 的段落列——「發言者統計」等非段落列
+        天然不認（格式知識沿用 text_postprocess 單一模組，與吸附/統計同源）。
+        """
+        from backend.core.text_postprocess import TRANSCRIPT_SEGMENT_PATTERN
+
+        for raw_line in (transcript or "").splitlines():
+            stripped = raw_line.strip()
+            match = TRANSCRIPT_SEGMENT_PATTERN.match(stripped)
+            if not match:
+                continue
+            body = stripped[match.end():].strip()
+            if body:
+                yield body
+
+    @staticmethod
+    def _snippet_around_span(text: str, start: int, end: int, limit: int = 40) -> str:
+        """取問題字串用的原文片段（≤limit 字；截斷端以「…」標示）。"""
+        if len(text) <= limit:
+            return text
+        center = (start + end) // 2
+        half = max(1, limit // 2)
+        window_start = max(0, min(len(text) - limit, center - half))
+        window = text[window_start:window_start + limit]
+        prefix = "…" if window_start > 0 else ""
+        suffix = "…" if window_start + limit < len(text) else ""
+        return f"{prefix}{window}{suffix}"
+
+    @classmethod
+    def _scan_transcript_number_items(cls, transcript: str) -> list:
+        """數字期望集合：逐字稿段落列 ×「單位錨定＋同句收集」（literal, snippet）。
+
+        規格（實測校準）：只掃段落列；以 `[。！？!?；;]` 切 clause；clause 內需有
+        「數字緊鄰單位（元|塊|萬元|個人|人|％|%|個|孔|樓）」才啟用（避免把時間戳、
+        編號等誤收）；啟用後收集 clause 內所有 ≥2 位數字（含千分位寫法，
+        如 `13,600`），去全 0、折疊後同值去重（保留首現 literal）。
+        """
+        items: list = []
+        seen: set = set()
+        for body in cls._iter_transcript_segment_bodies(transcript):
+            for clause in cls._RECORD_COVERAGE_SENTENCE_SPLIT_PATTERN.split(body):
+                if not cls._RECORD_COVERAGE_NUMBER_UNIT_PATTERN.search(clause):
+                    continue
+                for number_match in cls._RECORD_COVERAGE_ANY_NUMBER_PATTERN.finditer(clause):
+                    literal = number_match.group(0)
+                    folded = unicodedata.normalize("NFKC", literal).replace(",", "")
+                    if not folded or cls._RECORD_COVERAGE_NUMBER_ALL_ZERO_PATTERN.match(folded):
+                        continue
+                    if folded in seen:
+                        continue
+                    seen.add(folded)
+                    items.append(
+                        (literal, cls._snippet_around_span(clause, number_match.start(), number_match.end()))
+                    )
+        return items
+
+    @classmethod
+    def _scan_transcript_date_items(cls, transcript: str) -> list:
+        """日期期望集合：逐字稿段落列 × 四樣式（canonical, snippet）。
+
+        樣式依序：月日（後綴 日／號／号 可省）、月底、斜線 M/D、下+(個)?+
+        週/周/星期/禮拜+X（週幾）。範圍檢查（月 1–12、日 1–31）＋同值去重
+        （保留首現）避免長會議重複佔額。canonical＝`M/D`、`M月底`、`週X`——
+        覆蓋判定含等價展開（`_date_canonical_is_covered`）。
+        """
+        items: list = []
+        seen: set = set()
+
+        def add(canonical: str, snippet: str) -> None:
+            if canonical in seen:
+                return
+            seen.add(canonical)
+            items.append((canonical, snippet))
+
+        for body in cls._iter_transcript_segment_bodies(transcript):
+            for match in cls._RECORD_COVERAGE_DATE_MD_PATTERN.finditer(body):
+                month, day = int(match.group(1)), int(match.group(2))
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    add(f"{month}/{day}", cls._snippet_around_span(body, match.start(), match.end()))
+            for match in cls._RECORD_COVERAGE_DATE_END_PATTERN.finditer(body):
+                month = int(match.group(1))
+                if 1 <= month <= 12:
+                    add(f"{month}月底", cls._snippet_around_span(body, match.start(), match.end()))
+            for match in cls._RECORD_COVERAGE_DATE_SLASH_PATTERN.finditer(body):
+                month, day = int(match.group(1)), int(match.group(2))
+                if 1 <= month <= 12 and 1 <= day <= 31:
+                    add(f"{month}/{day}", cls._snippet_around_span(body, match.start(), match.end()))
+            for match in cls._RECORD_COVERAGE_WEEKDAY_PATTERN.finditer(body):
+                add(f"週{match.group(1)}", cls._snippet_around_span(body, match.start(), match.end()))
+        return items
+
+    @staticmethod
+    def _date_canonical_is_covered(canonical: str, folded_record: str) -> bool:
+        """日期候選的等價覆蓋判定（折疊後紀錄；設計 §3 等價展開）。
+
+        `11月1日 ≡ 11月1號 ≡ 11/1`（實測 B2/B1 寫月日式、C1/D1 寫斜線式，
+        不展開必產生假陽性）、`10月14日 ≡ 10/14`、月底＝`M月底`、
+        週幾＝`下週一 ≡ 下星期一 ≡ 下個禮拜一`（`日↔天` 為對稱保險展開，
+        本語料無實例）。lookaround 保證數字邊界（`11/1` 不得被 `11月10日` 洗白）。
+        """
+        if not canonical or not folded_record:
+            return False
+        if canonical.endswith("月底"):
+            month = re.escape(canonical[: -len("月底")])
+            return re.search(rf"(?<!\d){month}\s*月\s*底", folded_record) is not None
+        if canonical.startswith("週"):
+            day = canonical[1:]
+            day_class = "[日天]" if day in ("日", "天") else re.escape(day)
+            return (
+                re.search(
+                    rf"(?:下\s*(?:個)?\s*)?(?:週|周|星期|禮拜)\s*{day_class}",
+                    folded_record,
+                )
+                is not None
+            )
+        if "/" in canonical:
+            month, day = (re.escape(part) for part in canonical.split("/", 1))
+            slash_hit = re.search(
+                rf"(?<![\d/]){month}\s*/\s*{day}(?![\d/])", folded_record
+            )
+            month_day_hit = re.search(
+                rf"(?<!\d){month}\s*月\s*{day}\s*[日號号]?(?!\d)", folded_record
+            )
+            return slash_hit is not None or month_day_hit is not None
+        return canonical in folded_record
+
+    def _coverage_categories(self) -> set:
+        """本波生效的對帳類別（settings.LOCAL_LLM_RECORD_COVERAGE_CATEGORIES；交集過濾）。"""
+        raw = getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_CATEGORIES", "topic,decision,number,date") or ""
+        requested = {part.strip().lower() for part in raw.split(",") if part.strip()}
+        return requested & {"topic", "decision", "number", "date"}
+
+    def _validate_record_source_coverage(
+        self,
+        summary: str,
+        notes: str,
+        transcript: str,
+        template: Optional[MeetingTemplate] = None,
+    ) -> list:
+        """P4-A：逐條對帳（議題／決議／數字／日期）→ 補強問題清單（只回報、不改寫、不刪句）。
+
+        mode 語意（`settings.LOCAL_LLM_RECORD_COVERAGE_MODE`）：
+        - `off`：完全不跑（不記 log／不記 metrics）＝一行回本波前 byte 級行為；
+        - `observe`：照算＋log＋metrics，但 issues 不 append（品質零變化）；
+        - `enforce`（預設）：issues append 進既有補強迴圈（不收斂保護不變）。
+        每類別最多一條問題字串（首現序、每項附原文片段 ≤40 字、超出以
+        「其餘 N 項」帶過）；空期望集合一律 log.warning ＋ `cov_expected_*=0`。
+        """
+        mode = (getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_MODE", "enforce") or "enforce").strip().lower()
+        if mode == "off":
+            # off＝完全不跑：連 metrics 欄位都不得出現（byte 級回本波前）。
+            self._record_coverage_stats = {}
+            return []
+
+        stats: dict = {}
+        self._record_coverage_stats = stats
+        categories = self._coverage_categories()
+        cleaned = self._clean_ollama_output(summary)
+        normalized_summary = self._normalize_action_key(cleaned)
+        local_sentences = self._split_record_sentences(cleaned)
+        folded_record = self._fold_record_for_number_matching(cleaned)
+        try:
+            item_limit = int(
+                getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_ITEM_LIMIT", None)
+                or self.RECORD_COVERAGE_ITEM_PREVIEW_LIMIT
+            )
+        except (TypeError, ValueError):
+            item_limit = self.RECORD_COVERAGE_ITEM_PREVIEW_LIMIT
+        issues: list = []
+
+        def _assemble_issue(category_label: str, missing_items: list, tail: str) -> str:
+            preview = "、".join(missing_items[:item_limit])
+            remainder = len(missing_items) - item_limit
+            suffix = f"…（其餘 {remainder} 項）" if remainder > 0 else ""
+            return f"{category_label}遺漏 {len(missing_items)} 項：{preview}{suffix}；{tail}"
+
+        # 類別一／二：議題、決議（取萃取筆記；重用既有比對器與兩道守衛）
+        for category, label, extractor, tail in (
+            (
+                "topic",
+                "議題",
+                self._extract_notes_topic_items,
+                "這些議題都出現在萃取筆記的「議題與決議」中，請在紀錄正文逐項補寫"
+                "（保留立場與理由），不得只以概括敘述帶過",
+            ),
+            (
+                "decision",
+                "決議",
+                self._extract_notes_decision_items,
+                "請把對應決議寫進紀錄正文並保留原文的單位、期限與數字，不得只以概括敘述帶過",
+            ),
+        ):
+            if category not in categories:
+                continue
+            expected_items = extractor(notes)
+            stats[f"expected_{category}"] = len(expected_items)
+            label_by_key: dict = {}
+            ordered_keys: list = []
+            for item in expected_items:
+                key = self._normalize_action_key(item)
+                if not key:
+                    continue
+                label_by_key.setdefault(key, item)
+                ordered_keys.append(key)
+            missing_keys, _ratios = self._find_missing_action_keys(
+                set(ordered_keys), normalized_summary, local_sentences=local_sentences
+            )
+            missing_labels = [label_by_key[key] for key in ordered_keys if key in missing_keys]
+            stats[f"missing_{category}"] = len(missing_labels)
+            if not expected_items:
+                log.warning(
+                    "紀錄覆蓋率檢查：{}期望集合為空（來源：萃取筆記「議題與決議」區塊）→ "
+                    "本類別不產生補強問題；請確認筆記格式，或是否只剩佔位列",
+                    label,
+                )
+            elif missing_labels:
+                log.info(
+                    "紀錄覆蓋率比對（{}）：未涵蓋 {} 項：{}",
+                    label,
+                    len(missing_labels),
+                    "、".join(missing_labels[:item_limit]),
+                )
+                issues.append(_assemble_issue(label, missing_labels, tail))
+
+        # 類別三：數字（取逐字稿；比對前先剝來源標註＋NFKC＋去千分位逗號）
+        if "number" in categories:
+            expected_numbers = self._scan_transcript_number_items(transcript)
+            stats["expected_number"] = len(expected_numbers)
+            missing_numbers = []
+            for literal, snippet in expected_numbers:
+                folded_literal = unicodedata.normalize("NFKC", literal).replace(",", "").replace(" ", "")
+                if folded_literal and folded_literal in folded_record:
+                    continue
+                missing_numbers.append((literal, snippet))
+            stats["missing_number"] = len(missing_numbers)
+            if not expected_numbers:
+                log.warning(
+                    "紀錄覆蓋率檢查：數字期望集合為空（來源：逐字稿段落列）→ "
+                    "本類別不產生補強問題；請確認逐字稿為「[start-end] 發言者：」段落列格式"
+                )
+            elif missing_numbers:
+                log.info(
+                    "紀錄覆蓋率比對（數字）：未涵蓋 {} 項：{}",
+                    len(missing_numbers),
+                    "、".join(literal for literal, _ in missing_numbers[:item_limit]),
+                )
+                issues.append(
+                    _assemble_issue(
+                        "數字",
+                        [f"{literal}（原文「{snippet}」）" for literal, snippet in missing_numbers],
+                        "請依逐字稿原文把數字補進對應段落，不得改寫為概數或省略",
+                    )
+                )
+
+        # 類別四：日期（取逐字稿；覆蓋判定含等價展開）
+        if "date" in categories:
+            expected_dates = self._scan_transcript_date_items(transcript)
+            stats["expected_date"] = len(expected_dates)
+            missing_dates = [
+                (canonical, snippet)
+                for canonical, snippet in expected_dates
+                if not self._date_canonical_is_covered(canonical, folded_record)
+            ]
+            stats["missing_date"] = len(missing_dates)
+            if not expected_dates:
+                log.warning(
+                    "紀錄覆蓋率檢查：日期期望集合為空（來源：逐字稿段落列）→ "
+                    "本類別不產生補強問題；請確認逐字稿為「[start-end] 發言者：」段落列格式"
+                )
+            elif missing_dates:
+                log.info(
+                    "紀錄覆蓋率比對（日期）：未涵蓋 {} 項：{}",
+                    len(missing_dates),
+                    "、".join(canonical for canonical, _ in missing_dates[:item_limit]),
+                )
+                issues.append(
+                    _assemble_issue(
+                        "日期",
+                        [f"{canonical}（原文「{snippet}」）" for canonical, snippet in missing_dates],
+                        "請依逐字稿原文寫入對應段落，年份未提及時寫「（待確認）」",
+                    )
+                )
+
+        # enforce 時本數即實際併入數；observe 時為「若 enforce 會併入的數量」（觀測值）——
+        # 兩種模式都照算，observe 只是不把 issues 交給呼叫端（品質零變化）。
+        stats["issues_added"] = len(issues)
+        return issues if mode == "enforce" else []
+
+    def _record_coverage_metrics_fields(self) -> str:
+        """pipeline metrics 行的 `cov_*` 欄位（供 run_owned_e2e 解析）。
+
+        `off` 或未執行＝空字串（呼叫端用 f-string 串接，空字串＝byte 級不變）；
+        `observe`／`enforce` 一律附上三鍵 legacy 之外的觀測欄位（新鍵為 additive，
+        既有三鍵與解析樣式不動）。
+        """
+        stats = getattr(self, "_record_coverage_stats", None) or {}
+        keys = (
+            "expected_topic",
+            "missing_topic",
+            "expected_decision",
+            "missing_decision",
+            "expected_number",
+            "missing_number",
+            "expected_date",
+            "missing_date",
+            "issues_added",
+        )
+        if not any(key in stats for key in keys):
+            return ""
+        return " ".join(f"cov_{key}={int(stats.get(key, 0))}" for key in keys) + " "
+
+    def _validate_record_fidelity(
+        self,
+        summary: str,
+        transcript: str,
+        template: Optional[MeetingTemplate] = None,
+    ) -> list:
+        """P4-B 忠實度絆索接線（A 自創專名／B 無依據歸屬／C 數字單位）。
+
+        凍結介面（§4.1）＝`backend.core.fidelity_checks.analyze_fidelity(
+        record_text, transcript_text, template_id)`；回傳 `problems` **原樣**併入
+        既有補強問題清單（不改寫、不刪句、不新增提示詞）。fail-soft 契約：
+        - `LOCAL_FIDELITY_TRIPWIRES=False` 時完全不呼叫（byte 級回本波前）；
+        - 檢查模組尚未落地（W2 平行開發中）或任何例外 → log.warning ＋ 回 []，
+          絕不影響主流程（lazy import，避免 import 期耦合）。
+        """
+        if not getattr(settings, "LOCAL_FIDELITY_TRIPWIRES", True):
+            return []
+        if not transcript:
+            return []
+        try:
+            from backend.core import fidelity_checks
+        except Exception as exc:  # pragma: no cover - 取決於 W2 是否已落地
+            log.warning(
+                "忠實度絆索已啟用但檢查模組不可用（{}；fail-soft，不影響主流程）",
+                describe_exception(exc),
+            )
+            return []
+        try:
+            report = fidelity_checks.analyze_fidelity(
+                summary, transcript, template_id=getattr(template, "id", None)
+            )
+        except Exception:
+            log.exception("忠實度檢查器異常（fail-soft，不影響主流程）")
+            return []
+        problems = report.get("problems") if isinstance(report, dict) else None
+        if not problems:
+            return []
+        return [problem for problem in problems if isinstance(problem, str) and problem.strip()]
 
     def _validate_cloud_speaker_traceability(
         self, summary: str, template: Optional[MeetingTemplate] = None
@@ -1931,6 +2408,12 @@ class SummarizationService:
         )
         if self._final_message_fits(system_prompt, dual, context_window):
             return dual
+        log.warning(
+            "context window {} tokens 不足以在補強階段附上完整逐字稿，本次退回只餵萃取筆記"
+            "（雙輸入需約 {} tokens 的 prompt）",
+            context_window or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+            self._estimate_tokens(system_prompt) + self._estimate_tokens(dual),
+        )
         return notes_only
 
     def _truncate_to_token_budget(self, text: str, budget_tokens: int) -> str:
@@ -2266,6 +2749,9 @@ class SummarizationService:
             # 輪數上限。instance context 較小（< settings）時結果與舊行為相同。
             context_tokens = lmstudio_selection.context_length
             context_window_source = "lmstudio_instance"
+        # P4-C（W-2）：context 預算來源登錄於實例，供引擎層 log 對帳
+        # （LM Studio＝instance context_length／Ollama＝settings，同一把尺）。
+        self._context_window_source = context_window_source
         plan = self._build_local_context_plan(
             transcript, system_prompt, template=template,
             context_window_tokens=context_tokens,
@@ -2369,6 +2855,12 @@ class SummarizationService:
         )
         issues += self._validate_cloud_speaker_traceability(summary, template)
         issues += self._validate_cloud_date_grounding(summary, transcript)
+        # P4-A（§9.3）：逐條對帳擴類（議題／決議／數字／日期；只回報不改寫）；
+        # P4-B（§4.3）：忠實度絆索 problems 原樣併入同一份補強問題清單。
+        issues += self._validate_record_source_coverage(
+            summary, merged_notes, transcript, template=template
+        )
+        issues += self._validate_record_fidelity(summary, transcript, template)
         attempts = 0
         # P3 波（R23）：不收斂保護。補強是「整份紀錄重生成」，若上一輪之後問題集合
         # 完全沒變，代表再跑一輪只會白燒算力、還有把已正確段落改壞的風險
@@ -2421,6 +2913,11 @@ class SummarizationService:
             )
             issues += self._validate_cloud_speaker_traceability(summary, template)
             issues += self._validate_cloud_date_grounding(summary, transcript)
+            # 每一輪補強後重算覆蓋率與忠實度（與首輪同一組檢查；只回報不改寫）。
+            issues += self._validate_record_source_coverage(
+                summary, merged_notes, transcript, template=template
+            )
+            issues += self._validate_record_fidelity(summary, transcript, template)
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")
@@ -2439,6 +2936,8 @@ class SummarizationService:
             f"'merge': {merge_duration:.1f}, "
             f"'final_and_refine': {time.monotonic() - pipeline_started - extraction_duration - merge_duration:.1f}, "
             f"'total': {time.monotonic() - pipeline_started:.1f}}}"
+            # P4-A 觀測欄位（off／未執行＝空字串 → 與本波前 byte 級相同）
+            f"{self._record_coverage_metrics_fields()}"
         )
 
         return summary
@@ -2714,6 +3213,28 @@ class SummarizationService:
             or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS
         )
 
+    def _ollama_sampling_options(self) -> dict:
+        """P4-C（§9.5／W-1）：Ollama options 的取樣參數——與 LM Studio 讀同一份 config。
+
+        本波前此三鍵在 Ollama 路徑寫死（top_p=0.95／top_k=64／repeat_penalty=1.08），
+        導致在 Mac 調出的參數於 Windows／Ollama 不生效（兩引擎不同把尺）。None＝
+        不送該鍵、沿用端點預設，與 `_lmstudio_extra_body` 對
+        LOCAL_LLM_SAMPLING_TOP_P／TOP_K 的語意一致（同一份 config、同一種 None 語意）。
+        僅供 Ollama 使用：LM Studio Splash 引擎對 penalty 類欄位回 HTTP 400。
+        一行 rollback＝`return dict(self.LEGACY_OLLAMA_SAMPLING_OPTIONS)`。
+        """
+        options: dict = {}
+        top_p = getattr(settings, "LOCAL_LLM_SAMPLING_TOP_P", None)
+        top_k = getattr(settings, "LOCAL_LLM_SAMPLING_TOP_K", None)
+        repeat_penalty = getattr(settings, "LOCAL_LLM_SAMPLING_REPEAT_PENALTY", None)
+        if top_p is not None:
+            options["top_p"] = float(top_p)
+        if top_k is not None:
+            options["top_k"] = int(top_k)
+        if repeat_penalty is not None:
+            options["repeat_penalty"] = float(repeat_penalty)
+        return options
+
     async def _summarize_with_ollama(
         self,
         system_prompt: str,
@@ -2736,6 +3257,9 @@ class SummarizationService:
 
         v4.2.1 改進：
         - Gemma4 預設參數：top_k 64、top_p 0.95、repeat_penalty 1.08
+
+        P4-C（W-1）：上述三鍵改讀同一份 config（與 LM Studio 同源）；
+        舊寫死值保留為 LEGACY_OLLAMA_SAMPLING_OPTIONS（一行 rollback）。
         """
         client = await self._get_ollama_client()
 
@@ -2748,6 +3272,17 @@ class SummarizationService:
             n_ctx = self._effective_context_tokens(context_window_tokens)
             est_prompt = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
             requested_predict = max(requested_predict, n_ctx - est_prompt - 256)
+        # P4-C（W-1／W-2）：取樣參數與 context 預算的實際來源登錄（對帳用）。
+        sampling_options = self._ollama_sampling_options()
+        log.info(
+            "Ollama 取樣參數（P4-C 同源 config）：top_p={}, top_k={}, repeat_penalty={}；"
+            "num_ctx={}（context_window_source={}）",
+            sampling_options.get("top_p", "不送"),
+            sampling_options.get("top_k", "不送"),
+            sampling_options.get("repeat_penalty", "不送"),
+            self._effective_context_tokens(context_window_tokens),
+            getattr(self, "_context_window_source", "settings"),
+        )
 
         try:
             # 進度更新：開始生成摘要
@@ -2777,9 +3312,9 @@ class SummarizationService:
                     "options": {
                         # 重試時略升溫度以跳出空回應狀態
                         "temperature": temperature if attempt == 0 else max(temperature, 0.3),
-                        "top_p": 0.95,
-                        "top_k": 64,
-                        "repeat_penalty": 1.08,
+                        # P4-C（W-1）：top_p／top_k／repeat_penalty 一律讀同一份
+                        # config（None＝不送；舊寫死值為 LEGACY 常數＝一行 rollback）。
+                        **sampling_options,
                         "num_ctx": self._effective_context_tokens(context_window_tokens),
                         "num_predict": requested_predict,
                         "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記

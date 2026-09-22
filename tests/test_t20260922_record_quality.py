@@ -320,6 +320,12 @@ async def test_local_pipeline_skips_merge_and_feeds_transcript_at_large_context(
     monkeypatch.setattr(service, "_validate_summary_quality", lambda *a, **k: [])
     monkeypatch.setattr(service, "_validate_cloud_speaker_traceability", lambda *a, **k: [])
     monkeypatch.setattr(service, "_validate_cloud_date_grounding", lambda *a, **k: [])
+    # P4-A／P4-B（§9.3／§9.4）新增的兩個驗證器同樣在本測試隔離（它們的契約
+    # 由 tests/test_t20260923_p4a_record_coverage.py 與
+    # tests/test_t20260923_p4b_fidelity_wiring.py 把關）；否則逐條對帳會再觸發
+    # 一輪補強，讓「呼叫次數＝2」的主張失真。
+    monkeypatch.setattr(service, "_validate_record_source_coverage", lambda *a, **k: [])
+    monkeypatch.setattr(service, "_validate_record_fidelity", lambda *a, **k: [])
 
     result = await service._summarize_with_local_pipeline(
         TRANSCRIPT_LINE * 200, settings.DEFAULT_SYSTEM_PROMPT
@@ -374,6 +380,10 @@ async def test_local_pipeline_applies_dynamic_length_gate_and_cites_transcript(m
     monkeypatch.setattr(service, "_validate_summary_quality", quality)
     monkeypatch.setattr(service, "_validate_cloud_speaker_traceability", lambda *a, **k: [])
     monkeypatch.setattr(service, "_validate_cloud_date_grounding", lambda *a, **k: [])
+    # 本測試主體是「動態長度閘門」；P4-A／P4-B 驗證器另有專屬契約測試，這裡隔離
+    # 以免它們（逐條對帳／忠實度）再觸發一輪補強，使輪次主張不確定。
+    monkeypatch.setattr(service, "_validate_record_source_coverage", lambda *a, **k: [])
+    monkeypatch.setattr(service, "_validate_record_fidelity", lambda *a, **k: [])
 
     result = await service._summarize_with_local_pipeline(
         transcript, settings.DEFAULT_SYSTEM_PROMPT
@@ -729,4 +739,3 @@ def test_measure_tag_traceability_zero_time_tags_are_isolated():
     assert metrics["zero_time_tag_ratio"] == 0.5
     assert metrics["distinct_tag_time_count"] == 2
     assert metrics["on_start_tag_ratio_excluding_zero"] == 1.0, "分母＝非 00:00:00 的 1 筆，該筆確實命中"
-

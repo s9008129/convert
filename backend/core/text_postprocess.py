@@ -760,6 +760,14 @@ TAG_SNAP_TOLERANCE_SECONDS = 180
 # 但也有 336 秒的開場長段；若原時間戳落在長段中間，硬吸附到段首會把「大概第 4 分半」
 # 變成「00:00:00」，反而更難查。因此位移超過此值時保留原時間戳（仍在真實段落內）。
 TAG_SNAP_MAX_SHIFT_SECONDS = 120
+# 規則 6（P4-D，T20260922-2037-02）：同標籤同時戳去重複化的上限——每個
+# （發言者標籤, 時間）最多允許幾筆標註共用同一時間戳，其餘改指到同標籤
+# ±``TAG_SNAP_MAX_SHIFT_SECONDS`` s 內未被使用的真實段落起點。
+# cap=2 為設計期離線模擬 [INFERRED] 的建議值（B2 0.288→0.654、D1 0.667→0.708）；
+# cap=3 邊際過薄（B2 僅 0.538），不設限會放寬位移密度。
+TAG_DIVERSIFY_MAX_PER_TIME = 2
+# 規則 6 bigram 排序用的字元串（漢字／英數混合，數字＋單位如「10月」也算一段）。
+_TAG_BIGRAM_RUN_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff0-9A-Za-z]+")
 # 標註內「發言者標籤」與時間戳之間的分隔符。
 _SPEAKER_LABEL_STRIP_CHARS = "，,、;；:： 	　"
 
@@ -853,6 +861,178 @@ def template_supports_source_tags(template) -> bool:
     return bool(getattr(template, "speaker_traceability", False))
 
 
+def _source_tag_diversify_enabled() -> bool:
+    """規則 6 回退開關（``LOCAL_SOURCE_TAG_DIVERSIFY_ENABLED``；預設開啟）。
+
+    ``backend/core/config.py`` 的欄位由同波 W1 新增，本函式以 ``getattr`` 容錯：
+    欄位尚未落地（或設定模組不可用）時預設 ``True``，落地後自動生效；
+    ``False``＝一行回 P3 行為（吸附輸出 byte 級不變）。欄位名稱兩種寫法都認
+    （config 欄位慣例為大寫；規劃文件凍結名為小寫），避免平行實作的命名落差
+    讓回退開關失效。
+    """
+    try:
+        from backend.core.config import settings
+    except Exception:
+        return True
+    value = getattr(settings, "LOCAL_SOURCE_TAG_DIVERSIFY_ENABLED", None)
+    if value is None:
+        value = getattr(settings, "local_source_tag_diversify_enabled", None)
+    if value is None:
+        return True
+    return bool(value)
+
+
+def _tag_bigrams(text: str) -> set:
+    """取文字中的「漢字／英數」字元 bigram 集合（規則 6 的相似度排序依據）。"""
+    bigrams: set = set()
+    for run in _TAG_BIGRAM_RUN_PATTERN.findall(text or ""):
+        run = run.lower()
+        for index in range(len(run) - 1):
+            bigrams.add(run[index:index + 2])
+    return bigrams
+
+
+def _diversify_source_tag_times(text: str, transcript: str, segments: list, stats: dict) -> str:
+    """規則 6：同標籤同時戳去重複化（fail-soft；不新增／不刪除標註）。
+
+    任何內部錯誤（含標註格式異常、逐字稿解析失敗）一律回傳原文字、絕不拋錯——
+    規則 6 是品質槓桿，不得讓紀錄生成失敗。
+    """
+    try:
+        return _diversify_source_tag_times_impl(text, transcript, segments, stats)
+    except Exception as exc:  # pragma: no cover - 防禦性 fail-soft
+        log.warning("[品質] 標註去重複化略過（fail-soft）：{}", exc)
+        return text
+
+
+def _diversify_source_tag_times_impl(text: str, transcript: str, segments: list, stats: dict) -> str:
+    """規則 6 實作。語意（決定性、可稽核）：
+
+    1. 合格群組＝同一正規化標籤、同一秒數、出現次數 ≥2、標籤非空、且該秒數
+       已是**真實段落起點**（＝規則 0 保留下來的「誠實但攏統」標註）。空標籤
+       （正文裡的「（10:30）」）一律不碰。
+    2. 每群保留前 ``TAG_DIVERSIFY_MAX_PER_TIME`` 筆（文字順序），其餘依序
+       改指到：真實段首、``|Δ| ≤ TAG_SNAP_MAX_SHIFT_SECONDS``、**未被該標籤
+       使用過**的秒數；原標註無秒（``HH:MM``）時只接受整分鐘落點（沿用規則 4
+       的 render/parse 可逆性論證）。排序：bigram 重疊數高者 → |Δ| 小者 →
+       秒數小者。命中即取代時間戳並加入該標籤的已使用集合；無候選則原樣保留。
+    3. 不新增／不刪除標註、不改發言者文字；所有落點都是真實段首。
+
+    冪等：一次套用後，每個（標籤, 時間）群組只剩 ≤ cap 筆（搬移落點是該標籤
+    獨占的新秒數）；失敗群組的候選集合在第二輪只會更小（已使用集合單調增），
+    故 ``f(f(x)) == f(x)``。
+    """
+    starts: list = []
+    start_set: set = set()
+    for segment in segments:
+        if segment[0] not in start_set:
+            start_set.add(segment[0])
+            starts.append(segment[0])
+
+    segment_text_by_start: dict = {}
+    for raw_line in (transcript or "").splitlines():
+        line = raw_line.strip()
+        match = TRANSCRIPT_SEGMENT_PATTERN.match(line)
+        if not match:
+            continue
+        start = _hms_to_seconds(*match.group(1, 2, 3))
+        segment_text_by_start.setdefault(start, line[match.end():].strip())
+
+    entries: list = []
+    for match in SOURCE_TAG_PATTERN.finditer(text):
+        inner = match.group()[1:-1]
+        time_match = SOURCE_TAG_TIME_PATTERN.search(inner)
+        if not time_match:
+            # 標註格式異常（無時間戳）→ 原樣保留、不計入規則 6。
+            continue
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        if line_end == -1:
+            line_end = len(text)
+        entries.append(
+            {
+                "match": match,
+                "time_match": time_match,
+                "inner": inner,
+                "label": _normalize_speaker_label(
+                    inner[: time_match.start()].strip(_SPEAKER_LABEL_STRIP_CHARS)
+                ),
+                "seconds": _hms_to_seconds(
+                    time_match.group(1), time_match.group(2), time_match.group(3) or "0"
+                ),
+                "with_seconds": time_match.group(3) is not None,
+                "line_bigrams": _tag_bigrams(text[line_start:line_end]),
+            }
+        )
+    if not entries:
+        return text
+
+    used: dict = {}
+    groups: dict = {}
+    for entry in entries:
+        if not entry["label"]:
+            continue
+        used.setdefault(entry["label"], set()).add(entry["seconds"])
+        groups.setdefault((entry["label"], entry["seconds"]), []).append(entry)
+
+    segment_bigrams: dict = {}
+
+    def _candidate_overlap(entry: dict, candidate: int) -> int:
+        if candidate not in segment_bigrams:
+            segment_bigrams[candidate] = _tag_bigrams(segment_text_by_start.get(candidate, ""))
+        return len(entry["line_bigrams"] & segment_bigrams[candidate])
+
+    replacements: list = []
+    for (label, seconds), members in groups.items():
+        if len(members) < 2 or seconds not in start_set:
+            continue
+        for entry in members[TAG_DIVERSIFY_MAX_PER_TIME:]:
+            candidates = [
+                candidate
+                for candidate in starts
+                if abs(candidate - seconds) <= TAG_SNAP_MAX_SHIFT_SECONDS
+                and candidate not in used[label]
+                and (entry["with_seconds"] or candidate % 60 == 0)
+            ]
+            if not candidates:
+                stats["diversify_skipped_no_candidate"] += 1
+                continue
+            target = min(
+                candidates,
+                key=lambda candidate: (
+                    -_candidate_overlap(entry, candidate),
+                    abs(candidate - seconds),
+                    candidate,
+                ),
+            )
+            used[label].add(target)
+            replacement = _seconds_to_hms(target, with_seconds=entry["with_seconds"])
+            new_inner = (
+                entry["inner"][: entry["time_match"].start()]
+                + replacement
+                + entry["inner"][entry["time_match"].end():]
+            )
+            replacements.append(
+                (entry["match"].start(), entry["match"].end(), f"（{new_inner}）")
+            )
+            stats["diversified"] += 1
+            stats["diversify_max_shift_seconds"] = max(
+                stats["diversify_max_shift_seconds"], abs(target - seconds)
+            )
+
+    if not replacements:
+        return text
+    replacements.sort(key=lambda item: item[0])
+    parts: list = []
+    cursor = 0
+    for start, end, replacement_text in replacements:
+        parts.append(text[cursor:start])
+        parts.append(replacement_text)
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 def snap_source_tags_to_transcript(text: str, transcript: str, template=None) -> tuple:
     """把發言來源標註的時間戳吸附到逐字稿的真實段落邊界，回傳（文字, 統計）。
 
@@ -875,6 +1055,16 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
        會再往更早的段落吸（實測鏈式後退 ``00:03 → 00:02 → 00:00``，
        見下方 rev 10 說明）。與 ``kept_far`` 同精神：精度不足時不硬改。
     5. 其餘（找不到任何依據）→ 原樣保留並計入 ``untraceable``。
+    6. **同標籤同時戳去重複化**（T20260922-2037-02 P4-D）：同一（發言者，時間）
+       標註出現多次、且該時間已是真實段首時，保留前 ``TAG_DIVERSIFY_MAX_PER_TIME``
+       筆，其餘改指到「同標籤、± ``TAG_SNAP_MAX_SHIFT_SECONDS`` s 內、該標籤
+       未使用過」的真實段落起點（bigram 重疊優先；原標註無秒時只接受整分鐘
+       落點）。不新增／不刪除標註、不改發言者文字；找不到候選或逐字稿不可用
+       一律原樣保留（fail-soft）。回退開關
+       ``LOCAL_SOURCE_TAG_DIVERSIFY_ENABLED=false`` 時整步 no-op（輸出與本波
+       之前 byte 級相同）。規則 6 冪等：一次套用後每個（標籤, 時間）群組只剩
+       ≤ cap 筆、搬移落點是該標籤獨占的新秒數，且失敗群組的候選集合第二輪只會
+       更小，故 ``f(f(x)) == f(x)``。
 
     fail-soft：任何一步不成立都保留原標註（不刪、不改寫、不動內文），因此
     最壞情況與現行行為完全相同；只有「時間戳確實對得上逐字稿」時才會替換。
@@ -927,6 +1117,10 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         "max_backward_seconds": 0,
         "kept_far": 0,
         "untraceable": 0,
+        # 規則 6（P4-D）：同標籤同時戳去重複化（獨立於既有指標定義）。
+        "diversified": 0,
+        "diversify_skipped_no_candidate": 0,
+        "diversify_max_shift_seconds": 0,
     }
     if not text or not transcript or not template_supports_source_tags(template):
         return text, stats
@@ -1015,7 +1209,10 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         new_inner = inner[: time_match.start()] + replacement + inner[time_match.end():]
         return f"（{new_inner}）"
 
-    return SOURCE_TAG_PATTERN.sub(replace_tag, text), stats
+    result = SOURCE_TAG_PATTERN.sub(replace_tag, text)
+    if not _source_tag_diversify_enabled():
+        return result, stats
+    return _diversify_source_tag_times(result, transcript, segments, stats), stats
 
 
 def measure_tag_traceability(text: str, transcript: str) -> dict:
