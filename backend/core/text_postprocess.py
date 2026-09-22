@@ -769,6 +769,50 @@ def _hms_to_seconds(hours: str, minutes: str, seconds: str) -> int:
     return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
 
 
+def _segment_contains(segment, seconds: int) -> bool:
+    """段落是否含此秒數：語意為**閉區間** ``[start, end]``（v1.x 歷史語意）。
+
+    零長度段落（``end <= start``，實測逐字稿可能出現）退化為單點 ``start``，
+    否則它永遠不可能命中，該段的標註會全部變成不可回溯。
+
+    為什麼是閉區間而非半開：逐字稿段落之間可能有**空隙**（前段 ``end`` 與
+    後段 ``start`` 之間沒有人講話）。若用半開區間，一個「恰為某段 ``end``
+    且不為任何段 ``start``」的時間戳會變成「不在任何段落內」＝不可回溯，
+    而它其實落在真實段落內、而且是最靠近該段內容的位置（實測 C1：唯一真正
+    被修正的 ``00:10:04 → 00:08:15`` 就屬此類）。R24 的真正根因不是閉區間
+    本身，而是「取第一個命中的段落」這個**順序**（見 `_pick_containing_segment`）。
+    """
+    start, end = segment[0], segment[1]
+    if end <= start:
+        return seconds == start
+    return start <= seconds <= end
+
+
+def _pick_containing_segment(segments, seconds: int):
+    """回傳含此秒數的段落（閉區間），沒有則回 ``None``。
+
+    優先序：``start == seconds``（段首命中）優先於其他命中的段落。
+    由於吸附落點一律是某段 ``start``，而 `snap_source_tags_to_transcript`
+    另有「全域段首保護」，落點因此是不動點（``f(f(x)) == f(x)``）——
+    但冪等性的**保證來源是那條全域保護**，本函式只是輔助（見其 docstring）。
+
+    T20260922-2037-02（R24）的真正根因就在這裡的**順序**：v1.0 是
+    「閉區間 ＋ 取第一個命中的段落」，當時間戳恰好等於相鄰兩段的交界
+    （``前段.end == 後段.start``）時，清單中**先出現的前一段**勝出，
+    於是標註被吸回前一段起點＝**倒退一格**（C1 驗收：7 個被改寫的值中 6 個
+    是倒退，例 ``00:18:09 → 00:18:06``）。段首優先修好了「同一份清單內」的交界，
+    但**跨發言者交界**（後一段屬別的發言者，故不在同一份清單裡）仍會後退；
+    完整修正因此分成兩層：本函式的段首優先 ＋ 呼叫端的全域段首保護。
+    """
+    fallback = None
+    for segment in segments:
+        if segment[0] == seconds:
+            return segment
+        if fallback is None and _segment_contains(segment, seconds):
+            fallback = segment
+    return fallback
+
+
 def _seconds_to_hms(total_seconds: int, *, with_seconds: bool) -> str:
     """秒數轉回 ``HH:MM(:SS)``；``with_seconds`` 依原標註的精度決定。"""
     hours, remainder = divmod(max(0, int(total_seconds)), 3600)
@@ -813,6 +857,10 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
 
     規則（依序，全部確定性）：
 
+    0. **全域段首保護**：時間戳若已是**任一**真實段落的起點 → 原樣保留
+       （``kept_on_start``）。段落區間語意是**閉區間** ``[start, end]``：
+       時間戳恰為某段 ``end`` 但非任何段 ``start`` 時仍算「落在該段內」
+       （段落之間可能有空隙），因此不會變成不可回溯。
     1. 標註的發言者標籤在逐字稿中存在，且時間戳落在該發言者的某段落內
        → 吸附到該段落的 ``start``（``snapped_exact``）。
     2. 否則，同發言者最近的段落 ``start`` 距離 ≤ ``TAG_SNAP_TOLERANCE_SECONDS``
@@ -824,6 +872,24 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
 
     fail-soft：任何一步不成立都保留原標註（不刪、不改寫、不動內文），因此
     最壞情況與現行行為完全相同；只有「時間戳確實對得上逐字稿」時才會替換。
+
+    T20260922-2037-02（P3 波，R24／R26）：v1.0 取「第一個命中的段落」，於是
+    「時間戳恰好等於前一段 ``end``（＝後一段 ``start``）」會被吸回前一段起點＝
+    **倒退一格**（C1 獨立驗收：7 個實際被改寫的值中 6 個是倒退，例
+    ``00:18:09 → 00:18:06``）；且因為落點仍是真實段首，主指標
+    ``on_start_tag_ratio`` 完全無感（指標盲區）。
+
+    v1.1 的保證由兩件事**共同**構成（獨立審查 attempt-07 的 R1／R3 反例修正）：
+    ①**全域段首保護**（規則 0）：時間戳若已是**任一**真實段落起點 → 原樣保留；
+    ②**所有吸附落點都只能是某段 ``start``**（規則 1／2／3 的 target 定義）。
+    兩者合起來才足以保證「一般輸入不跨段後退」與冪等——只做「同發言者清單內段首
+    優先」不夠：反例是「跨發言者的交界」（前一段 ``end`` ＝ 後一段 ``start``，而
+    後一段屬於別的發言者），此時同發言者清單裡沒有 ``start == 時間戳`` 的段落，
+    仍會吸回前一段起點並可再往後退（實測 A1 素材 12 筆被改寫、其中 9 筆原值
+    已是全域真實段首，例 ``00:13:37 → 00:13:12``）。
+    區間語意維持閉區間：改用半開區間雖然也能不退化，但會把「恰為某段 ``end``
+    且非任何段 ``start``」的良性吸附打成不可回溯（實測 C1 唯一真修正
+    ``00:10:04 → 00:08:15``），且該段時間戳其實仍在真實段落內。
     """
     stats = {
         "segments": 0,
@@ -833,6 +899,10 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         "snapped_exact": 0,
         "snapped_nearest": 0,
         "snapped_speaker_mismatch": 0,
+        "kept_on_start": 0,
+        "backward_moves": 0,
+        "forward_moves": 0,
+        "max_backward_seconds": 0,
         "kept_far": 0,
         "untraceable": 0,
     }
@@ -858,6 +928,13 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         seconds = _hms_to_seconds(
             time_match.group(1), time_match.group(2), time_match.group(3) or "0"
         )
+        # 規則 0（v1.1，R26）：全域段首保護。時間戳若已是**任一**真實段落的起點，
+        # 一律原樣保留——這是一般輸入下「不跨段後退」與「冪等」的必要條件：
+        # 只靠「同發言者清單內段首優先」擋不住跨發言者交界（前段 end ＝ 後段 start，
+        # 而後段屬別的發言者時，同發言者清單內沒有任何 start 等於此時間戳）。
+        if any(seg[0] == seconds for seg in segments):
+            stats["kept_on_start"] += 1
+            return tag
         speaker_label = _normalize_speaker_label(
             inner[: time_match.start()].strip(_SPEAKER_LABEL_STRIP_CHARS)
         )
@@ -865,17 +942,17 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         status = ""
         same_speaker = by_speaker.get(speaker_label, ())
         if same_speaker:
-            containing = [seg for seg in same_speaker if seg[0] <= seconds <= seg[1]]
-            if containing:
-                target, status = containing[0][0], "exact"
+            containing = _pick_containing_segment(same_speaker, seconds)
+            if containing is not None:
+                target, status = containing[0], "exact"
             else:
                 nearest = min(same_speaker, key=lambda seg: abs(seg[0] - seconds))
                 if abs(nearest[0] - seconds) <= TAG_SNAP_TOLERANCE_SECONDS:
                     target, status = nearest[0], "nearest"
         if target is None:
-            containing_any = [seg for seg in segments if seg[0] <= seconds <= seg[1]]
-            if containing_any:
-                target, status = containing_any[0][0], "speaker_mismatch"
+            containing_any = _pick_containing_segment(segments, seconds)
+            if containing_any is not None:
+                target, status = containing_any[0], "speaker_mismatch"
         if target is None:
             stats["untraceable"] += 1
             return tag
@@ -890,6 +967,16 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         replacement = _seconds_to_hms(target, with_seconds=with_seconds)
         stats["snapped"] += 1
         stats[f"snapped_{status}"] += 1
+        if target < seconds:
+            # 觀察值（非閘門）：往前收的幅度。段落內吸附本來就會往段首退，
+            # 因此它不是 0 是正常的；它的用途是「精度損失幅度」的量測，
+            # 以及與 v1.0 的「跨段後退」對照（後者會同時讓冪等性失效）。
+            stats["backward_moves"] += 1
+            stats["max_backward_seconds"] = max(
+                stats["max_backward_seconds"], seconds - target
+            )
+        elif target > seconds:
+            stats["forward_moves"] += 1
         if replacement == time_match.group():
             return tag
         stats["changed"] += 1
@@ -904,7 +991,9 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
 
     * ``tags_total``：正文標註數（含表格列；表格標註另由 E2E 契約清除）。
     * ``tags_inside_any_segment``／``traceable_tag_ratio``：時間戳落在逐字稿任一
-      真實段落內（＝「這個時間點會議真的在進行」）。
+      真實段落內（＝「這個時間點會議真的在進行」）。段落區間語意與吸附一致
+      （閉區間 ``[start, end]``，含段落間空隙的邊界時間戳），避免量尺與產品
+      對同一份逐字稿給出不同答案。
     * ``tags_on_real_segment_start``／``on_start_tag_ratio``：時間戳恰好等於**任一**真實
       段落起點（吸附後的主指標；不看發言者標籤，因為模型可能用「科長」等角色名）。
     * ``tags_exact_segment_start``／``exact_tag_ratio``：時間戳恰為某段起點**且**發言者
@@ -937,7 +1026,7 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         tag_times.add(seconds)
         if seconds == 0:
             zero_time += 1
-        if any(seg[0] <= seconds <= seg[1] for seg in segments):
+        if any(_segment_contains(seg, seconds) for seg in segments):
             inside_any += 1
         if any(seg[0] == seconds for seg in segments):
             on_start += 1
@@ -949,7 +1038,8 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         ):
             exact += 1
         if any(
-            _normalize_speaker_label(seg[2]) == speaker_label and seg[0] <= seconds <= seg[1]
+            _normalize_speaker_label(seg[2]) == speaker_label
+            and _segment_contains(seg, seconds)
             for seg in segments
         ):
             inside_same += 1

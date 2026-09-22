@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
@@ -138,6 +139,27 @@ class SummarizationService:
     # 同時涵蓋「（發言者1，00:00:00）」與「（科長，00:00:00）」兩種寫法。
     # 補強訊息列出具體遺漏待辦時的最大顯示數量（避免提示詞被長清單淹沒）
     ACTION_ISSUE_PREVIEW_LIMIT = 12
+
+    # P3 波（R23）：待辦召回比對門檻——「滑窗最長共同子序列（LCS）比例」。
+    # 以 0903 場 27B 真實輸出校準：**確實已涵蓋**的待辦（含被舊版「整條連續子字串」
+    # 比對誤判為遺漏的假陽性）落點 0.69–1.00；逐字稿裡**真的沒寫**的對照句落點
+    # 0.27–0.42。取 0.6 為門檻，兩側都留有餘裕；調高會回到假陽性（補強白燒），
+    # 調低會讓真遺漏不再觸發補強（false negative，比白燒更糟）。
+    ACTION_MATCH_MIN_LCS_RATIO = 0.6
+
+    # P3 波（R2 守衛）：LCS 近似比對會把「改寫」與「失真」混為一談的兩個盲區。
+    # 兩條守衛都是確定性、無 LLM，且方向一律**往更嚴**（寧可多補強一輪，
+    # 不可把失真當成已涵蓋）：
+    # ①否定詞——否定是語意反轉，字面重疊度卻很高（實測「嚴禁…外流」對照句
+    #   LCS 0.917 會被誤判已涵蓋）。標籤內的否定詞若沒出現在紀錄中，一律判遺漏。
+    # ②數字——金額／數量／日期是紀錄最不能錯、也最容易被改寫稀釋的資訊
+    #   （實測 0.818；真實缺口例：800×17＝13600 元的算式被寫成「約一萬多元」）。
+    #   標籤內 **≥2 位**數字串必須原樣出現（正規化已折疊全形/半形與千分位逗號，
+    #   兩側對稱）。為什麼從 3 位放寬到 2 位：獨立審查 attempt-07 的 R2 反例——
+    #   「9月30日」被改寫成「9月20日」時，數字串 `30`（2 位）是唯一可辨識的差異，
+    #   LCS 0.9333 會被洗白成「已涵蓋」。方向一律往更嚴（寧可多一輪補強）。
+    ACTION_NEGATION_TERMS = ("嚴禁", "禁止", "不得", "勿", "避免", "不可")
+    _ACTION_NUMBER_PATTERN = re.compile(r"\d{2,}")
 
     _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
     _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
@@ -912,8 +934,180 @@ class SummarizationService:
 
     @staticmethod
     def _normalize_action_key(text: str) -> str:
-        """將待辦事項文字正規化，方便比對是否遺漏。"""
-        return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", text).lower()
+        """將待辦事項文字正規化，方便比對是否遺漏。
+
+        P3 波（R23）：正規化必須**對稱**。紀錄側在驗證之前已走過
+        `_finalize_record_text(mode="local")`（OpenCC 台灣正體＋模板詞彙修正，
+        例如「征收股」→「徵收股」），但比對基準 `merged_notes`／萃取筆記完全
+        沒過同一條。只折半邊的實測後果：同一件事被誤判成遺漏。
+
+        真實案例（0903 場、27B）：待辦標籤「了解房屋稅系統業務調整（稽查股/征收股）」
+        在紀錄中寫成「徵收股」→ 舊版逐條比對判為遺漏，而 `merged_notes` 在補強
+        迴圈中固定不變，假陽性集合逐輪相同 → 補強註定不收斂（實測 2 輪白燒 710 s，
+        佔總時長 42%），且每輪都是整份紀錄重生成，對品質是負向風險。
+
+        如實界線：這裡處理的是**同一條管線能折疊的差異**（全形/半形、標點、
+        可偵測的簡體字）；「征收 vs 徵收」這種**模板詞彙修正**造成的差異不在這裡
+        折疊（`to_taiwan_traditional` 刻意只轉含簡體字的行，避免誤傷正體用字，
+        見 `backend/core/text_postprocess.py`），而是由 `_action_key_best_lcs_ratio`
+        的近似比對吸收——實測該案例 LCS 0.94。
+        """
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFKC", text)
+        try:  # 與紀錄側同一條簡繁折疊；缺 OpenCC 時原樣（仍對稱）
+            from backend.core.text_postprocess import to_taiwan_traditional
+
+            normalized = to_taiwan_traditional(normalized)
+        except Exception:  # noqa: BLE001
+            pass
+        return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", normalized).lower()
+
+    @staticmethod
+    def _lcs_length(left: str, right: str) -> int:
+        """最長共同子序列長度（滾動陣列，純確定性、無第三方依賴）。"""
+        if not left or not right:
+            return 0
+        previous = [0] * (len(right) + 1)
+        for char in left:
+            current = [0] * (len(right) + 1)
+            for index, other in enumerate(right, 1):
+                if char == other:
+                    current[index] = previous[index - 1] + 1
+                else:
+                    current[index] = max(previous[index], current[index - 1])
+            previous = current
+        return previous[-1]
+
+    @classmethod
+    def _action_key_best_window(
+        cls, key: str, haystack: str, bigram_index: dict
+    ) -> tuple[float, str]:
+        """待辦標籤在紀錄中「最佳連續視窗」的（LCS 覆蓋比例, 該視窗文字）。
+
+        只看**連續視窗**（長度＝標籤長 + 4）而非整份紀錄：整份紀錄比對會讓
+        「同一個字恰好散落在不同段落」被誤判成已涵蓋（false negative）。
+        候選視窗由標籤自身的字元 bigram 在紀錄中的出現位置反推，因此不需要
+        全文掃描；比對語意是「順序大致保留的改寫」，比集合式比對更貼近人眼。
+
+        一併回傳視窗文字，供守衛做**局部**判定（審查 attempt-07 R2：否定詞若只
+        檢查「整份紀錄有沒有出現」，目標句被反轉、而否定詞出現在其他段落時仍會
+        被洗白成已涵蓋）。
+        """
+        if len(key) < 4:
+            # 太短的標籤（例：「設備調整」）不做近似比對：改寫空間太大，
+            # 任何近似都會變成雜訊。保留舊行為（需完整子字串命中）。
+            return 0.0, ""
+        candidates = set()
+        for offset in range(len(key) - 1):
+            for position in bigram_index.get(key[offset : offset + 2], ()):
+                candidates.add(position - offset)
+        window_length = len(key) + 4
+        best = 0.0
+        best_window = ""
+        for start in candidates:
+            if start < 0:
+                continue
+            window = haystack[start : start + window_length]
+            if not window:
+                continue
+            ratio = cls._lcs_length(key, window) / len(key)
+            if ratio > best:
+                best = ratio
+                best_window = window
+                if best >= cls.ACTION_MATCH_MIN_LCS_RATIO:
+                    return best, best_window
+        return best, best_window
+
+    @classmethod
+    def _action_key_best_lcs_ratio(cls, key: str, haystack: str, bigram_index: dict) -> float:
+        """`_action_key_best_window` 的純比例包裝（供日誌與外部呼叫使用）。"""
+        return cls._action_key_best_window(key, haystack, bigram_index)[0]
+
+    @classmethod
+    def _split_record_sentences(cls, text: str) -> tuple:
+        """把紀錄切成句子並套用同一條正規化（守衛的「最相近一句話」判定用）。
+
+        為什麼不能用「整份紀錄」或單純的固定長度視窗：正規化會把換行與標點折疊掉，
+        於是別的子句（甚至別的段落）的否定詞可能落進視窗內，讓「目標句被反轉」
+        誤判成已涵蓋（獨立審查 attempt-07 的 R2 反例）。切句後只認「與標籤最相近
+        的那一句」，語意上就是「這件事被寫在哪一句」，比全文或視窗都更貼近正確範圍。
+        """
+        sentences = []
+        for piece in re.split(r"[。！？!?；;\n]+", text or ""):
+            normalized = cls._normalize_action_key(piece)
+            if normalized:
+                sentences.append(normalized)
+        return tuple(sentences)
+
+    @classmethod
+    def _find_missing_action_keys(
+        cls, expected_actions, normalized_summary: str, local_sentences=None
+    ) -> tuple[set, dict]:
+        """回傳（未涵蓋的待辦 key 集合, {key: 最佳 LCS 比例}）。
+
+        判定規則（P3 波 R23，兩條都是確定性、無 LLM）：
+        1. 正規化後的標籤本身是紀錄的連續子字串 → 已涵蓋（改寫幅度小）。
+        2. 否則取滑窗 LCS 比例 ≥ `ACTION_MATCH_MIN_LCS_RATIO` → 已涵蓋
+           （順序大致保留的改寫，例：「嚴禁轉傳科內群組訊息至外部」寫成
+           「嚴禁將科內群組訊息（含照片）外流至任何外部渠道」）。
+        未達門檻者才計入遺漏，並回傳比例供日誌與調校使用。
+
+        3. 近似比對通過後，仍要過兩道「語意不能被近似吸收」的守衛（R2）：
+           標籤內的**否定詞**（`ACTION_NEGATION_TERMS`）與 **≥2 位數字串**必須
+           原樣出現在**局部比對範圍**內，否則一律判遺漏。理由：LCS 是字面量尺，
+           否定詞（實測 0.917）與數字（實測 0.818）恰好是它最不敏感、
+           而正式紀錄最不允許失真的兩類資訊。方向刻意**往更嚴**——
+           代價是可能多一輪補強（已有不收斂保護上限），收益是不會把
+           失真當成已涵蓋而靜默放行。
+           「局部比對範圍」＝**最佳比對視窗**（標籤長＋4 的連續區段）與
+           **最相近的一句話**（`local_sentences`，由呼叫端提供）的交集：
+           只檢查「整份紀錄有沒有出現」不夠——獨立審查 attempt-07 的反例顯示，
+           同一個否定詞出現在別的子句時，目標句反轉（LCS 0.8571）會被放行；
+           只檢查視窗也不夠，因為正規化會消掉換行，「別句的否定詞」可能落進視窗。
+           `local_sentences=None`（未提供）時退化成只檢查視窗。
+        """
+        bigram_index: dict[str, list[int]] = {}
+        for index in range(len(normalized_summary) - 1):
+            bigram_index.setdefault(normalized_summary[index : index + 2], []).append(index)
+        missing: set = set()
+        ratios: dict = {}
+        for key in expected_actions:
+            if not key or key in normalized_summary:
+                continue
+            ratio, window = cls._action_key_best_window(key, normalized_summary, bigram_index)
+            ratios[key] = ratio
+            if ratio < cls.ACTION_MATCH_MIN_LCS_RATIO:
+                missing.add(key)
+                continue
+            local_texts = [window] if window else []
+            if local_sentences:
+                local_texts.append(
+                    max(local_sentences, key=lambda sentence: cls._lcs_length(key, sentence))
+                )
+            if not local_texts:
+                local_texts = [normalized_summary]
+            missing_negations = [
+                term
+                for term in cls.ACTION_NEGATION_TERMS
+                if term in key and any(term not in text for text in local_texts)
+            ]
+            missing_numbers = [
+                token
+                for token in cls._ACTION_NUMBER_PATTERN.findall(key)
+                if any(token not in text for text in local_texts)
+            ]
+            if missing_negations or missing_numbers:
+                missing.add(key)
+                log.info(
+                    "待辦召回守衛攔下（LCS {:.2f} 已達門檻，但語意資訊缺失）："
+                    "{}｜缺否定詞 {}｜缺數字 {}",
+                    ratio,
+                    key[:24],
+                    missing_negations or "無",
+                    missing_numbers or "無",
+                )
+        return missing, ratios
 
     def _extract_action_table_labels(self, markdown: str) -> list[str]:
         """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦「原始標籤」。
@@ -1013,7 +1207,32 @@ class SummarizationService:
         # 避免逐字不符就誤判遺漏而觸發不必要的補強輪次。
         expected_actions = self._extract_action_table_keys(extracted_notes)
         normalized_summary = self._normalize_action_key(cleaned)
-        missing_actions = {key for key in expected_actions if key not in normalized_summary}
+        # P3 波（R23）：整條連續子字串比對換成「對稱正規化 ＋ 滑窗 LCS 比例」。
+        # 舊行為要求待辦標籤**逐字連續**出現才算涵蓋，於是任何改寫（「的」→「之」、
+        # 「征收」→「徵收」、「轉傳…至外部」→「外流至任何外部渠道」、加上
+        # 「請於下週三前」等修飾語）都被判成遺漏；配合 `merged_notes` 在補強迴圈中
+        # 固定不變，問題集合逐輪相同 → 迴圈不收斂。
+        # 新判定仍要求「同一段連續文字」，只是容許順序保留的改寫，因此
+        # 「真的沒寫」的待辦照樣會被判遺漏（實測對照句 LCS 0.27–0.42 < 0.6）。
+        missing_actions, missing_ratios = self._find_missing_action_keys(
+            expected_actions,
+            normalized_summary,
+            local_sentences=self._split_record_sentences(cleaned),
+        )
+        if missing_actions:
+            # 校準用觀察值：把「未被判定涵蓋」的項目與其最佳覆蓋比例寫進日誌，
+            # 讓下一次調門檻有真實分布可以看（不影響判定本身）。
+            log.info(
+                "待辦召回比對（P3，門檻 {}）：未涵蓋 {} 項，最佳 LCS 比例 {}",
+                self.ACTION_MATCH_MIN_LCS_RATIO,
+                len(missing_actions),
+                ", ".join(
+                    f"{key[:18]}…={ratio:.2f}"
+                    if len(key) > 18
+                    else f"{key}={ratio:.2f}"
+                    for key, ratio in list(missing_ratios.items())[: self.ACTION_ISSUE_PREVIEW_LIMIT]
+                ),
+            )
         if missing_actions:
             # v4.8.0：問題清單帶「具體遺漏項目」。舊行為只回報數量，模型無從得知
             # 少了什麼，補強輪因此空轉（實測兩輪輸出逐字相同、遺漏數不變）。
@@ -2151,7 +2370,21 @@ class SummarizationService:
         issues += self._validate_cloud_speaker_traceability(summary, template)
         issues += self._validate_cloud_date_grounding(summary, transcript)
         attempts = 0
+        # P3 波（R23）：不收斂保護。補強是「整份紀錄重生成」，若上一輪之後問題集合
+        # 完全沒變，代表再跑一輪只會白燒算力、還有把已正確段落改壞的風險
+        # （實測 27B：第 2 輪與第 1 輪問題集合相同、輸出逐字相同，白燒 710 s）。
+        previous_issue_signature: Optional[tuple] = None
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
+            issue_signature = tuple(sorted(issues))
+            if issue_signature == previous_issue_signature:
+                log.warning(
+                    "本地摘要補強未收斂（問題集合與上一輪相同，共 {} 項）→ 停止再補強，"
+                    "避免白燒與重生成造成的品質退化：{}",
+                    len(issues),
+                    "; ".join(issues)[:400],
+                )
+                break
+            previous_issue_signature = issue_signature
             attempts += 1
             self._emit_progress(progress_callback, 88.0 + attempts, f"補強摘要完整性（第 {attempts} 輪）...")
             log.info(f"本地摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
@@ -2273,13 +2506,17 @@ class SummarizationService:
         if applied_fixes or stripped_tags or deduped_items or tag_snap_stats["snapped"]:
             log.info(
                 "[品質] 地端紀錄後處理：術語修正 {} 處、出處標註吸附 {} 處"
-                "（段落內 {}／最近段落 {}／跨發言者 {}；不可回溯保留 {}）、"
+                "（段落內 {}／最近段落 {}／跨發言者 {}；全域段首保護 {} 筆不動；"
+                "往前收 {} 筆／最大 {} s；不可回溯保留 {}）、"
                 "表格出處標註移除 {} 處、跨節重複移除 {} 條",
                 len(applied_fixes),
                 tag_snap_stats["snapped"],
                 tag_snap_stats["snapped_exact"],
                 tag_snap_stats["snapped_nearest"],
                 tag_snap_stats["snapped_speaker_mismatch"],
+                tag_snap_stats["kept_on_start"],
+                tag_snap_stats["backward_moves"],
+                tag_snap_stats["max_backward_seconds"],
                 tag_snap_stats["untraceable"],
                 stripped_tags,
                 deduped_items,
@@ -3290,7 +3527,18 @@ class SummarizationService:
         issues += self._validate_cloud_speaker_traceability(summary, template)
         issues += self._validate_cloud_date_grounding(summary, transcript)
         attempts = 0
+        # P3 波（R23）：雲端路徑共用同一個不收斂保護（同一份驗證、同一類白燒）。
+        previous_issue_signature: Optional[tuple] = None
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
+            issue_signature = tuple(sorted(issues))
+            if issue_signature == previous_issue_signature:
+                log.warning(
+                    "雲端摘要補強未收斂（問題集合與上一輪相同，共 {} 項）→ 停止再補強：{}",
+                    len(issues),
+                    "; ".join(issues)[:400],
+                )
+                break
+            previous_issue_signature = issue_signature
             attempts += 1
             # 進度固定 94%（生成串流已推進至 94），補強輪不再回傳串流進度，
             # 避免進度條在補強期間倒退（審查建議）
