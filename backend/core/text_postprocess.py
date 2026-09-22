@@ -793,8 +793,9 @@ def _pick_containing_segment(segments, seconds: int):
 
     優先序：``start == seconds``（段首命中）優先於其他命中的段落。
     由於吸附落點一律是某段 ``start``，而 `snap_source_tags_to_transcript`
-    另有「全域段首保護」，落點因此是不動點（``f(f(x)) == f(x)``）——
-    但冪等性的**保證來源是那條全域保護**，本函式只是輔助（見其 docstring）。
+    另有「全域段首保護」與「精度保護」兩道條件，落點才會是不動點
+    （``f(f(x)) == f(x)``）——但冪等性的**保證來源是那兩道條件**，
+    本函式只是輔助（見其 docstring）。
 
     T20260922-2037-02（R24）的真正根因就在這裡的**順序**：v1.0 是
     「閉區間 ＋ 取第一個命中的段落」，當時間戳恰好等於相鄰兩段的交界
@@ -868,7 +869,12 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
     3. 否則，時間戳落在**任何**真實段落內（發言者標籤與逐字稿不同名時）
        → 吸附到該段落 ``start``（``snapped_speaker_mismatch``，時間為真、
        發言者標籤維持模型原文——不代模型改歸屬）。
-    4. 其餘（找不到任何依據）→ 原樣保留並計入 ``untraceable``。
+    4. **精度保護**：原標註是 ``HH:MM``（無秒）而目標段首**不是整分鐘**
+       （``target % 60 != 0``）→ 原樣保留（``kept_precision``）。理由：渲染
+       無秒標註必須捨秒，採用該目標會讓「換出來的值」不等於目標，二次套用
+       會再往更早的段落吸（實測鏈式後退 ``00:03 → 00:02 → 00:00``，
+       見下方 rev 10 說明）。與 ``kept_far`` 同精神：精度不足時不硬改。
+    5. 其餘（找不到任何依據）→ 原樣保留並計入 ``untraceable``。
 
     fail-soft：任何一步不成立都保留原標註（不刪、不改寫、不動內文），因此
     最壞情況與現行行為完全相同；只有「時間戳確實對得上逐字稿」時才會替換。
@@ -879,14 +885,29 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
     ``00:18:09 → 00:18:06``）；且因為落點仍是真實段首，主指標
     ``on_start_tag_ratio`` 完全無感（指標盲區）。
 
-    v1.1 的保證由兩件事**共同**構成（獨立審查 attempt-07 的 R1／R3 反例修正）：
+    v1.1／rev 10 的保證由三件事**共同**構成（獨立審查 attempt-07 的 R1／R3、
+    attempt-08 的 R1 反例修正）：
     ①**全域段首保護**（規則 0）：時間戳若已是**任一**真實段落起點 → 原樣保留；
-    ②**所有吸附落點都只能是某段 ``start``**（規則 1／2／3 的 target 定義）。
-    兩者合起來才足以保證「一般輸入不跨段後退」與冪等——只做「同發言者清單內段首
-    優先」不夠：反例是「跨發言者的交界」（前一段 ``end`` ＝ 後一段 ``start``，而
-    後一段屬於別的發言者），此時同發言者清單裡沒有 ``start == 時間戳`` 的段落，
-    仍會吸回前一段起點並可再往後退（實測 A1 素材 12 筆被改寫、其中 9 筆原值
-    已是全域真實段首，例 ``00:13:37 → 00:13:12``）。
+    ②**所有吸附落點都只能是某段 ``start``**（規則 1／2／3 的 target 定義）；
+    ③**精度保護**（規則 4）：``HH:MM`` 標註的目標必須是整分鐘才採用。
+    三者合起來才足以保證「已是段首的值不被搬動」，且**所有被接受的值都是不動點**
+    （``f(f(x)) == f(x)``）——含秒標註渲染可逆（``HH:MM:SS`` 還原相等）、
+    無秒標註則一律落在整分鐘上，故第二輪必為規則 0 或規則 4 接住。
+    **後退幅度（如實，rev 12／審查 attempt-09 R4）**：規則 1（段落內）與規則 3
+    （跨發言者命中）的落點必在時間戳所屬段落內或該段落起點；但**規則 2（nearest 容忍，
+    ``TAG_SNAP_TOLERANCE_SECONDS``＝180 s）例外**——時間戳落在**別的**發言者段落內時，
+    會吸到「該發言者最近的真實段首」，該段首可能**早於**原時間戳所在段落，即**跨段後退**
+    （最小反例：``[00:00:02-00:00:32] 發言者2``／``[00:00:32-00:01:02] 發言者1``
+    ＋``（發言者2，00:00:34）``→ ``00:00:02``，Δ32 s；仍冪等）。此行為**非本波引入**
+    （v1.0 同輸出），列為已知限制（plan §8.7 風險⑤），本波只如實限縮宣稱、不改行為。
+    只做「同發言者清單內段首優先」不夠：反例是「跨發言者的交界」
+    （前一段 ``end`` ＝ 後一段 ``start``，而後一段屬於別的發言者），此時同發言者
+    清單裡沒有 ``start == 時間戳`` 的段落，仍會吸回前一段起點並可再往後退
+    （實測 A1 素材 12 筆被改寫、其中 9 筆原值已是全域真實段首，
+    例 ``00:13:37 → 00:13:12``）。同理只做①②也不夠：``（科長，00:03）`` 這種
+    無秒標註會先被吸到 ``00:02:42``，渲染成 ``00:02`` 後再被吸到 ``00:00``
+    ＝鏈式後退（審查 attempt-08 R1；實測真實素材 228 個標註中 0 個無秒，
+    但產品樣式允許 ``HH:MM``，屬可達輸入類）。
     區間語意維持閉區間：改用半開區間雖然也能不退化，但會把「恰為某段 ``end``
     且非任何段 ``start``」的良性吸附打成不可回溯（實測 C1 唯一真修正
     ``00:10:04 → 00:08:15``），且該段時間戳其實仍在真實段落內。
@@ -900,6 +921,7 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         "snapped_nearest": 0,
         "snapped_speaker_mismatch": 0,
         "kept_on_start": 0,
+        "kept_precision": 0,
         "backward_moves": 0,
         "forward_moves": 0,
         "max_backward_seconds": 0,
@@ -929,7 +951,8 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
             time_match.group(1), time_match.group(2), time_match.group(3) or "0"
         )
         # 規則 0（v1.1，R26）：全域段首保護。時間戳若已是**任一**真實段落的起點，
-        # 一律原樣保留——這是一般輸入下「不跨段後退」與「冪等」的必要條件：
+        # 一律原樣保留——這是「已是段首的值不被搬動」與「冪等」的必要條件
+        # （註：規則 2 的 nearest 容忍仍可能跨段後退，見本函式 docstring 的如實界定）：
         # 只靠「同發言者清單內段首優先」擋不住跨發言者交界（前段 end ＝ 後段 start，
         # 而後段屬別的發言者時，同發言者清單內沒有任何 start 等於此時間戳）。
         if any(seg[0] == seconds for seg in segments):
@@ -964,12 +987,21 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
             return tag
 
         with_seconds = time_match.group(3) is not None
+        # 規則 4（rev 10，審查 attempt-08 R1）：精度保護。`HH:MM` 標註渲染時
+        # 必然捨秒，若目標段首不是整分鐘，採用 replacement 會產生一個「不等於
+        # 目標」的值（例 target=162s 渲染成 `00:02`＝120s）→ 第二輪再從 120s
+        # 往更早的段落吸（`00:03 → 00:02 → 00:00` 鏈式後退），破壞冪等。
+        # 只在 render/parse 可逆（含秒，或目標為整分鐘）時才採用。
+        if not with_seconds and target % 60 != 0:
+            stats["kept_precision"] += 1
+            return tag
         replacement = _seconds_to_hms(target, with_seconds=with_seconds)
         stats["snapped"] += 1
         stats[f"snapped_{status}"] += 1
         if target < seconds:
             # 觀察值（非閘門）：往前收的幅度。段落內吸附本來就會往段首退，
-            # 因此它不是 0 是正常的；它的用途是「精度損失幅度」的量測，
+            # 因此它不是 0 是正常的；規則 2 的 nearest 容忍另可跨段後退（v1.0 同）；
+            # 它的用途是「精度損失幅度」的量測，
             # 以及與 v1.0 的「跨段後退」對照（後者會同時讓冪等性失效）。
             stats["backward_moves"] += 1
             stats["max_backward_seconds"] = max(

@@ -2507,7 +2507,7 @@ class SummarizationService:
             log.info(
                 "[品質] 地端紀錄後處理：術語修正 {} 處、出處標註吸附 {} 處"
                 "（段落內 {}／最近段落 {}／跨發言者 {}；全域段首保護 {} 筆不動；"
-                "往前收 {} 筆／最大 {} s；不可回溯保留 {}）、"
+                "精度保護 {} 筆不動；往前收 {} 筆／最大 {} s；不可回溯保留 {}）、"
                 "表格出處標註移除 {} 處、跨節重複移除 {} 條",
                 len(applied_fixes),
                 tag_snap_stats["snapped"],
@@ -2515,6 +2515,7 @@ class SummarizationService:
                 tag_snap_stats["snapped_nearest"],
                 tag_snap_stats["snapped_speaker_mismatch"],
                 tag_snap_stats["kept_on_start"],
+                tag_snap_stats["kept_precision"],
                 tag_snap_stats["backward_moves"],
                 tag_snap_stats["max_backward_seconds"],
                 tag_snap_stats["untraceable"],
