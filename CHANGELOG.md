@@ -1,5 +1,65 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.9.0] - 2026-09-22
+
+### 🎯 主題：地端紀錄「可查核性」的模型無關修復——出處標註時間戳確定性吸附、量測儀器強化與量尺更正
+
+使用者新需求：品質優化機制**必須與模型無關**，日後在辦公室 Windows 11 ＋ RTX 4090 ＋ Ollama 跑
+Gemma 4 31B 也要一體適用，不得只為 LM Studio 的 Qwen 客製；且本輪只測 dense 27B
+（`qwen3.8-27b-splash`）。實作因此全部落在 L1–L3（逐字稿 ground truth／確定性後處理／確定性閘門），
+不新增任何模型名稱、家族或引擎參數分支。
+
+### 🔧 修正
+
+1. **出處標註吸附（`snap_source_tags_to_transcript`，`backend/core/text_postprocess.py`）**：
+   以逐字稿段落時間表為 ground truth，把模型寫的時間戳吸附到真實段落起點，4 條優先序規則、
+   fail-soft（不可回溯者原樣保留、絕不刪除或改寫發言者歸屬）、位移上限
+   `TAG_SNAP_MAX_SHIFT_SECONDS=120`（避免把「大概第 4 分半」硬拉成 `00:00:00`）。
+   掛在 `_finalize_record_text(mode="local")` 之鏈中，最終生成與**每一輪補強寫回**都走同一條。
+2. **修復位置即模型無關證據**：`_summarize_with_local_pipeline` 以 `_generate_with_local_engine`
+   分派 `ollama`／`lmstudio`，兩者共用同一條後處理；遠端 Ollama（`OLLAMA_BASE_URL` 指向 Windows
+   主機）自動受益，不需為新引擎另寫一份。**唯一硬前提是逐字稿段落列格式**，格式不同時吸附全部
+   no-op（fail-soft）並由量測指標示警。
+3. **量測儀器強化（`measure_tag_traceability`／`scripts/e2e/measure_record_quality.py`）**：
+   新增 `zero_time_tag_count`／`zero_time_tag_ratio`（`00:00:00` 標註；結構上必然命中段落起點、
+   會膨脹主指標，故單獨列出）、`distinct_tag_time_count`／`distinct_tag_time_ratio`（標註辨別力）、
+   `on_start_tag_ratio_excluding_zero`（排除 `00:00:00` 後的分母）。
+4. **量尺更正（誠實登記）**：本專案先前把 dense 27B 的 `46/61（75.4%）` 與 MoE 的 `4/27（14.8%）`
+   標為 `on_start_tag_ratio`，實際那是 **`exact_tag_ratio`**（要求發言者標籤一致）。以新儀器重測後，
+   真正的 `on_start` 為 **27B 58/61 = 95.1%、MoE 10/27 = 37.0%**。研究文件 §10.3／§10.7 已更正並
+   註明更正理由。
+
+### 📊 實測（真實音檔 `0903-科務會議.m4a`、`section_meeting`、`local`、dense 27B）
+
+| 指標 | A1（修復前） | **B2（修復後，本輪主角）** |
+|---|---|---|
+| runner verdict | PASS | **PASS**（16 checks、exit 0） |
+| 全流程耗時 | 910 s | 1,710 s（多跑 2 輪補強，見下） |
+| `on_start_tag_ratio` | 0.951（58/61） | **1.000（52/52）** |
+| `on_start_tag_ratio_excluding_zero` | 0.944（51/54） | **1.000（45/45）** |
+| `traceable_tag_ratio` | 1.000 | 1.000 |
+| 表格出處標註 | 0 | 0 |
+| 正文出處標註 | 61 | 52（≥ 退化防線 17） |
+| 指示章節條目 | 21 | 25 |
+| `distinct_tag_time_ratio` | 0.475（29 種） | 0.288（15 種）→ **新缺口 P1-16** |
+| `unsupported_entities` | 3 | 3（P1-1／P1-6 待做） |
+
+- 吸附日誌（最終輸出）：`出處標註吸附 40 處（段落內 1／跨發言者 39／不可回溯 0）`；
+  第一輪輸出為 45 處（段落內 1／跨發言者 44／不可回溯 0）。`[VERIFIED]`
+- **耗時構成**：ASR＋diarization 299 s（45 分鐘音檔、RTF 0.057）、抽取 80 s，其餘為 4 次大生成
+  （整併 360 s／最終 334 s／補強 359 s／補強 351 s），解碼實測 **8.7–11.5 tokens/s**。
+  A1 只跑 2 次大生成故 910 s；B2 因品質閘門抓到「待辦事項遺漏 11 項」多跑 2 輪補強。
+  → 慢的原因是「dense 27B 的解碼速度 × 呼叫次數」，不是 M4 Pro 不夠力（ASR 只花 5 分鐘）。`[VERIFIED 日誌]`
+- 全套測試 `886 passed / 2 skipped`（前波 885）；`bash scripts/check_docs.sh` 0 errors / 0 warnings。
+- 雲端路徑不變：本次修正全在地端鏈（`mode="local"`），雲端提示詞與輸出 byte 級不變（既有測試釘住）。
+
+### ⚠️ 新發現（已列入研究文件 §10.6／§10.7）
+
+1. **標註辨別力不足**（新 P1-16）：52 個標註只用了 15 個不同時間戳，同一時間戳平均重複 3.5 次，
+   其中 7 筆為會議起點 `00:00:00` → 「標註存在且可回溯」達標，但「指到哪一句」的資訊量仍低。
+2. **覆蓋率未重測**：B2 沒有重跑事實探針，覆蓋率 `[UNVERIFIED]`，不得由可查核性推論。
+3. **`unsupported_entities` 仍 3 筆**（徵收股／煙酒文神股／稽查股），與 A1 同級。
+
 ## [v4.8.1] - 2026-09-22
 
 ### 🎯 主題：地端紀錄契約收斂——彙整表出處標註確定性歸零、可確證 ASR 誤辨修正、general 跨節去重、驗收器模板感知

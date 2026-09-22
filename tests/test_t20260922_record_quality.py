@@ -703,3 +703,30 @@ def test_measure_tag_traceability_shared_definition():
     assert after["tags_inside_any_segment"] == 3
     assert after["traceable_tag_ratio"] == 0.75, "不可回溯的那一筆仍為 0.75（fail-soft 不造假）"
 
+    # 第二輪新增的模型無關觀察指標：會議起點標註（00:00:00）與標註辨別力。
+    assert before["zero_time_tag_count"] == 0
+    assert before["zero_time_tag_ratio"] == 0.0
+    assert before["on_start_tag_ratio_excluding_zero"] == 0.0
+    assert before["distinct_tag_time_count"] == 4
+    assert after["on_start_tag_ratio_excluding_zero"] == 0.75
+    assert after["distinct_tag_time_count"] == 3, "兩筆吸附到同一段起點＝吸附的已知代價"
+
+
+def test_measure_tag_traceability_zero_time_tags_are_isolated():
+    """契約：00:00:00（會議起點）必然命中段落起點 → 單獨計數，並提供排除後指標。"""
+    transcript = (
+        "[00:00:00-00:00:30] 發言者1：開場。\n"
+        "[00:01:00-00:01:30] 發言者2：結論。\n"
+    )
+    record = "1.開場（發言者1，00:00:00）。\n2.結論（發言者2，00:01:00）。\n"
+
+    metrics = measure_tag_traceability(record, transcript)
+
+    assert metrics["tags_total"] == 2
+    assert metrics["metric_version"] == "tag_traceability-1.1.0", "量尺版本必須隨欄位語意變更遞增"
+    assert metrics["on_start_tag_ratio"] == 1.0
+    assert metrics["zero_time_tag_count"] == 1
+    assert metrics["zero_time_tag_ratio"] == 0.5
+    assert metrics["distinct_tag_time_count"] == 2
+    assert metrics["on_start_tag_ratio_excluding_zero"] == 1.0, "分母＝非 00:00:00 的 1 筆，該筆確實命中"
+

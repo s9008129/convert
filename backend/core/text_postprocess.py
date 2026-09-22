@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Optional, Set
 
 from backend.core.logger import log
 
@@ -911,9 +911,17 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
       標籤與該段發言者一致（嚴格版，角色名標註不計入）。
     * ``tags_inside_same_speaker_segment``：時間戳落在**該標註指名發言者**的段落內
       （＝「這個時間點確實在講這句話」）。
+    * ``zero_time_tag_count``／``zero_time_tag_ratio``：時間戳為 ``00:00:00`` 的標註數
+      （會議起點；結構上必然「落在段落起點」，會膨脹 ``on_start_tag_ratio``，故單獨列出）。
+    * ``distinct_tag_time_count``／``distinct_tag_time_ratio``：不同時間戳個數／比例
+      （＝標註的辨別力；模型大量重複同一時間戳時會偏低）。
+    * ``on_start_tag_ratio_excluding_zero``：排除 ``00:00:00`` 後的段落起點命中率
+      （分母＝非 ``00:00:00`` 的標註數；比 ``on_start_tag_ratio`` 嚴格且模型無關）。
     """
     segments = iter_transcript_segments(transcript)
     total = inside_any = exact = inside_same = on_start = 0
+    zero_time = on_start_nonzero = 0
+    tag_times: Set[int] = set()
     for match in SOURCE_TAG_PATTERN.finditer(text or ""):
         inner = match.group()[1:-1]
         time_match = SOURCE_TAG_TIME_PATTERN.search(inner)
@@ -926,10 +934,15 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         speaker_label = _normalize_speaker_label(
             inner[: time_match.start()].strip(_SPEAKER_LABEL_STRIP_CHARS)
         )
+        tag_times.add(seconds)
+        if seconds == 0:
+            zero_time += 1
         if any(seg[0] <= seconds <= seg[1] for seg in segments):
             inside_any += 1
         if any(seg[0] == seconds for seg in segments):
             on_start += 1
+            if seconds != 0:
+                on_start_nonzero += 1
         if any(
             _normalize_speaker_label(seg[2]) == speaker_label and seg[0] == seconds
             for seg in segments
@@ -941,6 +954,9 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         ):
             inside_same += 1
     return {
+        # 量尺版本：欄位語意變更時必須遞增，避免同名指標跨版本被直接比較
+        # （獨立審查 F2：on_start_tag_ratio_excluding_zero 的分母曾在驗收期間由「總數」改為「非零數」）。
+        "metric_version": "tag_traceability-1.1.0",
         "segments": len(segments),
         "tags_total": total,
         "tags_inside_any_segment": inside_any,
@@ -949,5 +965,13 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         "exact_tag_ratio": (exact / total) if total else None,
         "tags_on_real_segment_start": on_start,
         "on_start_tag_ratio": (on_start / total) if total else None,
+        "tags_on_real_segment_start_excluding_zero": on_start_nonzero,
+        "on_start_tag_ratio_excluding_zero": (
+            on_start_nonzero / (total - zero_time) if total - zero_time > 0 else None
+        ),
         "tags_inside_same_speaker_segment": inside_same,
+        "zero_time_tag_count": zero_time,
+        "zero_time_tag_ratio": (zero_time / total) if total else None,
+        "distinct_tag_time_count": len(tag_times),
+        "distinct_tag_time_ratio": (len(tag_times) / total) if total else None,
     }

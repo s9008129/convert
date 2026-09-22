@@ -2,7 +2,7 @@
 
 把會議錄音變成「符合公文格式、有憑有據」的會議紀錄——選好會議類型、上傳錄音檔，就能下載 Word 或 Markdown 格式的紀錄。
 
-[![Version](https://img.shields.io/badge/version-4.8.1-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.9.0-green)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-informational)](doc/操作手冊/)
 [![Stability](https://img.shields.io/badge/stability-stable-brightgreen)](CHANGELOG.md)
 

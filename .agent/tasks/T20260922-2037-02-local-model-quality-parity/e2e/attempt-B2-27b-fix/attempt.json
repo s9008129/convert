@@ -1,0 +1,110 @@
+{
+  "attempt": "attempt-B2-27b-fix",
+  "task_id": "T20260922-2037-02-local-model-quality-parity",
+  "purpose": "修復後 E2E（本輪主角）：dense 27B（qwen3.8-27b-splash）真實音檔、section_meeting、local；驗證出處標註吸附在正式管線生效",
+  "head_sha": "3fec08f1f13b655bf3d69549b8207735b854ad17",
+  "branch": "fix/qwen-local-quality-parity",
+  "command": "DATA_DIR=\"$PWD/data\" uv run --no-sync python scripts/e2e/run_owned_e2e.py --audio \"/Users/hsiaojohnny/Downloads/0903-科務會議.m4a\" --processing-mode local --template section_meeting --artifacts-dir .agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-B2-27b-fix --runtime-dir data/cache/e2e/p2-27b-fix-01",
+  "started_at": "2026-09-22T21:18:21.447553+08:00",
+  "finished_at": "2026-09-22T21:46:51.177870+08:00",
+  "duration_seconds": 1710,
+  "task_started_at": "2026-09-22T21:18:26.745768",
+  "task_completed_at": "2026-09-22T21:46:49.795610",
+  "task_duration_seconds": 1703,
+  "exit_code": 0,
+  "verdict": "PASS",
+  "failure_reasons": [],
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "formal_docx_valid": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "model": "qwen3.8-27b-splash",
+  "lmstudio_instance_context_length": 128000,
+  "meeting_template": "section_meeting",
+  "processing_mode": "local",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "record_md": "data/cache/e2e/p2-27b-fix-01/backend_data/outputs/0903-科務會議_dc3c8f7a.md",
+  "transcript_txt": "data/cache/e2e/p2-27b-fix-01/backend_data/outputs/0903-科務會議_dc3c8f7a_逐字稿.txt",
+  "core1": {
+    "tags_total": 52,
+    "traceable_tag_ratio": 1.0,
+    "on_start_tag_ratio": 1.0,
+    "on_start_tag_ratio_excluding_zero": 1.0,
+    "tags_on_real_segment_start": 52,
+    "body_source_tag_count": 52,
+    "table_source_tag_count": 0,
+    "tagged_item_ratio": 1.0,
+    "instruction_item_count": 25,
+    "char_count": 4062,
+    "known_term_fix_left_hits": 0,
+    "zero_time_tag_count": 7,
+    "distinct_tag_time_count": 15,
+    "distinct_tag_time_ratio": 0.28846153846153844,
+    "unsupported_entities": [
+      "徵收股",
+      "煙酒文神股",
+      "稽查股"
+    ],
+    "notes": "單次抽樣（temperature 0.7）。exact_tag_ratio 0.019 係因本場模型多用角色名（科長）→ 嚴格版指標失真，非退步；主指標為 speaker-agnostic 的 on_start_tag_ratio。新缺口：distinct_tag_time_ratio 0.288（同一時間戳重複張貼）→ 研究文件 §10.7 新 P1-16。"
+  },
+  "snap_log": [
+    "地端紀錄後處理：術語修正 1 處、出處標註吸附 45 處（段落內 1／最近段落 0／跨發言者 44；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條",
+    "地端紀錄後處理：術語修正 0 處、出處標註吸附 40 處（段落內 1／最近段落 0／跨發言者 39；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條",
+    "地端紀錄後處理：術語修正 0 處、出處標註吸附 40 處（段落內 1／最近段落 0／跨發言者 39；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條（最終輸出）"
+  ],
+  "timing_breakdown": {
+    "asr_and_diarization_seconds": 299,
+    "diarization_seconds": 153.7,
+    "chunk_extraction_seconds": 80,
+    "merge_call_seconds": 360,
+    "merge_completion_tokens": 4146,
+    "final_call_seconds": 334,
+    "final_completion_tokens": 3123,
+    "refinement_1_seconds": 359,
+    "refinement_1_completion_tokens": 3120,
+    "refinement_2_seconds": 351,
+    "refinement_2_completion_tokens": 3120,
+    "decode_tokens_per_second_range": "8.7–11.5",
+    "note": "ASR＋diarization 約 5 分鐘；其餘為 4 次大呼叫。A1（修復前）僅 2 次大呼叫故為 910 s；本場多跑 2 輪補強（品質閘門抓到『待辦事項遺漏 11 項』）。"
+  },
+  "instrument_metric_version": {
+    "v1_0": "record_quality.json 第一次產生（21:48）時，on_start_tag_ratio_excluding_zero 的分母＝總標註數（52）→ 0.865",
+    "v1_1": "最終版（21:50 起）：分母＝非 00:00:00 的標註數（45）→ 1.000；本檔所有數字皆為 v1.1",
+    "note": "同一場次同名指標被就地覆寫＝證據完整性風險（獨立驗收指出）。後續波應加 metric_version 並改為 append-only 檔名。"
+  },
+  "timing_breakdown_errata_20260922": {
+    "reason": "獨立查核（fresh context）＋review/attempt-04 複核後確認：上方 timing_breakdown 有三處標籤與日誌不符。依 append-only 原則保留原欄位，於此補註正確語意（同錯標亦見 run_notes.md §一 與研究文件 §10.7，後者已就地更正）。",
+    "evidence": "data/cache/e2e/p2-27b-fix-01/backend.log:427 → 'chunk_count=1, merge_rounds=0, extraction=360.9, merge=0.0, final_and_refine=1043.9, total=1404.7'；:201（4,146 tokens 大呼叫）＝抽取；:56-123（12 次 7-9 s、222-326 tokens）＝逐字稿語意校正；:42-45＝ASR 16.73 s／diarization 153.7 s。",
+    "corrections": {
+      "merge_call_seconds=360": "實為『抽取（extraction）』那一次呼叫；merge_rounds=0，本場沒有整併呼叫。",
+      "chunk_extraction_seconds=80": "無對應的大呼叫；該 ~80 s 是 12 次逐字稿語意校正小呼叫的加總（非 9 個 chunk 的抽取）。",
+      "asr_and_diarization_seconds=299": "實為 ASR 16.7 s ＋ diarization 153.7 s ＋ 逐字稿語意校正 127 s 的觀測窗（非純 ASR＋diarization）。"
+    },
+    "corrected_breakdown_seconds": {
+      "asr": 16.7,
+      "diarization": 153.7,
+      "transcript_semantic_correction_12_calls": "約 127（21:21:18→21:23:25）",
+      "extraction_single_call": 360.9,
+      "merge": 0,
+      "final": 334,
+      "refinement_1": 359,
+      "refinement_2": 351,
+      "pipeline_total": 1404.7
+    },
+    "impact": "不影響任何品質指標與閘門判定（僅階段標籤）；總時數 1,710 s（runner）／1,703 s（任務）不變。"
+  }
+}

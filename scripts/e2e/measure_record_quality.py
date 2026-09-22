@@ -295,7 +295,12 @@ def measure_record_quality(
                 "tags_on_real_segment_start／on_start_tag_ratio＝時間戳恰為任一真實段落起點"
                 "（吸附後的主指標：標註真的指到一句話的開頭）；"
                 "tags_exact_segment_start／exact_tag_ratio＝再要求發言者標籤與該段一致（嚴格版）；"
-                "tags_inside_same_speaker_segment＝落在標註指名發言者的段落內"
+                "tags_inside_same_speaker_segment＝落在標註指名發言者的段落內；"
+                "zero_time_tag_count／zero_time_tag_ratio＝時間戳 00:00:00 的標註（結構上必然"
+                "命中段落起點，會膨脹 on_start_tag_ratio，故單獨列出）；"
+                "distinct_tag_time_count／distinct_tag_time_ratio＝不同時間戳數／比例（標註辨別力）；"
+                "on_start_tag_ratio_excluding_zero＝排除 00:00:00 後的段落起點命中率"
+                "（分母＝非 00:00:00 的標註數）"
             ),
         },
         "observed": {
