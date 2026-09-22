@@ -555,6 +555,63 @@ def test_fallback_docx_download_label_must_fail(monkeypatch, capsys, tmp_path):
     )
 
 
+def test_percent_encoded_formal_download_label_must_pass():
+    """Starlette 對非 ASCII 檔名送 RFC 5987 百分比編碼；runner 必須先還原再驗 label。
+
+    實測 attempt-01（2026-09-22）：產品回應
+    ``attachment; filename*=utf-8\'\'20260922184230_%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84.docx``
+    為**正式**紀錄檔名，舊版 runner 以原始 header 比對字面「會議紀錄」→ 誤判 FAIL。
+    """
+    disposition = (
+        "attachment; filename*=utf-8''"
+        "20260922184230_%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84.docx"
+    )
+
+    failures = runner.validate_formal_docx_bytes(_formal_docx_bytes(), disposition)
+
+    assert failures == [], f"百分比編碼的正式檔名不得被判失敗：{failures}"
+
+
+def test_percent_encoded_fallback_download_label_must_still_fail():
+    """比例編碼不得成為 fallback 標籤的逃生門。"""
+    disposition = (
+        "attachment; filename*=utf-8''"
+        "20260922184230_%E9%80%90%E5%AD%97%E7%A8%BF%28%E6%9C%83%E8%AD%B0"
+        "%E7%B4%80%E9%8C%84%E7%94%9F%E6%88%90%E5%A4%B1%E6%95%97%29.docx"
+    )
+
+    failures = runner.validate_formal_docx_bytes(_formal_docx_bytes(), disposition)
+
+    assert any("fallback" in reason for reason in failures), (
+        f"百分比編碼的 fallback 檔名必須判 FAIL：{failures}"
+    )
+
+
+def test_section_headings_tolerate_space_after_comma():
+    """模板契約為 ``一、\\s*報告事項``；DOCX 章節比對必須容忍頓號後空白。
+
+    實測 attempt-01：模型輸出「一、 報告事項：」為合法契約寫法，舊版字面子字串
+    比對讓四條 section 檢查全部誤判為「缺少非空後續內容」。
+    """
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("0903 科務會議 會議紀錄", level=1)
+    doc.add_heading("一、 報告事項：", level=2)
+    doc.add_paragraph("組織規程調整由各股配合辦理。")
+    doc.add_heading("二、 討論事項：", level=2)
+    doc.add_paragraph("文康活動形式討論。")
+    doc.add_paragraph("決議：採辦公室下午茶並發禮券。")
+    doc.add_heading("三、 主席裁示事項：", level=2)
+    doc.add_paragraph("照案通過，請各單位配合。")
+
+    failures = runner.validate_formal_docx_bytes(
+        _docx_bytes(doc), "attachment; filename*=utf-8''%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84.docx"
+    )
+
+    assert failures == [], f"頓號後空白的章節標題不得被判失敗：{failures}"
+
+
 def test_fallback_docx_ooxml_content_must_fail(monkeypatch, capsys, tmp_path):
     flow = _standard_flow(
         tmp_path,

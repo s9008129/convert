@@ -64,6 +64,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -93,6 +94,15 @@ FALLBACK_DOCX_MARKERS = (
     "錯誤訊息",
 )
 GENERAL_REQUIRED_SECTIONS = ("一、報告事項", "二、討論事項", "決議", "三、主席裁示事項")
+# 必要章節的比對樣式（2026-09-22 v4.8.0 修正）：
+# 產品契約（backend/core/templates.py 的 required_section_patterns）以容忍空白的樣式
+# 驗證章節，例如 ``一、\s*報告事項``；模型輸出「一、 報告事項：」這種頓號後帶空白的
+# 寫法是合法輸出路徑。舊版 runner 以字面子字串比對，會把合法紀錄誤判為「缺少章節
+# 內容」（實測 attempt-01 的四條 section failure 全部由此而來），因此改為同語意樣式。
+REQUIRED_SECTION_PATTERNS = tuple(
+    (label, re.compile(r"、\s*".join(re.escape(part) for part in label.split("、"))))
+    for label in GENERAL_REQUIRED_SECTIONS
+)
 UPLOAD_SUCCESS_PATTERN = re.compile(
     r"檔案上傳成功:\s*(?P<original_filename>.+?)\s*->\s*(?P<stored_filename>\S+),"
     r"\s*任務ID:\s*(?P<task_id>\S+)"
@@ -494,18 +504,25 @@ def extract_docx_text(docx_bytes: bytes) -> str:
 
 
 def _section_has_substance(text: str, pattern: str) -> bool:
-    """必要 section pattern 之後、到下一個必要 section 之間需有非空內容。"""
-    index = text.find(pattern)
-    if index < 0:
+    """必要 section pattern 之後、到下一個必要 section 之間需有非空內容。
+
+    v4.8.0（2026-09-22）：比對改走 ``REQUIRED_SECTION_PATTERNS`` 的容忍空白樣式，
+    與產品模板契約同語意（見該常數註解）。
+    """
+    own_pattern = dict(REQUIRED_SECTION_PATTERNS).get(pattern)
+    if own_pattern is None:
+        own_pattern = re.compile(re.escape(pattern))
+    match = own_pattern.search(text)
+    if match is None:
         return False
-    rest = text[index + len(pattern):]
+    rest = text[match.end():]
     end = len(rest)
-    for other in GENERAL_REQUIRED_SECTIONS:
+    for other, other_pattern in REQUIRED_SECTION_PATTERNS:
         if other == pattern:
             continue
-        position = rest.find(other)
-        if 0 <= position < end:
-            end = position
+        other_match = other_pattern.search(rest)
+        if other_match is not None and other_match.start() < end:
+            end = other_match.start()
     return bool(rest[:end].strip())
 
 
@@ -516,11 +533,15 @@ def validate_formal_docx_bytes(docx_bytes: bytes, content_disposition: Optional[
     if not disposition:
         failures.append("DOCX 下載回應缺少 Content-Disposition，無法驗證正式下載檔名")
     else:
-        if FALLBACK_LABEL_MARKER in disposition:
+        # Starlette 對非 ASCII 檔名送出 RFC 5987 `filename*=utf-8''<percent-encoded>`；
+        # 必須先還原百分比編碼，否則「20260922184230_會議紀錄.docx」這種**正式**檔名
+        # 會被誤判為「缺少正式 label」（實測 attempt-01）。fallback 標籤同理。
+        decoded_disposition = unquote(disposition)
+        if FALLBACK_LABEL_MARKER in decoded_disposition:
             failures.append(
                 f"Content-Disposition 下載檔名含 fallback label（{FALLBACK_LABEL_MARKER}）：{disposition[:160]}"
             )
-        if FORMAL_LABEL not in disposition:
+        if FORMAL_LABEL not in decoded_disposition:
             failures.append(
                 f"Content-Disposition 下載檔名缺少正式 label「{FORMAL_LABEL}」：{disposition[:160]}"
             )

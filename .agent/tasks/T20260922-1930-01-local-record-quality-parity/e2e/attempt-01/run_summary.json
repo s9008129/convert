@@ -1,0 +1,39 @@
+{
+  "mode": "full",
+  "upload_mode": "api",
+  "started_at": "2026-09-22T18:42:25.382243+08:00",
+  "finished_at": "2026-09-22T18:49:34.343761+08:00",
+  "port": 49270,
+  "child_pid": 99233,
+  "expected_build_revision": "48ad6d60eb411a2474a9e89361cbb879e47b6494",
+  "actual_build_revision": "48ad6d60eb411a2474a9e89361cbb879e47b6494",
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-01",
+  "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/v480-attempt-01",
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/v480-attempt-01/backend.log",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/v480-attempt-01/backend_data",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [
+    "Content-Disposition 下載檔名缺少正式 label「會議紀錄」：attachment; filename*=utf-8''20260922184230_%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84.docx",
+    "DOCX OOXML 的 general 模板 section「一、報告事項」缺少非空後續內容",
+    "DOCX OOXML 的 general 模板 section「二、討論事項」缺少非空後續內容",
+    "DOCX OOXML 的 general 模板 section「三、主席裁示事項」缺少非空後續內容",
+    "缺少必要檢查：['formal_docx_valid']"
+  ],
+  "verdict": "FAIL"
+}
