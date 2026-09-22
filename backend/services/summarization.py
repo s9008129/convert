@@ -123,6 +123,9 @@ class SummarizationService:
 
     # 來源標註偵測樣式：句末「（…HH:MM(:SS)…）」形式，供確定性檢查使用；
     # 同時涵蓋「（發言者1，00:00:00）」與「（科長，00:00:00）」兩種寫法。
+    # 補強訊息列出具體遺漏待辦時的最大顯示數量（避免提示詞被長清單淹沒）
+    ACTION_ISSUE_PREVIEW_LIMIT = 12
+
     _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
     _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
 
@@ -141,6 +144,14 @@ class SummarizationService:
         "查不到的日期、月份、次別等開頭欄位，一律保留系統預設的「（待確認）」字樣，"
         "不得改寫成「（年）」「（月）」「（日）」這類沒有資訊的空括號佔位。"
     )
+
+    # v4.8.0：這兩條規則原本只套用在雲端生成。2026-09-22 三方比對顯示，雲端紀錄與
+    # 地端紀錄差距最大的維度正是「可回溯性」與「年份依據」——出處標註 25 處 vs
+    # 地端 0 處（100% 缺口），且逐字稿只有「今年」時雲端寫「（待確認）」、地端曾寫死
+    # 年份。因此改為地端與雲端共用的紀錄契約；CLOUD_* 舊名保留為別名（既有呼叫端
+    # 與文件引用不得改動）。
+    RECORD_SPEAKER_TRACEABILITY_RULE = CLOUD_SPEAKER_TRACEABILITY_RULE
+    RECORD_DATE_GROUNDING_RULE = CLOUD_DATE_GROUNDING_RULE
 
     # 年份偵測樣式（供日期依據絆索使用）：阿拉伯數字（113年／2026年度）與國字
     # （一一三年／一百一十三年度）兩種寫法；「年代」（如 90 年代）不算年份，故排除。
@@ -483,7 +494,13 @@ class SummarizationService:
             + 250
         )
         chunk_input_budget = max(1200, context_window - output_budget - extraction_overhead)
-        chunk_input_budget = min(chunk_input_budget, 3200)
+        # v4.8.0（T20260922-1930-01）：3200 過去是與 context 無關的固定常數——在
+        # 128000 的 loaded instance 上只用掉可承載量的 2.6%，把 11,712 est 的逐字稿
+        # 硬切成 4 塊，跨塊關聯（前段提議、後段定案）在萃取階段就註定對不起來。
+        # 改為預設依 context 推導；設定明確給上限時才夾住（可回復旋鈕）。
+        chunk_ceiling = int(settings.LOCAL_LLM_CHUNK_INPUT_TOKENS_CEILING or 0)
+        if chunk_ceiling > 0:
+            chunk_input_budget = min(chunk_input_budget, chunk_ceiling)
         # P0-6：合併後筆記會進入「最終生成」步驟；merge 可見目標（約 900 tokens）
         # 保證最終步驟輸入（完整公務紀錄 System Prompt 約 1,200 tokens＋補強輪
         # 附帶的當前摘要）遠低於 context window，不會被 num_ctx 靜默截斷。
@@ -536,6 +553,39 @@ class SummarizationService:
             estimated_chunk_count=estimated_chunk_count,
             merge_feasible_input_tokens=merge_feasible_input_tokens,
         )
+
+    def _resolve_local_output_tokens(
+        self,
+        *,
+        context_window: Optional[int],
+        prompt_tokens: int,
+        minimum: Optional[int] = None,
+    ) -> int:
+        """依 context 餘裕推導單次生成輸出上限（v4.8.0）。
+
+        根因：三階段（萃取／最終生成／補強）過去共用固定的
+        ``LOCAL_LLM_RESERVED_OUTPUT_TOKENS``（3072）。在 128K instance 上這等於把
+        紀錄長度鎖在約 3,000 繁中字——已與雲端的「下限」相同（雲端路徑完全不傳
+        max_tokens）。此處比照 Ollama 路徑既有的 ``expand_output_budget`` 語意，把
+        沒用完的 context 讓給輸出，並以 ``LOCAL_LLM_OUTPUT_TOKENS_CEILING`` 設天花板
+        避免無界生成。
+
+        ``minimum`` 保留歷史保留量（3072）：即使 context 很小也不會比舊行為更嚴格；
+        真正的可行性由 provider I/O 前的 preflight 把關。
+        """
+        floor = int(minimum if minimum is not None else settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS)
+        floor = max(floor, 1)
+        window = int(context_window or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS)
+        available = (
+            window
+            - max(int(prompt_tokens or 0), 0)
+            - int(settings.LOCAL_LLM_CONTEXT_SAFETY_MARGIN_TOKENS)
+        )
+        budget = max(floor, available)
+        ceiling = int(settings.LOCAL_LLM_OUTPUT_TOKENS_CEILING or 0)
+        if ceiling > 0:
+            budget = min(budget, max(floor, ceiling))
+        return budget
 
     def _resolve_merge_targets(
         self,
@@ -852,14 +902,16 @@ class SummarizationService:
         """將待辦事項文字正規化，方便比對是否遺漏。"""
         return re.sub(r"[\s\t\r\n:：,，。；;（）()「」『』【】\[\]／/\\-]+", "", text).lower()
 
-    def _extract_action_table_keys(self, markdown: str) -> set[str]:
-        """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦關鍵字。
+    def _extract_action_table_labels(self, markdown: str) -> list[str]:
+        """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦「原始標籤」。
 
-        僅取表格第一欄（待辦事項本身），刻意忽略議題、日期、參與者等非待辦
-        條列，避免把會議資訊誤判成待辦而造成假性「遺漏」。
+        與 `_extract_action_table_keys` 使用完全相同的過濾規則（僅第一欄、
+        排除表頭與「未於本段確認」佔位列）；差別只在這裡保留人類可讀文字，
+        讓補強訊息可以指名「哪幾項待辦沒被寫進紀錄」，而不是只回報一個數量。
+        實測舊行為：地端兩份紀錄分別遺漏 8／11 項待辦，但補強輪只拿到數字，
+        重寫後輸出逐字相同（兩輪無效）——問題清單必須帶具體項目才有作用。
         """
-        action_keys: set[str] = set()
-
+        labels: list[str] = []
         for line in markdown.splitlines():
             stripped = line.strip()
             if not (stripped.startswith("|") and stripped.endswith("|")):
@@ -875,11 +927,21 @@ class SummarizationService:
             if "本次會議未明確指派待辦事項" in cells[0] or "未於本段確認" in cells[0]:
                 continue
 
-            normalized = self._normalize_action_key(cells[0])
-            if normalized:
-                action_keys.add(normalized)
+            labels.append(cells[0])
 
-        return action_keys
+        return labels
+
+    def _extract_action_table_keys(self, markdown: str) -> set[str]:
+        """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦關鍵字。
+
+        僅取表格第一欄（待辦事項本身），刻意忽略議題、日期、參與者等非待辦
+        條列，避免把會議資訊誤判成待辦而造成假性「遺漏」。
+        """
+        keys = {
+            self._normalize_action_key(label)
+            for label in self._extract_action_table_labels(markdown)
+        }
+        return {key for key in keys if key}
 
     # P1-8：欄位驗證改為容錯 regex（允許空格數量與全半形冒號差異），
     # 驗證「欄位存在性」而非字面完全一致；欄位標準化交由記錄級後處理。
@@ -940,7 +1002,24 @@ class SummarizationService:
         normalized_summary = self._normalize_action_key(cleaned)
         missing_actions = {key for key in expected_actions if key not in normalized_summary}
         if missing_actions:
-            issues.append(f"待辦事項遺漏 {len(missing_actions)} 項")
+            # v4.8.0：問題清單帶「具體遺漏項目」。舊行為只回報數量，模型無從得知
+            # 少了什麼，補強輪因此空轉（實測兩輪輸出逐字相同、遺漏數不變）。
+            label_by_key: dict[str, str] = {}
+            for label in self._extract_action_table_labels(extracted_notes):
+                key = self._normalize_action_key(label)
+                if key:
+                    label_by_key.setdefault(key, label)
+            missing_labels = [
+                label_by_key.get(key, key) for key in sorted(missing_actions)
+            ]
+            preview = "、".join(missing_labels[:self.ACTION_ISSUE_PREVIEW_LIMIT])
+            remainder = len(missing_labels) - self.ACTION_ISSUE_PREVIEW_LIMIT
+            suffix = f"…（其餘 {remainder} 項）" if remainder > 0 else ""
+            issues.append(
+                f"待辦事項遺漏 {len(missing_actions)} 項：{preview}{suffix}"
+                "；這些待辦都出現在萃取筆記中，請逐列補進待辦事項表格，"
+                "不得只以概括敘述帶過或省略"
+            )
 
         return issues
 
@@ -959,8 +1038,10 @@ class SummarizationService:
         前者本來就不該出現發言者標籤，後者是四欄固定表格；
         模型只把標籤寫在這些地方不算數（實測 Gemini 對照組就是如此）。
 
-        僅套用於雲端流程與開啟 speaker_traceability 的模板；地端流程與
-        其他模板的驗證行為完全不變。
+        v4.8.0 起地端流程亦套用（同一份契約）：雲端紀錄的發言來源標註 25 處、
+        地端兩版各 0 處，是三方比對中最大的單一缺口，且它同時是防止「無出處
+        內容」被寫進正式紀錄的最後一道確定性絆索。旗標未開啟的模板（如 general）
+        與未提供逐字稿的路徑行為不變。
         """
         if template is None or not template.speaker_traceability:
             return []
@@ -1028,8 +1109,8 @@ class SummarizationService:
         紀錄卻出現的年份即回報問題並觸發既有補強輪（fail-soft：輪數用盡僅記 log）。
 
         只檢查年份：月份與日期在逐字稿裡常以相對說法出現（「這個月」「月底」），
-        硬攔會誤判合法表達，因此交由 CLOUD_DATE_GROUNDING_RULE 要求標「（待確認）」。
-        僅套用於雲端流程；地端流程完全不呼叫。
+        硬攔會誤判合法表達，因此交由 RECORD_DATE_GROUNDING_RULE 要求標「（待確認）」。
+        v4.8.0 起地端流程亦套用（同一份契約）。
         """
         fabricated = sorted(
             self._extract_year_tokens(summary) - self._extract_year_tokens(transcript)
@@ -1184,32 +1265,71 @@ class SummarizationService:
             return cls.CLOUD_SPEAKER_TRACEABILITY_RULE
         return ""
 
+    def _build_record_generation_message(
+        self,
+        extracted_notes: str,
+        transcript: Optional[str] = None,
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
+        """最終會議記錄生成訊息（地端與雲端共用；v4.8.0）。
+
+        transcript 有值時＝「萃取筆記（涵蓋檢查表）＋原始逐字稿（細節來源）」雙輸入，
+        與雲端既有行為同構；transcript 為 None／空字串時＝只餵筆記，是地端在
+        context 餘裕不足時的降級路徑（內容與 v4.7.4 的地端路徑相同）。
+
+        背景（實測對照雲端 Gemini 基準）：雲端生成階段同時看到逐字稿，各單位立場、
+        理由、數據、案例與專有名詞都能回原文核對；地端原本只看到被整併壓縮過的
+        筆記，在生成之前就已永久丟掉未進筆記的細節。
+        """
+        has_transcript = bool(transcript and transcript.strip())
+        speaker_rule = self._speaker_traceability_rule(template)
+        detail_rule = (
+            "- 原始逐字稿是細節來源：各單位意見、決議與裁示須保留具體理由、數據、"
+            "案例、統一口徑與執行方式，嚴禁把多句實質討論壓縮成一句籠統敘述\n"
+            if has_transcript
+            else ""
+        )
+        source_label = "萃取筆記與原始逐字稿" if has_transcript else "萃取筆記"
+        transcript_block = f"\n\n原始逐字稿：\n{transcript}" if has_transcript else ""
+        return f"""請根據以下「{source_label}」，輸出最終版本的會議記錄。
+
+要求：
+- 萃取筆記是涵蓋度檢查表：筆記中的每個議題、決議、待辦都必須出現在會議記錄中
+{detail_rule}- 所有明確待辦都必須出現在待辦事項中；不要把多個不同待辦合併成單一籠統項目，可分列追蹤者請拆成多列
+- 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
+- 只輸出最終 Markdown，不要附加說明
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何  thinking / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
+{self.RECORD_DATE_GROUNDING_RULE}
+{speaker_rule}萃取筆記：
+{extracted_notes}{transcript_block}"""
+
     def _build_summary_from_notes_message(
         self,
         extracted_notes: str,
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """建立最終會議記錄生成訊息。"""
-        return f"""請根據以下萃取筆記，輸出最終版本的會議記錄。
+        """建立最終會議記錄生成訊息（只餵筆記的降級路徑）。"""
+        return self._build_record_generation_message(extracted_notes, None, template=template)
 
-要求：
-- 所有明確待辦都必須出現在待辦事項表格中
-- 不要把多個不同待辦合併成單一籠統項目；可分列追蹤者請拆成多列
-- 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
-- 只輸出最終 Markdown，不要附加說明
-- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
-
-萃取筆記：
-{extracted_notes}"""
-
-    def _build_refinement_message(
+    def _build_record_refinement_message(
         self,
         current_summary: str,
         extracted_notes: str,
         issues: list[str],
+        transcript: Optional[str] = None,
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """建立摘要補強訊息。"""
+        """摘要補強訊息（地端與雲端共用；v4.8.0）。
+
+        補強的目的是補回缺漏的細節；沒有逐字稿的補強只能就筆記改寫措辭
+        （雲端已於 v4.3.3 用逐字稿解決同一問題，地端 v4.8.0 對齊）。
+        transcript 為 None／空字串時即為過去地端／雲端的筆記限定補強。
+        """
+        has_transcript = bool(transcript and transcript.strip())
+        speaker_rule = self._speaker_traceability_rule(template)
+        transcript_block = (
+            f"\n原始逐字稿（補充細節時以此為準）：\n{transcript}" if has_transcript else ""
+        )
         issue_lines = "\n".join(f"- {issue}" for issue in issues)
         return f"""你剛剛輸出的會議記錄仍有缺口，請根據問題清單重新輸出完整版本，不要只輸出修補片段。
 
@@ -1225,8 +1345,22 @@ class SummarizationService:
 額外要求：
 - 全文必須使用繁體中文（台灣用語）
 - 只能輸出最終 Markdown
-- 不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence
-- 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{self._template_generation_extra(template)}"""
+- 不要輸出  thinking、<thought>、<details>、XML/HTML 標籤或 code fence
+- 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{self._template_generation_extra(template)}
+{self.RECORD_DATE_GROUNDING_RULE}
+{speaker_rule}{transcript_block}"""
+
+    def _build_refinement_message(
+        self,
+        current_summary: str,
+        extracted_notes: str,
+        issues: list[str],
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
+        """建立摘要補強訊息（只餵筆記的降級路徑）。"""
+        return self._build_record_refinement_message(
+            current_summary, extracted_notes, issues, None, template=template
+        )
 
     def _build_cloud_summary_message(
         self,
@@ -1234,28 +1368,8 @@ class SummarizationService:
         transcript: str,
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """雲端最終生成訊息（v4.3.3）：筆記當涵蓋檢查表、逐字稿當細節來源。
-
-        本地因 context 有限只能餵筆記；雲端長上下文沒有這個限制——
-        逐字稿一併附上，生成時才有細節可以引用，而不是被迫轉寫筆記骨架。
-        """
-        speaker_rule = self._speaker_traceability_rule(template)
-        return f"""請根據以下「萃取筆記」與「原始逐字稿」，輸出最終版本的會議記錄。
-
-要求：
-- 萃取筆記是涵蓋度檢查表：筆記中的每個議題、決議、待辦都必須出現在會議記錄中
-- 原始逐字稿是細節來源：各單位意見、決議與裁示須保留具體理由、數據、案例、統一口徑與執行方式，嚴禁把多句實質討論壓縮成一句籠統敘述
-- 所有明確待辦都必須出現在待辦事項中；不要把多個不同待辦合併成單一籠統項目，可分列追蹤者請拆成多列
-- 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
-- 只輸出最終 Markdown，不要附加說明
-- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
-{self.CLOUD_DATE_GROUNDING_RULE}
-{speaker_rule}
-萃取筆記：
-{extracted_notes}
-
-原始逐字稿：
-{transcript}"""
+        """雲端最終生成訊息（v4.3.3 契約；v4.8.0 起與地端共用同一 builder）。"""
+        return self._build_record_generation_message(extracted_notes, transcript, template=template)
 
     def _build_cloud_refinement_message(
         self,
@@ -1265,18 +1379,10 @@ class SummarizationService:
         transcript: str,
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """雲端補強訊息（v4.3.3）：共用補強模板之外附上逐字稿。
-
-        沒有逐字稿的補強只能就筆記改寫措辭；「內容過短」這類豐富度問題
-        必須回到原文找細節才補得回來。
-        """
-        base = self._build_refinement_message(current_summary, extracted_notes, issues, template=template)
-        speaker_rule = self._speaker_traceability_rule(template)
-        return f"""{base}
-{self.CLOUD_DATE_GROUNDING_RULE}
-{speaker_rule}
-原始逐字稿（補充細節時以此為準）：
-{transcript}"""
+        """雲端補強訊息（v4.3.3 契約；v4.8.0 起與地端共用同一 builder）。"""
+        return self._build_record_refinement_message(
+            current_summary, extracted_notes, issues, transcript, template=template
+        )
 
     def _group_texts_by_budget(self, texts: list[str], budget_tokens: int) -> list[list[str]]:
         """將多段文字依 token 預算分組。"""
@@ -1436,6 +1542,132 @@ class SummarizationService:
 
         # 全量收斂或顯式失敗：不合併截斷路徑，尾端來源內容一律保留。
         return current_notes[0] if len(current_notes) == 1 else "\n\n".join(current_notes)
+
+    async def _consolidate_notes(
+        self,
+        engine: str,
+        extracted_notes: list[str],
+        plan: "LocalContextPlan",
+        progress_callback: Optional[callable] = None,
+        context_window_tokens: Optional[int] = None,
+        lmstudio_selection: Optional[LMStudioModelSelection] = None,
+    ) -> str:
+        """把多份萃取筆記收斂成最終生成階段可承接的一份（v4.8.0）。
+
+        契約：**能不整併就不要整併**。整併是一次 LLM 改寫、必然有損——實測
+        task `b20c90a7` 的 4 份筆記合計 8,176 tokens 在整併關卡被 3,072 的輸出上限
+        截斷（`finish_reason=length`），最壞損失 62.4%，而流程把它視為「已收斂」
+        靜默接受。既然該任務的 loaded instance 提供 128K context、下游可承接上限
+        遠大於筆記總量，壓縮就沒有必要——改用零損串接（與雲端分段模式的
+        `\n\n---\n\n` 串接同構；唯一的差別是少了跨塊去重，但重複只來自分塊
+        overlap 的 220 tokens 邊界，代價遠小於整併截斷）。
+
+        只有當筆記總量真的超出下游可承接上限（小 context 的 Ollama 路徑）時，
+        才沿用既有 `_merge_notes_until_fit` 與它的收斂保護。
+        """
+        cleaned = [
+            self._clean_ollama_output(note) for note in extracted_notes if note and note.strip()
+        ]
+        if not cleaned:
+            return self._empty_extraction_notes()
+
+        joined = "\n\n---\n\n".join(cleaned)
+        total_tokens = self._estimate_tokens(joined)
+        feasible = plan.merge_feasible_input_tokens or plan.merge_visible_target_tokens
+        if settings.LOCAL_LLM_ZERO_LOSS_NOTES_PASSTHROUGH and total_tokens <= feasible:
+            log.info(
+                "萃取筆記零損串接（略過有損整併）：{} 份、{} tokens ≤ 下游可承接上限 {} tokens，"
+                "context window {} tokens",
+                len(cleaned),
+                total_tokens,
+                feasible,
+                context_window_tokens or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+            )
+            return joined
+
+        log.info(
+            "萃取筆記需整併：{} 份、{} tokens > 下游可承接上限 {} tokens",
+            len(cleaned),
+            total_tokens,
+            feasible,
+        )
+        return await self._merge_notes_until_fit(
+            engine,
+            extracted_notes,
+            plan.merge_visible_target_tokens,
+            progress_callback,
+            context_window_tokens=context_window_tokens,
+            lmstudio_selection=lmstudio_selection,
+            merge_input_budget_tokens=plan.merge_input_budget_tokens,
+            merge_provider_output_tokens=plan.merge_provider_output_tokens,
+            merge_feasible_input_tokens=plan.merge_feasible_input_tokens,
+        )
+
+    def _final_message_fits(
+        self,
+        system_prompt: str,
+        user_message: str,
+        context_window: Optional[int],
+        minimum: Optional[int] = None,
+    ) -> bool:
+        """判斷某個生成訊息是否能在 context 內留下足夠的輸出空間（v4.8.0）。"""
+        window = int(context_window or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS)
+        reserve = int(
+            minimum if minimum is not None else settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS
+        )
+        prompt_tokens = (
+            self._estimate_tokens(system_prompt)
+            + self._estimate_tokens(user_message)
+            + 64
+        )
+        available = window - prompt_tokens - int(settings.LOCAL_LLM_CONTEXT_SAFETY_MARGIN_TOKENS)
+        return available >= reserve
+
+    def _resolve_final_generation_message(
+        self,
+        notes: str,
+        transcript: str,
+        system_prompt: str,
+        context_window: Optional[int],
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
+        """最終生成訊息：context 夠就附逐字稿（雙輸入），不夠就退回只餵筆記。"""
+        notes_only = self._build_record_generation_message(notes, None, template=template)
+        if not settings.LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION or not transcript.strip():
+            return notes_only
+        dual = self._build_record_generation_message(notes, transcript, template=template)
+        if self._final_message_fits(system_prompt, dual, context_window):
+            return dual
+        log.warning(
+            "context window {} tokens 不足以在最終生成階段附上完整逐字稿，本次退回只餵萃取筆記"
+            "（雙輸入需約 {} tokens 的 prompt）",
+            context_window or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+            self._estimate_tokens(system_prompt) + self._estimate_tokens(dual),
+        )
+        return notes_only
+
+    def _resolve_final_refinement_message(
+        self,
+        current_summary: str,
+        notes: str,
+        issues: list[str],
+        transcript: str,
+        system_prompt: str,
+        context_window: Optional[int],
+        template: Optional[MeetingTemplate] = None,
+    ) -> str:
+        """補強訊息：context 夠就附逐字稿（才能回原文補細節），不夠就退回只餵筆記。"""
+        notes_only = self._build_record_refinement_message(
+            current_summary, notes, issues, None, template=template
+        )
+        if not settings.LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION or not transcript.strip():
+            return notes_only
+        dual = self._build_record_refinement_message(
+            current_summary, notes, issues, transcript, template=template
+        )
+        if self._final_message_fits(system_prompt, dual, context_window):
+            return dual
+        return notes_only
 
     def _truncate_to_token_budget(self, text: str, budget_tokens: int) -> str:
         """最後保底：仍超出預算時依行硬截斷（保留前段，行界不切半句）。"""
@@ -1800,38 +2032,59 @@ class SummarizationService:
         for chunk_index, chunk in enumerate(chunks, start=1):
             progress = 68.0 + ((chunk_index - 1) / max(total_chunks, 1)) * 12.0
             self._emit_progress(progress_callback, progress, f"萃取逐字稿重點 {chunk_index}/{total_chunks}...")
+            extraction_message = self._build_chunk_extraction_message(chunk, chunk_index, total_chunks)
+            # v4.8.0：輸出上限改由 context 推導。固定 3072 在 128K instance 上等於
+            # 「一塊最多只能留下 3,072 tokens 的筆記」，是把逐字稿壓成薄紀錄的第一個
+            # 天花板（實測四塊合計只剩 8,176 tokens，而逐字稿是 11,712）。
+            extraction_prompt = self._local_extraction_prompt(template)
+            extraction_output_tokens = self._resolve_local_output_tokens(
+                context_window=context_tokens,
+                prompt_tokens=(
+                    self._estimate_tokens(extraction_prompt)
+                    + self._estimate_tokens(extraction_message)
+                ),
+            )
             notes = await self._generate_with_local_engine(
                 engine,
-                self._local_extraction_prompt(template),
-                self._build_chunk_extraction_message(chunk, chunk_index, total_chunks),
-                temperature=0.1,
-                num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                extraction_prompt,
+                extraction_message,
+                temperature=settings.LOCAL_LLM_EXTRACTION_TEMPERATURE,
+                num_predict=extraction_output_tokens,
                 context_window_tokens=context_tokens,
                 lmstudio_selection=lmstudio_selection,
             )
             extracted_notes.append(self._clean_ollama_output(notes))
 
         extraction_duration = time.monotonic() - extraction_started
-        merged_notes = await self._merge_notes_until_fit(
+        merged_notes = await self._consolidate_notes(
             engine,
             extracted_notes,
-            plan.merge_visible_target_tokens,
+            plan,
             progress_callback,
             context_window_tokens=context_tokens,
             lmstudio_selection=lmstudio_selection,
-            merge_input_budget_tokens=plan.merge_input_budget_tokens,
-            merge_provider_output_tokens=plan.merge_provider_output_tokens,
-            merge_feasible_input_tokens=plan.merge_feasible_input_tokens,
         )
 
         merge_duration = time.monotonic() - extraction_duration - extraction_started
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
+        # v4.8.0：地端最終生成改為「筆記＋逐字稿」雙輸入（比照雲端）。只餵筆記等於
+        # 在生成前就丟掉所有沒進筆記的細節，是覆蓋率與專有名詞正確性的最大缺口；
+        # context 餘裕不足時（例如 num_ctx=8192 的 Ollama）自動退回只餵筆記。
+        final_message = self._resolve_final_generation_message(
+            merged_notes, transcript, system_prompt, context_tokens, template=template
+        )
+        final_output_tokens = self._resolve_local_output_tokens(
+            context_window=context_tokens,
+            prompt_tokens=(
+                self._estimate_tokens(system_prompt) + self._estimate_tokens(final_message)
+            ),
+        )
         summary = await self._generate_with_local_engine(
             engine,
             system_prompt,
-            self._build_summary_from_notes_message(merged_notes, template=template),
-            temperature=0.2,
-            num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+            final_message,
+            temperature=settings.LOCAL_LLM_GENERATION_TEMPERATURE,
+            num_predict=final_output_tokens,
             context_window_tokens=context_tokens,
             lmstudio_selection=lmstudio_selection,
         )
@@ -1839,22 +2092,45 @@ class SummarizationService:
         # 驗證是最後一關，通過後不得再被任何流程改寫。
         summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
 
-        issues = self._validate_summary_quality(summary, merged_notes, template=template)
+        # v4.8.0：地端套用與雲端相同的紀錄契約——動態長度閘門（依逐字稿規模）、
+        # 發言來源標註絆索、年份依據絆索。三者都是確定性檢查，不靠第二個 LLM 判定。
+        min_chars = self._estimate_cloud_min_summary_chars(transcript)
+        issues = self._validate_summary_quality(
+            summary, merged_notes, min_chars=min_chars, template=template
+        )
+        issues += self._validate_cloud_speaker_traceability(summary, template)
+        issues += self._validate_cloud_date_grounding(summary, transcript)
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
             self._emit_progress(progress_callback, 88.0 + attempts, f"補強摘要完整性（第 {attempts} 輪）...")
+            log.info(f"本地摘要品質補強（第 {attempts} 輪），問題：{'; '.join(issues)}")
+            refinement_message = self._resolve_final_refinement_message(
+                summary, merged_notes, issues, transcript, system_prompt, context_tokens,
+                template=template,
+            )
+            refinement_output_tokens = self._resolve_local_output_tokens(
+                context_window=context_tokens,
+                prompt_tokens=(
+                    self._estimate_tokens(system_prompt)
+                    + self._estimate_tokens(refinement_message)
+                ),
+            )
             summary = await self._generate_with_local_engine(
                 engine,
                 system_prompt,
-                self._build_refinement_message(summary, merged_notes, issues, template=template),
-                temperature=0.15,
-                num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                refinement_message,
+                temperature=settings.LOCAL_LLM_REFINEMENT_TEMPERATURE,
+                num_predict=refinement_output_tokens,
                 context_window_tokens=context_tokens,
                 lmstudio_selection=lmstudio_selection,
             )
             summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
-            issues = self._validate_summary_quality(summary, merged_notes, template=template)
+            issues = self._validate_summary_quality(
+                summary, merged_notes, min_chars=min_chars, template=template
+            )
+            issues += self._validate_cloud_speaker_traceability(summary, template)
+            issues += self._validate_cloud_date_grounding(summary, transcript)
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")
@@ -1879,32 +2155,35 @@ class SummarizationService:
 
     @staticmethod
     def _finalize_record_text(summary: str, template: Optional[MeetingTemplate] = None) -> str:
-        """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。"""
+        """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。
+
+        v4.8.0：加入範本骨架佔位符修復（原先只有雲端後處理有這一道）。
+        實測地端紀錄的未填佔位符數量是雲端的 3 倍以上（27 vs 14），並出現空白
+        欄位與「（發言者1）」洩漏到開頭欄位；這些都是模型照抄提示詞骨架造成的
+        格式債，必須用確定性後處理收斂，不能留給使用者手動修。
+        """
         from backend.core.glossary import english_protected_terms
-        from backend.core.text_postprocess import finalize_record
+        from backend.core.text_postprocess import finalize_record, normalize_unfilled_placeholders
 
         try:
             protected = english_protected_terms()
         except Exception:  # noqa: BLE001
             protected = set()
-        return finalize_record(summary, protected_terms=protected, template=template)
+        return normalize_unfilled_placeholders(
+            finalize_record(summary, protected_terms=protected, template=template),
+            template=template,
+        )
 
     def _finalize_cloud_record_text(
         self, summary: str, template: Optional[MeetingTemplate] = None
     ) -> str:
-        """雲端紀錄收尾：共用記錄級後處理＋範本骨架佔位符修復（v4.7.3）。
+        """雲端紀錄收尾（v4.7.3 契約；v4.8.0 起與地端共用同一後處理）。
 
-        與 `_finalize_record_text` 唯一的差別是多一道「模型照抄範本骨架」修復：
-        實測 Gemini 在逐字稿沒提日期時，會把提示詞裡的骨架原樣吐出
-        （「時間：中華民國（年）年（月）月（日）日（星期）（時分）」），欄位看似
-        填了、其實沒有任何可用資訊。修復為確定性（佔位符→「（待確認）」），
-        不新增任何事實；地端流程仍走 `_finalize_record_text`，行為完全不變。
+        歷史：雲端原本多一道「模型照抄範本骨架」修復，地端沒有；實測顯示地端
+        反而更需要它（未填佔位符 27 vs 14、且出現空白欄位）。因此兩條路徑統一
+        走 `_finalize_record_text`（＝ finalize_record ＋ 佔位符修復）。
         """
-        from backend.core.text_postprocess import normalize_unfilled_placeholders
-
-        return normalize_unfilled_placeholders(
-            self._finalize_record_text(summary, template=template), template=template
-        )
+        return self._finalize_record_text(summary, template=template)
 
     async def generate_local(
         self,
@@ -2582,6 +2861,40 @@ class SummarizationService:
             "無 reasoning 證據）；請確認模型是否正常輸出，或改用其他已載入 LLM"
         )
 
+    @staticmethod
+    def _downgrade_extra_body(extra_body: Optional[dict]) -> Optional[dict]:
+        """HTTP 400 相容降級順序：先丟取樣欄位、再丟關閉思考欄位（v4.8.0）。"""
+        current = dict(extra_body or {})
+        sampling_keys = [key for key in ("top_p", "top_k") if key in current]
+        if sampling_keys:
+            for key in sampling_keys:
+                current.pop(key)
+            return current or None
+        return None
+
+    @staticmethod
+    def _lmstudio_extra_body() -> Optional[dict]:
+        """LM Studio 請求的 extra_body（v4.8.0）。
+
+        兩類欄位：
+        1. `reasoning_effort="none"`——關閉思考（v4.7.4 契約，維持不變）。
+        2. `top_p`／`top_k`——官方 Qwen3.6／3.8 model card 對非思考模式建議
+           `top_p=0.80`、`top_k=20`；舊行為完全不送，等於把分佈控制交給端點預設
+           （本機 Splash 引擎的預設是 `top_p=0.95`，比官方建議更寬）。
+
+        刻意不送 `min_p`／`presence_penalty`／`frequency_penalty`：Splash 引擎對
+        這些欄位非 0 值直接回 HTTP 400（官方建議的 `presence_penalty=1.5` 在此
+        不可用），因此重複抑制改用溫度與 top_p/top_k 控制。
+        """
+        extra: dict = {}
+        if settings.LOCAL_LLM_DISABLE_THINKING:
+            extra["reasoning_effort"] = "none"
+        if settings.LOCAL_LLM_SAMPLING_TOP_P is not None:
+            extra["top_p"] = float(settings.LOCAL_LLM_SAMPLING_TOP_P)
+        if settings.LOCAL_LLM_SAMPLING_TOP_K is not None:
+            extra["top_k"] = int(settings.LOCAL_LLM_SAMPLING_TOP_K)
+        return extra or None
+
     async def _lmstudio_chat_request(
         self,
         client,
@@ -2611,9 +2924,7 @@ class SummarizationService:
         # 87.5%（1246s／1422s）。LM Studio 為 OpenAI 相容端點，關閉思考的正確
         # 欄位是 `reasoning_effort: "none"`（實測 reasoning_tokens=0）。openai
         # 1.12.0 無此具名參數，僅能經 extra_body 傳遞。
-        extra_body: Optional[dict] = (
-            {"reasoning_effort": "none"} if settings.LOCAL_LLM_DISABLE_THINKING else None
-        )
+        extra_body: Optional[dict] = self._lmstudio_extra_body()
 
         async def _create(extra: Optional[dict]):
             kwargs = {
@@ -2628,20 +2939,23 @@ class SummarizationService:
 
         for attempt in range(retries + 1):
             try:
-                try:
-                    return await _create(extra_body)
-                except Exception as exc:  # noqa: BLE001 — 相容降級需先讀 status code
-                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    if status_code == 400 and extra_body:
-                        # 與 `_post_ollama_chat` 的 think 相容降級同語意：伺服器不
-                        # 認識該欄位時，降級為不帶欄位重送一次，不得讓整份紀錄失敗。
-                        log.warning(
-                            "LM Studio 端點不接受 reasoning_effort（HTTP 400），"
-                            "改以不帶該欄位的相容模式重送"
-                        )
-                        extra_body = None
-                        return await _create(None)
-                    raise
+                # 相容降級迴圈（v4.8.0）：伺服器不認識某個欄位時逐級降級重送
+                # （先丟 top_p／top_k 保留關閉思考，再全丟），不得讓整份紀錄失敗。
+                while True:
+                    try:
+                        return await _create(extra_body)
+                    except Exception as exc:  # noqa: BLE001 — 相容降級需先讀 status code
+                        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                        if status_code == 400 and extra_body:
+                            downgraded = self._downgrade_extra_body(extra_body)
+                            log.warning(
+                                "LM Studio 端點拒絕 extra_body {}（HTTP 400），改以 {} 相容模式重送",
+                                sorted(extra_body),
+                                sorted(downgraded) if downgraded else "無額外欄位",
+                            )
+                            extra_body = downgraded
+                            continue
+                        raise
             except transient_errors as exc:
                 if attempt >= retries:
                     raise StableServiceError(

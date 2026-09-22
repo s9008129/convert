@@ -258,8 +258,15 @@ class TaskProcessor:
 
             corrected, report = await transcript_correction_service.correct_transcript(
                 cleaned,
+                # v4.8.0：temperature 由 0.0（greedy）改為可設定（預設 0.3）。
+                # 官方 Qwen3.6／3.8 model card 明文警告勿用 greedy 解碼；本機
+                # Splash 引擎把 temperature=0 導向 GREEDY cohort，實測校正品質
+                # 不穩（45 段中 0～8 段有修正）。同音驗證閘門仍在，風險有界。
                 lambda system_prompt, user_message: summarization_service.generate_local(
-                    system_prompt, user_message, temperature=0.0, allow_reasoning_retry=False
+                    system_prompt,
+                    user_message,
+                    temperature=settings.LOCAL_LLM_CORRECTION_TEMPERATURE,
+                    allow_reasoning_retry=False,
                 ),
                 extra_glossary_block=template_glossary_block(task.template_id),
             )

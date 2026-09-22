@@ -381,7 +381,7 @@ def normalize_unfilled_placeholders(text: str, template=None) -> str:
 
     只處理紀錄開頭欄位與標題行（含所選模板宣告的欄位樣式），正文完全不動；
     沒有出現佔位符的行一個字都不改（不做多餘加工）。地端／雲端共用本函式，
-    但呼叫端目前僅雲端生成流程套用。
+    v4.8.0 起兩條生成路徑都套用（地端紀錄的未填佔位符實測是雲端的 3 倍以上）。
     """
     if not text or not _UNFILLED_PLACEHOLDER_PATTERN.search(text):
         return text

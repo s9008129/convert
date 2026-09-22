@@ -234,10 +234,33 @@ async def test_lmstudio_request_disables_thinking_with_reasoning_effort(monkeypa
 
     assert create.await_count == 1
     kwargs = create.await_args.kwargs
-    assert kwargs.get("extra_body") == {"reasoning_effort": "none"}, (
+    extra_body = kwargs.get("extra_body") or {}
+    assert extra_body.get("reasoning_effort") == "none", (
         "LM Studio 路徑必須套用 LOCAL_LLM_DISABLE_THINKING（舊行為僅 Ollama 有此開關），"
         "否則推理型模型的 thinking 會吃光 completion 預算並拖長生成階段"
     )
+    # v4.8.0：非思考模式另需送官方建議的 top_p／top_k（見
+    # test_lmstudio_request_sends_official_sampling_params）
+    assert extra_body.get("top_p") == settings.LOCAL_LLM_SAMPLING_TOP_P
+    assert extra_body.get("top_k") == settings.LOCAL_LLM_SAMPLING_TOP_K
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_request_sends_official_sampling_params(monkeypatch):
+    """v4.8.0：非思考模式必須送官方建議的 top_p=0.8／top_k=20（舊行為完全不送）。"""
+    service = SummarizationService()
+    selection = _one_loaded_selection(service)
+    monkeypatch.setattr(settings, "LOCAL_LLM_SAMPLING_TOP_P", 0.8)
+    monkeypatch.setattr(settings, "LOCAL_LLM_SAMPLING_TOP_K", 20)
+    create = AsyncMock(return_value=SimpleNamespace())
+
+    await service._lmstudio_chat_request(
+        _fake_client(create), selection, [{"role": "user", "content": "x"}], 0.7, 512
+    )
+
+    extra_body = create.await_args.kwargs.get("extra_body") or {}
+    assert extra_body.get("top_p") == 0.8
+    assert extra_body.get("top_k") == 20
 
 
 @pytest.mark.asyncio
@@ -252,7 +275,8 @@ async def test_lmstudio_request_omits_reasoning_effort_when_thinking_enabled(mon
         _fake_client(create), selection, [{"role": "user", "content": "x"}], 0.2, 512
     )
 
-    assert "extra_body" not in create.await_args.kwargs
+    extra_body = create.await_args.kwargs.get("extra_body") or {}
+    assert "reasoning_effort" not in extra_body
 
 
 @pytest.mark.asyncio
@@ -270,10 +294,32 @@ async def test_lmstudio_request_degrades_when_endpoint_rejects_reasoning_effort(
 
     assert response is expected
     assert create.await_count == 2, "HTTP 400 應降級重送一次（同 Ollama 的 think 相容降級）"
-    assert create.await_args_list[0].kwargs.get("extra_body") == {"reasoning_effort": "none"}
-    assert "extra_body" not in create.await_args_list[1].kwargs, (
-        "降級重送不得再帶 reasoning_effort 欄位"
+    first_extra = create.await_args_list[0].kwargs.get("extra_body") or {}
+    assert first_extra.get("reasoning_effort") == "none"
+    # v4.8.0 降級順序：先丟取樣欄位（top_p／top_k），仍失敗才丟 reasoning_effort
+    second_extra = create.await_args_list[1].kwargs.get("extra_body") or {}
+    assert "top_p" not in second_extra and "top_k" not in second_extra, (
+        "第一次降級只丟取樣欄位，仍須保留關閉思考的 reasoning_effort"
     )
+    assert second_extra.get("reasoning_effort") == "none"
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_request_degrades_fully_when_endpoint_rejects_sampling_too(monkeypatch):
+    """端點對取樣欄位也回 400 時，必須再降一級為完全不帶 extra_body。"""
+    service = SummarizationService()
+    selection = _one_loaded_selection(service)
+    monkeypatch.setattr(settings, "LOCAL_LLM_DISABLE_THINKING", True)
+    expected = SimpleNamespace()
+    create = AsyncMock(side_effect=[_http_error(400), _http_error(400), expected])
+
+    response = await service._lmstudio_chat_request(
+        _fake_client(create), selection, [{"role": "user", "content": "x"}], 0.2, 512
+    )
+
+    assert response is expected
+    assert create.await_count == 3, "兩級降級各重送一次即成功，不得讓整份紀錄失敗"
+    assert "extra_body" not in create.await_args_list[2].kwargs
 
 
 # ---------------------------------------------------------------------------

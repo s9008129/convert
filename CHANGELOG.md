@@ -1,5 +1,92 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.8.0] - 2026-09-22
+
+### 🎯 主題：地端（LM Studio）會議紀錄品質對齊雲端——移除與 context 脫鉤的固定天花板、最終生成改雙輸入、地端一體適用雲端紀錄契約
+
+使用者判定地端深度會議紀錄品質「與雲端 Gemini 差距很大」。以同一支 `0903-科務會議.m4a`、
+同一份 ASR 逐字稿、同一 `section_meeting` 模板，比對雲端 Gemini、地端 dense 27B
+（`qwen3.8-27b-splash`）與地端 MoE 35B-A3B（`qwen3.6-35b-a3b-splash`）三份輸出後確認：
+**差距的主因是管線，不是模型**——雲端與地端餵進最終生成的輸入不對稱，且地端每個階段都
+撞到與 context 無關的固定上限。
+
+### 🔍 根因（實測）
+
+1. **最終生成輸入不對稱**：雲端餵「萃取筆記＋完整逐字稿」雙輸入
+   （`_build_cloud_summary_message`），地端只餵整併後筆記（`_build_summary_from_notes_message`）；
+   補強輪（refinement）同樣只餵筆記。第一階段沒進筆記的立場、理由、數據，後面永遠救不回來。
+2. **與 context 無關的固定上限**：`chunk_input_budget` 被夾在 `3200`
+   （`_build_local_context_plan`）、三階段輸出共用固定 `LOCAL_LLM_RESERVED_OUTPUT_TOKENS=3072`
+   （`config.py`）、整併可見目標另夾 4096。已載入 instance 提供 128K context 時，實際只用到
+   約 **2.6%**；11,712 est tokens 的逐字稿被切成 4 塊。
+3. **有損整併且損失被靜默接受**：4 份萃取筆記合計 8,176 tokens 送進整併，輸出上限 3,072 且
+   `finish_reason=length`（被截斷），最壞損失 62.4%，流程卻視為「已收斂」繼續，最終紀錄只
+   承載逐字稿的 15.7%。
+4. **雲端專屬機制地端缺席**：發言來源標註規則、會議年份依據規則與其對應驗證器、動態長度
+   閘門（雲端 `_estimate_cloud_min_summary_chars` vs 地端固定 250 字）、範本骨架佔位符修復
+   ——這四項過去只在雲端路徑生效。
+5. **取樣參數不完整**：LM Studio 路徑只送 `temperature` 與 `max_tokens`，未送 `top_p`／
+   `top_k`；校正階段 `temperature=0.0` 等同 greedy。Qwen3.6／3.8 官方 model card 對非思考
+   模式的建議是 `temperature=0.7`、`top_p=0.80`、`top_k=20`，並明文警告勿用 greedy。
+
+### 🔧 修正
+
+- **輸出上限改由 context 推導**（`_resolve_local_output_tokens`，`summarization.py:557-588`）：
+  下限維持 3072（絕不比舊行為更嚴格）、上限 `LOCAL_LLM_OUTPUT_TOKENS_CEILING=8192`、另留
+  `LOCAL_LLM_CONTEXT_SAFETY_MARGIN_TOKENS=256`；萃取／最終生成／補強三階段皆適用
+  （呼叫點 `summarization.py:2040`／`2076`／`2112`）。
+- **分塊上限改由 context 推導**（`summarization.py:497-505`）：
+  `LOCAL_LLM_CHUNK_INPUT_TOKENS_CEILING=0`（0＝推導，移除固定 3200；小 context 的推導值與
+  舊值幾乎相同，行為不變）。
+- **能不整併就不要整併**（`_consolidate_notes`，`summarization.py:1546-1604`）：筆記總量已被
+  下游承接時改**零損串接**（比照雲端分段模式），只有真的超出下游預算才走 LLM 整併
+  （`_merge_notes_until_fit`，`summarization.py:1408`）。
+- **最終生成與補強改雙輸入**（`_build_record_generation_message`、
+  `_resolve_final_generation_message`，`summarization.py:1268`／`1626`）：餵「筆記＋逐字稿」，
+  並以 `_final_message_fits`（`summarization.py:1606`）判斷 context 餘裕，不足時自動退回只餵
+  筆記（Ollama `num_ctx=8192` 行為不變）；補強輪同理（
+  `_resolve_final_refinement_message`，`summarization.py:1649`）。開關
+  `LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION`（預設 True）。
+- **地端一體適用雲端紀錄契約**：地端驗證加入動態長度閘門、發言來源標註、年份依據
+  （`RECORD_SPEAKER_TRACEABILITY_RULE`／`RECORD_DATE_GROUNDING_RULE`，
+  `summarization.py:153-154`）；遺漏待辦問題字串改列出**具體項目**
+  （`ACTION_ISSUE_PREVIEW_LIMIT=12`，`summarization.py:127`）；`_finalize_record_text`
+  （`summarization.py:2157`）納入範本骨架佔位符修復，與雲端共用同一後處理。
+- **LM Studio 取樣參數**（`_lmstudio_extra_body`／`_downgrade_extra_body`，
+  `summarization.py:2876`／`2865`）：送官方建議 `top_p=0.8`／`top_k=20` 與階段溫度；本機
+  Splash 引擎對 `min_p`／`presence_penalty` 非 0 值回 HTTP 400，故不送，端點拒絕取樣參數時
+  逐級降級重送。
+- **設定**：`backend/core/config.py:210-268` 新增 11 個 `LOCAL_LLM_*` 旋鈕（分塊／輸出上限、
+  安全邊界、雙輸入、零損串接、`top_p`／`top_k`、五個階段溫度），皆可用環境變數覆蓋；關掉即
+  回到舊行為。
+- **校正階段溫度**：`backend/services/task_processor.py:268` 由硬寫 0.0 改讀
+  `LOCAL_LLM_CORRECTION_TEMPERATURE`（0.3；避免 Splash 引擎走官方警告的 greedy 解碼）。
+
+### ✅ 驗證
+
+- **診斷基準（修正前，獨立 90 事實比對，同一逐字稿）**：雲端 Gemini 覆蓋 61.7%／出處標註
+  25 處／同音錯字修正 84.6%；地端 dense 27B 覆蓋 53.9%／0 處／53.8%／1,029.9 秒；地端 MoE
+  35B-A3B 覆蓋 75.6%（高於雲端）／0 處／15.4%／303.9 秒，另有 1 條捏造與 1 條自相矛盾。
+  → 覆蓋率不是地端最弱的一環；**出處標註、同音校正、捏造抑制**才是。
+- **測試**：`tests/test_t20260922_record_quality.py`（新增 12 項 fail-first 契約）、
+  `tests/test_t20260922_regression.py`（擴充為 9 項：另含 LM Studio 取樣參數與逐級降級）、
+  `tests/test_summarization_service.py`（3 項改鎖共用契約）。快速回歸（排除真音檔 E2E 1 項）
+  於本次文件同步實測為 **818 passed／2 skipped／0 failed**（`uv run --no-sync pytest tests/ -q
+  --ignore=tests/test_end_to_end.py -p no:randomly`；v4.8.0 實作期間回報為 806 passed／2 skipped）。
+- **驗收條件（E2E，同一支 `0903-科務會議.m4a`＋`section_meeting`）**：地端深度紀錄需產生
+  非 fallback 的正式 DOCX，並通過 `scripts/e2e/check_record_output.py` 的 `VERDICT:
+  ACCEPTED`；再與雲端基準逐項比對覆蓋率、出處標註與同音錯字修正。
+
+### 📌 下一步建議
+
+1. **同音錯字修正是下一個最大缺口**（地端 15.4% vs 雲端 84.6%）：`task_processor.py:259-268`
+   仍把校正階段硬寫成 `generate_local`，是否改走所選模式（含 LM Studio）屬語意契約變更，需
+   獨立規劃與審查，不在本版範圍。
+2. **Gemma 4 31B 從未在 Mac 實測**：v4.7.1 的驗證環境是 Windows／RTX 4090；「Gemma 比 Qwen
+   準」目前沒有 Mac 上的 A/B 證據，建議用同一支音檔、同一逐字稿做一次控制變因比較。
+3. **把品質指標制度化**：覆蓋率、出處標註數、同音修正率、捏造數建議納入每次模型／提示詞
+   變更的固定驗收表，避免再次只用「看起來如何」判斷品質。
+
 ## [v4.7.4] - 2026-09-22
 
 ### 🎯 主題：LM Studio 深度會議紀錄不再失敗——整併目標改由 context 推導、LM Studio 關閉思考、規劃視窗以已載入模型為權威

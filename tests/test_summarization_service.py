@@ -1050,7 +1050,13 @@ def test_cloud_generation_message_requires_speaker_traceability():
 
 
 def test_speaker_traceability_rule_is_template_gated():
-    """旗標未開啟的模板（含 general）與地端生成訊息都不得被雲端規則影響。"""
+    """旗標未開啟的模板（含 general）不得被此規則影響；開啟者地端與雲端一體適用。
+
+    v4.8.0 契約變更：發言來源標註原本只套用在雲端生成，實測結果是雲端紀錄
+    25 處出處標註、地端兩版各 0 處（三方比對中最大的單一缺口，且它同時是攔住
+    「無出處內容」的確定性絆索）。使用者明確要求地端品質對齊雲端，故改為
+    兩條路徑共用同一份紀錄契約；旗標（template.speaker_traceability）仍是唯一開關。
+    """
     service = SummarizationService()
     notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
     transcript = "[00:00:00-00:01:00] 發言者1：請各股配合辦理"
@@ -1060,10 +1066,16 @@ def test_speaker_traceability_rule_is_template_gated():
         template = get_template(template_id)
         assert template.speaker_traceability is False
         assert rule not in service._build_cloud_summary_message(notes, transcript, template=template)
+        assert rule not in service._build_summary_from_notes_message(notes, template=template)
         assert service._validate_cloud_speaker_traceability("會議紀錄正文", template) == []
 
-    local = service._build_summary_from_notes_message(notes, template=get_template("section_meeting"))
-    assert rule not in local, "地端生成流程不得被雲端規則影響"
+    local_template = get_template("section_meeting")
+    assert rule in service._build_summary_from_notes_message(notes, template=local_template), (
+        "地端生成訊息必須與雲端共用同一份發言來源標註契約（v4.8.0）"
+    )
+    assert rule in service._build_record_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript, template=local_template
+    )
 
 
 def test_validate_cloud_speaker_traceability_accepts_body_source_tag():
@@ -1186,7 +1198,12 @@ def test_extract_year_tokens_normalizes_arabic_chinese_and_excludes_decades():
 
 
 def test_cloud_generation_requires_date_grounding_rule():
-    """日期依據規則必須進雲端生成與補強訊息；地端生成訊息不得被影響（地端不動）。"""
+    """日期依據規則必須進生成與補強訊息；地端與雲端共用同一份契約（v4.8.0）。
+
+    v4.8.0 契約變更：年份依據原本只套用在雲端生成。實測地端紀錄也曾把逐字稿
+    沒有的年份寫死（公文等級的事實錯誤），且使用者要求地端品質對齊雲端，
+    故此規則改為兩條路徑一體適用。
+    """
     service = SummarizationService()
     notes = "## 1. 會議資訊\n- **主題**：組織規程調整\n"
     transcript = "[00:00:00-00:01:00] 發言者1：生效日期是今年的 11 月 1 號"
@@ -1196,8 +1213,10 @@ def test_cloud_generation_requires_date_grounding_rule():
     assert rule in service._build_cloud_refinement_message(
         "草稿", notes, ["缺少區塊：X"], transcript
     )
-    assert rule not in service._build_summary_from_notes_message(notes)
-    assert rule not in service._build_refinement_message("草稿", notes, ["缺少區塊：X"])
+    assert rule in service._build_summary_from_notes_message(notes), (
+        "地端生成訊息必須與雲端共用年份依據契約（v4.8.0）"
+    )
+    assert rule in service._build_refinement_message("草稿", notes, ["缺少區塊：X"])
 
 
 def test_validate_cloud_date_grounding_flags_year_missing_from_transcript():
@@ -1284,8 +1303,10 @@ def test_cloud_finalize_repairs_leaked_template_placeholders():
     assert "時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）" in fixed
     assert "（待確認）年（待確認）月份第（待確認）次科務會議紀錄" in fixed
 
-    # 地端路徑（`_finalize_record_text`）不套用此修復：地端行為不變
-    assert "（年）年" in service._finalize_record_text(leaked, template=template)
+    # v4.8.0：地端路徑（`_finalize_record_text`）亦套用同一道修復——實測地端紀錄的
+    # 未填佔位符是雲端的 3 倍以上（27 vs 14），且出現空白欄位與「（發言者1）」洩漏。
+    local_fixed = service._finalize_record_text(leaked, template=template)
+    assert local_fixed == fixed, "地端與雲端的紀錄級後處理必須一致（v4.8.0）"
 
 
 def test_placeholder_repair_leaves_body_lines_untouched():

@@ -197,6 +197,76 @@ class Settings(BaseSettings):
         default=4,
         description="長逐字稿切塊時保留的重疊行數"
     )
+    # ========================================
+    # v4.8.0（T20260922-1930-01）：地端深度紀錄品質對齊雲端
+    # ========================================
+    # 根因（實測 task b20c90a7／836fcae7）：128K context 已載入的情況下，地端仍被
+    # 三個「與 context 無關的固定常數」鎖死——分塊輸入 3200、單次輸出 3072、整併
+    # 可見目標 4096。逐字稿 11,712 est 被切成 4 塊（每塊只用到可承載量的 2.6%），
+    # 4 份萃取筆記合計 8,176 tokens 送進整併後輸出上限 3,072 且 finish_reason=length
+    # （被截斷、流程靜默接受），最終紀錄只承載逐字稿的 15.7%。雲端路徑沒有這些上限
+    # （逐字稿整份進最終生成），因此品質差距的主因是「管線」而不是「模型」。
+    # 以下把上限改為「依 context 推導」，並保留可回復的設定旋鈕。
+    LOCAL_LLM_CHUNK_INPUT_TOKENS_CEILING: int = Field(
+        default=0,
+        description="地端萃取分塊的每塊輸入上限（tokens）；0＝依 context 推導"
+                    "（移除固定 3200；小 context 的推導值與舊值幾乎相同，行為不變）"
+    )
+    LOCAL_LLM_OUTPUT_TOKENS_CEILING: int = Field(
+        default=8192,
+        description="地端單次生成輸出的天花板（tokens）；0＝完全不設上限。"
+                    "實際值仍由 context 餘裕推導，且不低於 LOCAL_LLM_RESERVED_OUTPUT_TOKENS"
+    )
+    LOCAL_LLM_CONTEXT_SAFETY_MARGIN_TOKENS: int = Field(
+        default=256,
+        description="依 context 推導輸出預算時保留的安全邊界（tokens）"
+    )
+    LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION: bool = Field(
+        default=True,
+        description="地端最終生成與補強是否同時餵入原始逐字稿（雙輸入，比照雲端）；"
+                    "context 餘裕不足時自動退回只餵萃取筆記"
+    )
+    LOCAL_LLM_ZERO_LOSS_NOTES_PASSTHROUGH: bool = Field(
+        default=True,
+        description="當萃取筆記總量已被最終生成階段承接時，略過有損的 LLM 整併，"
+                    "改用零損串接（比照雲端分段模式）；筆記超出下游預算時才整併"
+    )
+    # 取樣參數（v4.8.0）：官方 Qwen3.6／3.8 model card 對「非思考模式」建議
+    # temperature=0.7、top_p=0.80、top_k=20，並明文警告勿用 greedy；
+    # 舊行為只送 temperature（萃取 0.1／生成 0.2／補強 0.15／校正 0.0 greedy）
+    # 且完全不送 top_p／top_k，等於失去官方建議的分佈控制。
+    # 注意：本機這兩顆模型走 LM Studio 的 Splash 引擎，該引擎對
+    # min_p／presence_penalty／frequency_penalty 非 0 值直接回 HTTP 400，
+    # 因此只送 top_p／top_k（官方建議的 presence_penalty 1.5 在此不可用）。
+    LOCAL_LLM_SAMPLING_TOP_P: Optional[float] = Field(
+        default=0.8,
+        description="LM Studio 取樣 top_p（None＝不送，沿用端點預設）"
+    )
+    LOCAL_LLM_SAMPLING_TOP_K: Optional[int] = Field(
+        default=20,
+        description="LM Studio 取樣 top_k（None＝不送；Splash 引擎上限 32）"
+    )
+    LOCAL_LLM_EXTRACTION_TEMPERATURE: float = Field(
+        default=0.6,
+        description="地端萃取階段 temperature（官方非思考建議 0.7；萃取偏忠實故略低）"
+    )
+    LOCAL_LLM_GENERATION_TEMPERATURE: float = Field(
+        default=0.7,
+        description="地端最終生成階段 temperature（官方非思考建議值）"
+    )
+    LOCAL_LLM_REFINEMENT_TEMPERATURE: float = Field(
+        default=0.7,
+        description="地端補強階段 temperature（官方非思考建議值）"
+    )
+    LOCAL_LLM_MERGE_TEMPERATURE: float = Field(
+        default=0.6,
+        description="地端整併階段 temperature（官方非思考建議 0.7；整併偏忠實故略低）"
+    )
+    LOCAL_LLM_CORRECTION_TEMPERATURE: float = Field(
+        default=0.3,
+        description="逐字稿語意校正 temperature；舊值 0.0 會讓 Splash 引擎走 GREEDY"
+                    " 解碼（官方明文警告勿用 greedy，易僵化與重複）"
+    )
     LOCAL_LLM_MAX_REFINEMENT_ROUNDS: int = Field(
         default=2,
         description="本地摘要品質驗證後的最大補強輪數"
