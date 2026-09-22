@@ -1,0 +1,194 @@
+{
+  "attempt": "attempt-C1-gemma31b-fix",
+  "task_id": "T20260922-2037-02-local-model-quality-parity",
+  "purpose": "模型無關性關鍵實證（plan rev6 §7 N-1）：換第三方模型家族 Gemma 4 31B 跑同一支真實音檔、同模板、同模式、同一組閘門",
+  "head_sha": "e90040b4096e00bc71187eff8d4d4f83795c8626",
+  "branch": "fix/qwen-local-quality-parity",
+  "command": "uv run python scripts/e2e/run_owned_e2e.py --audio \"/Users/hsiaojohnny/Downloads/0903-科務會議.m4a\" --template section_meeting --processing-mode local --artifacts-dir .agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C1-gemma31b-fix --runtime-dir data/cache/e2e/p2-gemma31b-fix-01",
+  "started_at": "2026-09-22T23:15:52.026269+08:00",
+  "finished_at": "2026-09-22T23:43:41.840541+08:00",
+  "duration_seconds": 1670,
+  "task_started_at": "2026-09-22T23:15:57.255419",
+  "task_completed_at": "2026-09-22T23:43:36.837376",
+  "task_duration_seconds": 1660,
+  "exit_code": 0,
+  "verdict": "PASS",
+  "failure_reasons": [],
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "formal_docx_valid": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "model": "gemma-4-31b-it-mlx",
+  "model_display": "gemma-4-31B-it-MLX-4bit（lmstudio-community，4bit MLX，arch=gemma4）",
+  "lmstudio_instance_context_length": 71936,
+  "meeting_template": "section_meeting",
+  "processing_mode": "local",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "record_md": "data/cache/e2e/p2-gemma31b-fix-01/backend_data/outputs/0903-科務會議_ac1edcec.md",
+  "transcript_txt": "data/cache/e2e/p2-gemma31b-fix-01/backend_data/outputs/0903-科務會議_ac1edcec_逐字稿.txt",
+  "core1": {
+    "metric_version": "tag_traceability-1.1.0",
+    "tags_total": 20,
+    "traceable_tag_ratio": 1.0,
+    "on_start_tag_ratio": 1.0,
+    "on_start_tag_ratio_excluding_zero": 1.0,
+    "tags_on_real_segment_start": 20,
+    "body_source_tag_count": 20,
+    "table_source_tag_count": 0,
+    "tagged_item_ratio": 1.0,
+    "instruction_item_count": 11,
+    "char_count": 1927,
+    "known_term_fix_left_hits": 0,
+    "zero_time_tag_count": 3,
+    "distinct_tag_time_count": 11,
+    "distinct_tag_time_ratio": 0.55,
+    "exact_tag_ratio": 0.0,
+    "unsupported_entities": [
+      "徵收股",
+      "稽查股"
+    ],
+    "gates": {
+      "on_start_tag_ratio>=0.95": "PASS (1.000)",
+      "on_start_tag_ratio_excluding_zero>=0.9": "PASS (1.000)",
+      "traceable_tag_ratio>=0.95": "PASS (1.000)",
+      "body_source_tag_count>=17": "PASS (20)",
+      "table_source_tag_count==0": "PASS (0)"
+    },
+    "notes": "單次抽樣（extraction temp 0.6／final+refine temp 0.7）。模型無關性實證：第三方模型家族 Gemma 4 31B 在同一組閘門下全數達標。"
+  },
+  "snap_log": [
+    "地端紀錄後處理（最終生成後，23:36:44）：術語修正 0 處、出處標註吸附 17 處（段落內 0／最近段落 0／跨發言者 17；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條",
+    "地端紀錄後處理（補強第 1 輪後＝最終輸出，23:43:36）：術語修正 0 處、出處標註吸附 17 處（段落內 0／最近段落 0／跨發言者 17；不可回溯保留 0）、表格出處標註移除 0 處、跨節重複移除 0 條"
+  ],
+  "refinement": {
+    "rounds_executed": 1,
+    "round1_issue": "待辦事項遺漏 1 項：瑞里發放活動之現場執行（含宣導單發放）",
+    "final_warning_present": false,
+    "note": "本場補強後收斂（log 無「本地摘要仍有待補強問題」警告）；27B（B2）同題材為 2 輪且補強後仍剩 6 項假陽性。"
+  },
+  "timing_breakdown": {
+    "asr_seconds": 15.8,
+    "diarization_seconds": 153.3,
+    "diarization_segments": 682,
+    "diarization_speakers": 8,
+    "diarization_rtf": 0.057,
+    "transcript_semantic_correction_seconds": 360,
+    "transcript_semantic_correction_detail": "45 段中 8 段有修正、1 段放棄、採納 27 處替換（12 次小呼叫，每次約 29–30 s）",
+    "extraction_seconds": 335.0,
+    "extraction_prompt_tokens": 12583,
+    "final_call_seconds": 382,
+    "final_call_prompt_tokens": 16194,
+    "refinement_1_seconds": 412,
+    "refinement_1_prompt_tokens": 17533,
+    "pipeline_total_seconds": 1129.3,
+    "pipeline_metrics": "chunk_count=1, logical_generations=3, merge_rounds=0, duration_seconds={'extraction': 335.0, 'merge': 0.0, 'final_and_refine': 794.4, 'total': 1129.3}",
+    "task_total_seconds": 1659.6,
+    "runner_total_seconds": 1670,
+    "note": "每階段 wall-clock 由 backend.log 時間戳與 LM Studio server log 重建；本場無 errata（標籤與日誌一致）。"
+  },
+  "observations": {
+    "prefill_slow": "LM Studio server log 顯示本模型走 VLM 路徑，prompt processing 進度以 ~70 tok/s 級速度推進（例：12,583-token 抽取呼叫 prefill 約 3 分鐘）→ 本場主要時間成本除 decode 外，還包含可觀的 prefill。此為 LM Studio 端該模型／runtime 的觀測，非本專案程式碼造成。",
+    "record_shorter": "char_count 1,927（27B 為 4,062、MoE 為 2,124）。內容較精簡、結構較貼模板（一／二／三＋子章節），但條目數較少：instruction_item_count 11（27B 25、MoE 14）、決議表 7 列（27B 17、MoE 10）。**涵蓋率仍需逐條檢查表才能判定**，本場不得由可查核性推論涵蓋率。",
+    "coverage_reading": "char_count 1,927（27B 4,062、MoE 2,124）＋ 19 處「（待確認）」＋ 逐條缺口 → 本場是三場中涵蓋廣度最低者。達標解讀必須限定在「標註可查核性」，不得讀成「紀錄整體品質達到 27B 水準」。"
+  },
+  "instrument_metric_version": {
+    "value": "tag_traceability-1.1.0",
+    "note": "本場量測一次產生即為 v1.1；未就地覆寫。"
+  },
+  "what_this_does_not_prove": [
+    "涵蓋率／忠實度（無事實探針、無 ground truth）",
+    "與雲端 Gemini 的相對差距（本場未跑雲端對照）",
+    "模型本質優劣（單次抽樣，temperature 0.6/0.7）",
+    "Ollama／Windows 實機行為（本場仍為 macOS ＋ LM Studio）",
+    "DOCX 視覺版面品質（僅驗 zip／document.xml 結構）"
+  ],
+  "snap_stats": {
+    "segments": 183,
+    "tags": 20,
+    "snapped": 17,
+    "changed": 8,
+    "snapped_exact": 0,
+    "snapped_nearest": 0,
+    "snapped_speaker_mismatch": 17,
+    "kept_far": 3,
+    "untraceable": 0,
+    "unique_changed_values": [
+      "00:19:49→00:19:39",
+      "00:29:13→00:29:10",
+      "00:06:14→00:05:57",
+      "00:10:04→00:08:15",
+      "00:14:36→00:14:34",
+      "00:18:09→00:18:06",
+      "00:43:03→00:42:51"
+    ],
+    "source": "獨立驗收以模型原始輸出（LM Studio 23:43:36 Generated prediction）重跑 snap_source_tags_to_transcript",
+    "note": "backend.log 只記 snapped／untraceable；本檔初版誤推 kept_far=0，已由獨立驗收否證並更正為 3（00:31:34×2、00:42:51，位移 >120 s 之精度保護）。"
+  },
+  "snap_marginal_contribution": {
+    "before_snap": {
+      "on_start_tag_ratio": 0.95,
+      "tags_on_real_segment_start": 19,
+      "tags_total": 20,
+      "on_start_tag_ratio_excluding_zero": 0.9412,
+      "traceable_tag_ratio": 1.0,
+      "body_source_tag_count": 20,
+      "distinct_tag_time_ratio": 0.7
+    },
+    "after_snap": {
+      "on_start_tag_ratio": 1.0,
+      "tags_on_real_segment_start": 20,
+      "tags_total": 20,
+      "on_start_tag_ratio_excluding_zero": 1.0,
+      "traceable_tag_ratio": 1.0,
+      "body_source_tag_count": 20,
+      "distinct_tag_time_ratio": 0.55
+    },
+    "reading": "吸附救回唯一真正 off-start 的標註（00:10:04→00:08:15），主指標 +0.05；但即使完全不吸附，五閘門在本樣本也會全過（主指標 0.95 恰壓線）。本場達標主要來自 Gemma 自己寫對絕大多數段首。"
+  },
+  "findings_from_independent_verification": {
+    "F1_precision_regression": {
+      "level": "P2 候選（不影響本波閘門）",
+      "summary": "7 個唯一改變值中 6 個是「倒退一格」：模型原本寫對段首，被拉回上一段起點（00:19:49→00:19:39、00:29:13→00:29:10、00:06:14→00:05:57、00:14:36→00:14:34、00:18:09→00:18:06、00:43:03→00:42:51）；僅 00:10:04→00:08:15 是真修正。",
+      "cause": "吸附規則 3 取「逐字稿順序中第一個含此秒數的段落」且段落 end 為閉區間；逐字稿大量存在「上段結尾＝下段起點」相鄰鏈。",
+      "blind_spot": "落點仍是真實段落起點 → on_start_tag_ratio 仍計命中（1.0 無感）；退化的是「標註指向的語句精度」，不在既有觀察值清單內。",
+      "suggested_fix": "規則 3 優先選 start == t 的段落，或 end 改開區間。（本波未實作）"
+    },
+    "F2_non_idempotent": {
+      "level": "P2 候選",
+      "summary": "對已交付 md 再套一次吸附仍 changed=4，連續套用單向後退不收斂（00:19:39→35→34→31→08）。",
+      "risk": "同一份文件重複後處理會得到不同時間戳。"
+    },
+    "F3_coverage_gap": {
+      "level": "非閘門項目（涵蓋率不在五閘門內）",
+      "summary": "逐字稿有、交付 md 完全沒有：省員、小秘書、嘉義、選舉、視察、排水管、露臺、藤蔓、李飛；其中省員／小秘書／嘉義／李飛出現在萃取階段筆記 → 屬最終生成涵蓋不足，非檢索失敗。另有 19 處「（待確認）」。",
+      "hallucination_check": "未發現憑空捏造條目；最接近者為 md 的「消耗稅科」（逐字稿 ASR 作「校費稅科」，未被 term-fix 命中）。",
+      "reading": "「本場達標」＝標註可查核性達標，不等於紀錄整體品質達到 27B 水準；本場 char_count 為三個模型最低。"
+    }
+  },
+  "independent_verification": {
+    "file": "verify_independent.md",
+    "verdict": "PASS",
+    "basis": "plan rev6 §4-3 五閘門（門檻值未更動）",
+    "reproduced": "重跑 measure_record_quality.py：57 個 leaf 值 0 diff；hash 三件自力重算相符；DOCX zip 17 entries／word/document.xml 存在；seeded 人工抽樣 10 筆 10/10 為真實段落起點。",
+    "model_evidence": "model_snapshot 唯一載入 gemma；backend.log 43 處生成呼叫全 gemma；LM Studio server log 執行窗內 15 次生成全 gemma；無非 gemma 呼叫（反證掃描失敗）。",
+    "limitations": [
+      "clean-worktree gate 只能「推得」啟動時通過（執行窗內 23:23:04 有並行 session 寫入文件，非執行路徑程式碼）",
+      "單次抽樣（temp 0.6／0.7）不得外推模型本質優劣",
+      "Windows／Ollama 實機與雲端對照皆未驗"
+    ]
+  }
+}
