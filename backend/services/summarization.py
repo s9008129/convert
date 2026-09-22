@@ -72,6 +72,11 @@ class LocalContextPlan:
     merge_provider_output_tokens: int
     needs_chunking: bool
     estimated_chunk_count: int
+    # T20260922-1349-01 RC-1b：整併結果「硬性」下游可承接上限（最終生成階段
+    # 輸入預算）。`merge_visible_target_tokens` 是壓縮的軟性目標，本欄位是
+    # 「單一 note 已無法再分組壓縮時，是否仍可安全交給最終生成」的判斷依據。
+    # 預設 None＝退回 merge_visible_target_tokens（維持既有呼叫端語意）。
+    merge_feasible_input_tokens: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -205,7 +210,19 @@ class SummarizationService:
     # 這是「orchestration 可見輸出」契約，與 provider completion cap 是不同
     # 預算；超出可見目標的回應交由下一輪 compaction 處理，不得壓縮 provider
     # max_tokens，也不得用字串截斷修正。
+    #
+    # T20260922-1349-01 RC-1b：900 由「固定值」降為「歷史下限」。固定 900 是在
+    # num_ctx=8192 假設下校準的常數；當 provider 實際視窗遠大於設定值（LM
+    # Studio loaded instance 實測 32K/128K）時，900 變成與真實預算無關的硬性
+    # gate：整併一旦收斂到單一 note，就再無分組可依賴（merge prompt 要求保留
+    # 全部事實，模型不保證縮小），必然在輪數上限拋
+    # LOCAL_LLM_MERGE_NOT_CONVERGED，整份會議紀錄被 veto 成逐字稿 fallback。
+    # 正確語意：可見目標由「最終生成階段可承接的輸入預算」推導（見
+    # `_build_local_context_plan` / `_resolve_merge_targets`），900 僅為下限，
+    # `LOCAL_LLM_MERGE_VISIBLE_TARGET_CEILING_TOKENS` 為維持最終生成聚焦的品質
+    # 上限。
     LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS = 900
+    LOCAL_LLM_MERGE_VISIBLE_TARGET_CEILING_TOKENS = 4096
 
     # T20260827-1127-01 RC-4：chunk 邊界重疊的 token 上限，同時供 context
     # planner 的 effective step 估算與 chunk assembler 的 carry 封頂使用，
@@ -481,7 +498,12 @@ class SummarizationService:
         # - merge_input_budget_tokens：一組來源 notes 的上限，由 context window
         #   扣除 merge prompt overhead 與 provider completion reserve 計算。
         merge_provider_output_tokens = output_budget
-        merge_visible_target_tokens = self.LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS
+        merge_visible_target_tokens, merge_feasible_input_tokens = self._resolve_merge_targets(
+            system_prompt=system_prompt,
+            template=template,
+            context_window=context_window,
+            output_budget=output_budget,
+        )
         merge_feasible_input = context_window - merge_provider_output_tokens - merge_overhead
         # Preflight：context 必須同時容納 merge prompt、至少兩份目標大小 notes
         # 與 provider completion reserve；不可行時在 provider I/O 前 fail loudly。
@@ -512,7 +534,62 @@ class SummarizationService:
             merge_provider_output_tokens=merge_provider_output_tokens,
             needs_chunking=transcript_tokens > chunk_input_budget,
             estimated_chunk_count=estimated_chunk_count,
+            merge_feasible_input_tokens=merge_feasible_input_tokens,
         )
+
+    def _resolve_merge_targets(
+        self,
+        *,
+        system_prompt: str,
+        template: Optional[MeetingTemplate],
+        context_window: int,
+        output_budget: int,
+    ) -> tuple[int, int]:
+        """推導整併的可見目標與下游可承接上限（T20260922-1349-01 RC-1b）。
+
+        契約（取代固定 900）：
+        - 最終生成步驟的輸入＝系統提示詞＋整併後筆記；補強輪會再把「當前摘要」
+          帶回 prompt，故需額外保留一份輸出預算。
+        - ``final_stage_input_budget``＝context window 扣除最終輸出保留、補強輪
+          回饋保留與最終提示詞開銷後，仍可容納的筆記量。
+        - ``merge_feasible_input_tokens``（硬性上限）＝max(900, 上式)：不得低於
+          歷史下限 900，否則會比既有行為更嚴格（ctx=8192 時與舊行為完全相同）。
+        - ``merge_visible_target_tokens``（軟性目標）＝min(上式, 4096)：保留
+          「整併要收斂」的壓力，同時不讓超大 context 把整併放寬到失去聚焦。
+        """
+        # 補強輪的提示詞骨架（問題清單＋「目前版本」＋「萃取筆記」段落標題）與
+        # 最終生成提示詞不同，必須一併保留；否則單一 note 剛好貼齊硬性上限時，
+        # 補強輪的 `available_output` 會略低於 provider completion cap，反而以
+        # LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED fail loudly（等於把剛打開的成功出口
+        # 又關上）。只取「相對最終生成提示詞的邊際開銷」，避免與上方已計入的
+        # generation_message_extra 重複計算。
+        refinement_overhead = max(
+            0,
+            self._estimate_tokens(
+                self._build_refinement_message("", "", [], template=template)
+            )
+            - self._estimate_tokens(self._template_generation_extra(template)),
+        )
+        final_prompt_overhead = (
+            self._estimate_tokens(system_prompt)
+            + self._estimate_tokens(self._template_generation_extra(template))
+            + refinement_overhead
+            + 250
+        )
+        final_stage_input_budget = (
+            context_window
+            - output_budget
+            - output_budget
+            - final_prompt_overhead
+        )
+        merge_feasible_input_tokens = max(
+            self.LOCAL_LLM_MERGE_VISIBLE_TARGET_TOKENS, final_stage_input_budget
+        )
+        merge_visible_target_tokens = min(
+            merge_feasible_input_tokens,
+            self.LOCAL_LLM_MERGE_VISIBLE_TARGET_CEILING_TOKENS,
+        )
+        return merge_visible_target_tokens, merge_feasible_input_tokens
 
     # 單行逐字稿超過此字數時，先插入段落換行（只改 whitespace）
     PARAGRAPH_LINE_MAX_CHARS = 600
@@ -1232,6 +1309,7 @@ class SummarizationService:
         lmstudio_selection: Optional[LMStudioModelSelection] = None,
         merge_input_budget_tokens: Optional[int] = None,
         merge_provider_output_tokens: Optional[int] = None,
+        merge_feasible_input_tokens: Optional[int] = None,
     ) -> str:
         """反覆整併 chunk 筆記，直到可被最終摘要步驟安全承接（RC-1/RC-3）。
 
@@ -1247,6 +1325,13 @@ class SummarizationService:
         compaction）；每輪必須減少 note 數或 estimated total tokens；達輪數上限
         或無實質進度時拋 ``LOCAL_LLM_MERGE_NOT_CONVERGED``。CORE merge path
         不使用 hard truncation——不得省略尾端來源內容偽造成功。
+
+        終止條件（T20260922-1349-01 RC-1b）：整併的真正契約是「merge 後的筆記
+        能被最終生成階段安全承接」，不是「縮到某個與 context 無關的常數」。因此
+        除了可見目標外，另接受 ``merge_feasible_input_tokens``（下游可承接的硬性
+        上限）：當只剩單一 note、已無分組可再壓縮，而該 note 仍在下游預算內時即
+        視為已收斂並回傳（僅記錄 warning），不因未達軟性目標而 veto 整份紀錄。
+        真正超出下游預算時仍 fail loudly 拋 ``LOCAL_LLM_MERGE_NOT_CONVERGED``。
         """
         current_notes = [self._clean_ollama_output(note) for note in extracted_notes if note and note.strip()]
         if not current_notes:
@@ -1265,19 +1350,38 @@ class SummarizationService:
         # 收斂保護（RC-3）：整併必須確定性收斂。三重防線：輪數上限、
         # 「note 數或總 tokens 必須減少」的進度證明、非收斂時拋 stable error
         # 走既有逐字稿 fallback。禁止以 hard truncation 偽造成功。
+        feasible_input_tokens = (
+            merge_feasible_input_tokens
+            if merge_feasible_input_tokens is not None
+            else merge_visible_target_tokens
+        )
         round_index = 1
         previous_total_tokens: Optional[int] = None
         previous_note_count: Optional[int] = None
-        while len(current_notes) > 1 or self._estimate_tokens(current_notes[0]) > merge_visible_target_tokens:
+        while True:
             total_tokens = sum(self._estimate_tokens(note) for note in current_notes)
+            if len(current_notes) == 1 and total_tokens <= merge_visible_target_tokens:
+                break
+            if len(current_notes) == 1 and total_tokens <= feasible_input_tokens:
+                # 不可再分組，且下游仍可承接 → 視為已收斂（不得以此 veto 整份紀錄）
+                log.warning(
+                    "整併筆記未達可見目標但下游可承接，停止整併：{} tokens > 目標 {} tokens"
+                    "（下游可承接上限 {} tokens，context window {} tokens）",
+                    total_tokens,
+                    merge_visible_target_tokens,
+                    feasible_input_tokens,
+                    context_window_tokens or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
+                )
+                break
             if round_index > settings.LOCAL_LLM_MAX_MERGE_ROUNDS:
                 raise StableServiceError(
                     LOCAL_LLM_MERGE_NOT_CONVERGED,
-                    f"萃取筆記整併在 {settings.LOCAL_LLM_MAX_MERGE_ROUNDS} 輪內未收斂到可見目標"
-                    f"（目前 {len(current_notes)} 份筆記、{total_tokens} tokens > 目標 "
-                    f"{merge_visible_target_tokens} tokens）。為保留全部來源事實（含尾端決議／"
-                    "待辦），已停止整併並回退為明示逐字稿 fallback；請調大 context window"
-                    "或提高 LOCAL_LLM_MAX_MERGE_ROUNDS 後重試",
+                    f"萃取筆記整併在 {settings.LOCAL_LLM_MAX_MERGE_ROUNDS} 輪內未收斂到下游可承接的"
+                    f"輸入預算（目前 {len(current_notes)} 份筆記、{total_tokens} tokens > 可見目標 "
+                    f"{merge_visible_target_tokens} tokens 且 > 下游可承接上限 "
+                    f"{feasible_input_tokens} tokens）。為保留全部來源事實（含尾端決議／待辦），"
+                    "已停止整併並回退為明示逐字稿 fallback；請調大 context window 或提高 "
+                    "LOCAL_LLM_MAX_MERGE_ROUNDS 後重試",
                 )
             if previous_total_tokens is not None:
                 notes_reduced = (
@@ -1656,19 +1760,28 @@ class SummarizationService:
         pipeline_started = time.monotonic()
         # v4.7.0：任務級 num_ctx——warmup 自我修復失敗時降級，一次讀取、全程顯式傳遞
         context_tokens = self._effective_context_tokens()
+        context_window_source = "settings"
         if lmstudio_selection and lmstudio_selection.context_length:
-            context_tokens = min(context_tokens, lmstudio_selection.context_length)
+            # T20260922-1349-01 RC-3：LM Studio 的權威視窗是「本次選定 loaded
+            # instance 的 context_length」——那是使用者已在 LM Studio 載入、伺服器
+            # 實際提供的實體上限（本 app 不負責 load/unload，96e6e74 已立此方向）。
+            # 舊行為的 min() 讓 settings 預設 8192 在模型提供 32K/128K 時反向成為
+            # 瓶頸：規劃過度切塊、merge 分組預算過小 → 呼叫放大，並把整併推進
+            # 輪數上限。instance context 較小（< settings）時結果與舊行為相同。
+            context_tokens = lmstudio_selection.context_length
+            context_window_source = "lmstudio_instance"
         plan = self._build_local_context_plan(
             transcript, system_prompt, template=template,
             context_window_tokens=context_tokens,
         )
         log.info(
             "本地摘要上下文規劃："
-            f"context_window={context_tokens}, "
+            f"context_window={context_tokens}({context_window_source}), "
             f"estimated_tokens={plan.estimated_transcript_tokens}, "
             f"chunk_budget={plan.chunk_input_budget_tokens}, "
             f"merge_input_budget={plan.merge_input_budget_tokens}, "
             f"merge_visible_target={plan.merge_visible_target_tokens}, "
+            f"merge_feasible_input={plan.merge_feasible_input_tokens}, "
             f"merge_provider_output={plan.merge_provider_output_tokens}, "
             f"needs_chunking={plan.needs_chunking}"
         )
@@ -1708,6 +1821,7 @@ class SummarizationService:
             lmstudio_selection=lmstudio_selection,
             merge_input_budget_tokens=plan.merge_input_budget_tokens,
             merge_provider_output_tokens=plan.merge_provider_output_tokens,
+            merge_feasible_input_tokens=plan.merge_feasible_input_tokens,
         )
 
         merge_duration = time.monotonic() - extraction_duration - extraction_started
@@ -2476,7 +2590,7 @@ class SummarizationService:
         temperature: float,
         max_tokens: int,
     ) -> object:
-        """單次 chat.completions.create（含既有 transient/HTTP 錯誤映射）。
+        """單次 chat.completions.create（含 transient/HTTP 錯誤映射與思考關閉降級）。
 
         network transient retry 維持既有 LOCAL_LLM_TRANSIENT_RETRIES 上限；
         semantic（reasoning）retry 由呼叫端另行計數，兩者分開、各自有界。
@@ -2489,14 +2603,45 @@ class SummarizationService:
             httpx.ConnectError,
             httpx.RemoteProtocolError,
         )
+        # T20260922-1349-01 RC-2：LM Studio 路徑先前完全沒有套用
+        # LOCAL_LLM_DISABLE_THINKING（該開關只實作在 Ollama 路徑），於是推理型
+        # 模型（實測 qwen3.8-27b-splash，capabilities.reasoning 預設 on）每次呼叫
+        # 都先產生 233～4852 reasoning tokens：單場會議 11 次呼叫中即有 1 次
+        # finish_reason=length 且 content 為 0 字元，並把生成階段拖長到整體
+        # 87.5%（1246s／1422s）。LM Studio 為 OpenAI 相容端點，關閉思考的正確
+        # 欄位是 `reasoning_effort: "none"`（實測 reasoning_tokens=0）。openai
+        # 1.12.0 無此具名參數，僅能經 extra_body 傳遞。
+        extra_body: Optional[dict] = (
+            {"reasoning_effort": "none"} if settings.LOCAL_LLM_DISABLE_THINKING else None
+        )
+
+        async def _create(extra: Optional[dict]):
+            kwargs = {
+                "model": selection.model_identifier,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if extra:
+                kwargs["extra_body"] = extra
+            return await client.chat.completions.create(**kwargs)
+
         for attempt in range(retries + 1):
             try:
-                return await client.chat.completions.create(
-                    model=selection.model_identifier,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
+                try:
+                    return await _create(extra_body)
+                except Exception as exc:  # noqa: BLE001 — 相容降級需先讀 status code
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code == 400 and extra_body:
+                        # 與 `_post_ollama_chat` 的 think 相容降級同語意：伺服器不
+                        # 認識該欄位時，降級為不帶欄位重送一次，不得讓整份紀錄失敗。
+                        log.warning(
+                            "LM Studio 端點不接受 reasoning_effort（HTTP 400），"
+                            "改以不帶該欄位的相容模式重送"
+                        )
+                        extra_body = None
+                        return await _create(None)
+                    raise
             except transient_errors as exc:
                 if attempt >= retries:
                     raise StableServiceError(

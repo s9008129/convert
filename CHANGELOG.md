@@ -1,5 +1,53 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.7.4] - 2026-09-22
+
+### 🎯 主題：LM Studio 深度會議紀錄不再失敗——整併目標改由 context 推導、LM Studio 關閉思考、規劃視窗以已載入模型為權威
+
+使用者以 LM Studio 目前載入的模型跑 `0903-科務會議.m4a` 深度會議紀錄，任務「完成」但
+`summary_failed=true`：下載檔為 `20260922134904_逐字稿(會議紀錄生成失敗).docx`（只有失敗
+橫幅＋逐字稿，0 張表格、無任何會議紀錄章節）。三個根因（皆有實測 log 佐證）：
+
+1. **RC-1b 固定 900-token 可見目標是與 context 無關的硬性 gate**：失敗原因字串即
+   `LOCAL_LLM_MERGE_NOT_CONVERGED：萃取筆記整併在 3 輪內未收斂到可見目標（目前 1 份筆記、
+   1754 tokens > 目標 900 tokens）`。900 是在 `num_ctx=8192` 假設下校準的常數；整併一旦
+   收斂到單一 note 就再無分組可壓縮（merge prompt 要求保留全部事實，模型不保證縮小），
+   必然在輪數上限拋錯 → **整份會議紀錄被 veto 成逐字稿 fallback**。
+2. **RC-2 `LOCAL_LLM_DISABLE_THINKING` 只實作在 Ollama 路徑**：LM Studio 每次呼叫都先產生
+   reasoning tokens（實測 233～4852），11 次呼叫中有 1 次 `finish_reason=length` 且
+   `content=0` 字元 → `LMSTUDIO_NO_FINAL_CONTENT` → 語意校正熔斷（45 段中 0 段有修正）；
+   整個 LLM 階段佔全任務 87.5%（1246s／1422.8s）。
+3. **RC-3 規劃視窗被 settings 預設夾住**：`min(settings, instance ctx)` 使 `context_window=8192`
+   成為瓶頸，但 LM Studio 實際載入的 instance 提供 32000（失敗當下）／128000（現況）。
+
+### 🔧 修正
+
+- **整併可見目標改由最終生成階段的輸入預算推導**（`_resolve_merge_targets`）：
+  `merge_feasible_input = max(900, ctx − 2×輸出保留 − 最終提示詞開銷)` 為**硬性**下游可承接
+  上限；`merge_visible_target = min(上式, 4096)` 為軟性壓縮目標（`LOCAL_LLM_MERGE_VISIBLE_TARGET_CEILING_TOKENS`）。
+  `ctx=8192` 時推導結果為 900／900，與舊行為一致（絕不更嚴格）；大 context 時可見目標停
+  在 4096 以維持最終生成聚焦。
+- **單一 note 進入下游可承接預算即視為已收斂**（`_merge_notes_until_fit`）：僅記 WARNING、
+  不再 veto 整份紀錄；真正超出硬性上限時仍 fail loudly 拋 `LOCAL_LLM_MERGE_NOT_CONVERGED`。
+  **CORE merge path 仍永不硬截斷**（既有不變量保留）。
+- **LM Studio 關閉思考**（`_lmstudio_chat_request`）：以 OpenAI 相容的 `reasoning_effort="none"`
+  送出（`openai==1.12.0` 無具名參數，經 `extra_body` 傳遞）；端點不支援該欄位（HTTP 400）時
+  降級為不帶欄位重送一次，與 Ollama 的 `think` 相容降級同語意。實測 A／B：關閉 → 1.8s、
+  `reasoning_chars=0`、`completion_tokens=18`；開啟 → 6.2s、`reasoning_chars=234`、
+  `completion_tokens=181`。
+- **規劃 `ctx` 改以選定 loaded instance 的 `context_length` 為權威**：移除 `min()`，並在
+  「本地摘要上下文規劃」log 標示來源（`lmstudio_instance`／`settings`）。
+
+### ✨ 新增
+
+- `tests/test_t20260922_regression.py`（7 項）：釘住三條修復契約（可見目標推導、單一 note
+  收斂與 fail-loud 邊界、`reasoning_effort` 與 400 降級、規劃視窗權威來源）。修復前 6/7 以
+  正確原因失敗（fail-first）。
+- `scripts/e2e/rerun_local_summarize.py`：只重跑地端摘要階段（跳過 ASR／語意校正），以既有
+  逐字稿快速驗證摘要修正。
+- `scripts/e2e/check_record_output.py`：會議紀錄 artifact（MD／DOCX）確定性驗收檢查器——
+  非 fallback、正式標題、模板必備樣式、決議與待辦、長度、佔位符、DOCX 結構、中文占比。
+
 ## [v4.7.3] - 2026-09-14
 
 ### 🎯 主題：雲端預設改回 Gemini、雲端萃取改單次呼叫、保留發言來源標註與會議日期防杜撰
