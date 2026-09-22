@@ -1,0 +1,40 @@
+{
+  "mode": "full",
+  "upload_mode": "api",
+  "meeting_template": "section_meeting",
+  "started_at": "2026-09-22T19:33:35.441062+08:00",
+  "finished_at": "2026-09-22T19:40:55.232514+08:00",
+  "port": 51246,
+  "child_pid": 22697,
+  "expected_build_revision": "01e14f4d840b9a74d914100c70e99e28c6caf305",
+  "actual_build_revision": "01e14f4d840b9a74d914100c70e99e28c6caf305",
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-03",
+  "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-baseline-01",
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-baseline-01/backend.log",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-baseline-01/backend_data",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [
+    "DOCX OOXML 的 general 模板 section「一、報告事項」缺少非空後續內容",
+    "DOCX OOXML 的 general 模板 section「二、討論事項」缺少非空後續內容",
+    "DOCX OOXML 的 general 模板 section「三、主席裁示事項」缺少非空後續內容",
+    "缺少必要檢查：['formal_docx_valid']"
+  ],
+  "verdict": "FAIL"
+}

@@ -31,11 +31,65 @@ from unittest.mock import AsyncMock, Mock  # noqa: E402
 import pytest  # noqa: E402
 
 from backend.core.config import settings  # noqa: E402
+from backend.core.glossary import english_protected_terms  # noqa: E402
 from backend.core.templates import get_template  # noqa: E402
+from backend.core.text_postprocess import (  # noqa: E402
+    finalize_record,
+    normalize_unfilled_placeholders,
+)
 from backend.services.summarization import SummarizationService  # noqa: E402
 
 
 TRANSCRIPT_LINE = "[00:00:10-00:00:40] 發言者1：請各股配合辦理組織規程調整，並於本週五前回報。"
+
+# FIXTURE_A_RECORD：逐字節錄自 data/cache/p1-fixtures/fixtures.py（A 檔行 1–2、110–132），
+# 為避免測試依賴 gitignored 的 data/cache/*，一律以字面值內嵌（不得於 runtime 讀檔）。
+FIXTURE_A_RECORD = """# 會議紀錄
+
+決議：
+一、 各相關科室（資管股、系統權限、業務承辦人）需配合系統與權限調整，提前預約準備。（主辦單位：（待確認），協辦單位：無）
+二、 依照往年經驗，部分民眾下午一點多才到，需提早出發；針對住處特殊或遠距戶數（約 2 戶）需現場分發。（主辦單位：（待確認），協辦單位：無）
+三、 待土地稅科提供清單後，配合重新列印。（主辦單位：（待確認），協辦單位：無）
+四、 相關物品需整理歸位，配合現場檢查。（主辦單位：（待確認），協辦單位：無）
+五、 形式傾向「辦公室下午茶、點心加拍照、發禮券」；需確認現金發放程序是否麻煩，若麻煩則採禮券；需確定主辦人及具體形式。（主辦單位：（待確認），協辦單位：無）
+六、 宣導科內人員注意廉政風險，避免違規。（主辦單位：（待確認），協辦單位：無）
+七、 提醒全員設為文字模式，勿亂點不明連結。（主辦單位：（待確認），協辦單位：無）
+八、 列入會議記錄警告，若再發現將嚴懲。（主辦單位：（待確認），協辦單位：無）
+九、 西龍股需於下次課會議報告創新想法與做法。（主辦單位：（待確認），協辦單位：無）
+十、 搬遷時程未定，暫維持現況辦公；需關注健康影響與工程進度。（主辦單位：（待確認），協辦單位：無）
+
+三、 主席裁示事項（後續管考與追蹤）：
+一、 各相關科室（資管股、系統權限、業務承辦人）需配合系統與權限調整，提前預約準備。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+二、 依照往年經驗，部分民眾下午一點多才到，需提早出發；針對住處特殊或遠距戶數（約 2 戶）需現場分發。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+三、 待土地稅科提供清單後，配合重新列印。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+四、 相關物品需整理歸位，配合現場檢查。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+五、 形式傾向「辦公室下午茶、點心加拍照、發禮券」；需確認現金發放程序是否麻煩，若麻煩則採禮券；需確定主辦人及具體形式。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+六、 宣導科內人員注意廉政風險，避免違規。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+七、 提醒全員設為文字模式，勿亂點不明連結。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+八、 列入會議記錄警告，若再發現將嚴懲。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+九、 西龍股需於下次課會議報告創新想法與做法。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））
+十、 搬遷時程未定，暫維持現況辦公；需關注健康影響與工程進度。（主辦單位：（待確認），協辦單位：無，辦理期程：（待確認））"""
+
+# 代表性「髒」紀錄：四欄彙整表列內帶出處標註＋正文帶出處標註＋已可確證的
+# ASR 同音誤辨（征收股→徵收股）＋未填骨架佔位符。
+RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO = """# 科務會議紀錄
+
+時間：中華民國115年9月3日
+地點：本局二樓會議室
+主持人：科長　紀錄：AI 會議助理
+出席人員：如後附簽到表
+
+（待確認）年（月）月份第（次）次科務會議決議事項辦理情形彙整表
+| 案由及承辦單位 | 辦理情形 | 解除列管 | 繼續列管 |
+| --- | --- | --- | --- |
+| 組織規程與編製表異動（資管股）（發言者1，00:05:12） | 資管股：已配合調整系統權限 | | |
+
+一、科長轉知局務會議工作報告及相關注意事項：
+1. 房屋稅科股名調整為「征收股」，請各股配合辦理（科長，00:05:12）。
+2. 各股須於本週五前回報組織規程調整情形（發言者2，00:06:30）。
+
+散會：（待確認）
+"""
 
 
 def _notes_with_two_actions() -> str:
@@ -357,3 +411,195 @@ def test_local_pipeline_speaker_traceability_tripwire_uses_shared_contract():
 
     assert service._validate_cloud_speaker_traceability(without_tag, template)
     assert service._validate_cloud_speaker_traceability(with_tag, template) == []
+
+
+# ---------------------------------------------------------------------------
+# 契約 6（軌 B）：_finalize_record_text 的 cloud/local 模式切分、固定順序與
+# W2 地端提示詞導引（T20260922-1930-01）
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_cloud_mode_is_byte_identical_to_prechange_pipeline():
+    """mode="cloud"（預設）必須與 v4.8.0 的舊後處理逐字元相同，且不套用地端修正。
+
+    「舊後處理」＝ `normalize_unfilled_placeholders(finalize_record(...))`；
+    另以同一份髒紀錄證明雲端輸出不會被地端修正（表格標註、ASR 誤辨字）污染。
+    """
+    service = SummarizationService()
+    template = get_template("section_meeting")
+
+    def _prechange(text: str) -> str:
+        return normalize_unfilled_placeholders(
+            finalize_record(text, protected_terms=english_protected_terms(), template=template),
+            template=template,
+        )
+
+    for record in (FIXTURE_A_RECORD, RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO):
+        expected = _prechange(record)
+        assert service._finalize_record_text(record, template=template, mode="cloud") == expected
+        # 舊呼叫端（位置參數、不傳 mode）行為不變
+        assert service._finalize_record_text(record, template) == expected
+        # 雲端收尾包裝（_finalize_cloud_record_text）亦必須逐字元相同
+        assert service._finalize_cloud_record_text(record, template=template) == expected
+
+    cloud = service._finalize_cloud_record_text(
+        RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO, template=template
+    )
+    cloud_table_lines = [line for line in cloud.splitlines() if line.strip().startswith("|")]
+    assert any("（發言者1，00:05:12）" in line for line in cloud_table_lines)
+    assert "「征收股」" in cloud
+
+
+def test_local_mode_fixes_terms_and_table_tags_but_keeps_body_tags():
+    """mode="local"：術語修正＋表格標註清除都生效；正文句末標註必須原樣保留。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+
+    out = service._finalize_record_text(
+        RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO, template=template, mode="local"
+    )
+
+    assert "征收股" not in out, "可確證的 ASR 同音誤辨不得原樣流入紀錄"
+    assert "「徵收股」" in out
+    table_lines = [line for line in out.splitlines() if line.strip().startswith("|")]
+    assert table_lines, "彙整表不得被整段移除"
+    assert all("（發言者" not in line and "00:0" not in line for line in table_lines), (
+        "四欄彙整表列內不得留下任何出處標註"
+    )
+    assert "（科長，00:05:12）" in out, "正文句末標註是契約要求，不得被清除"
+    assert "（發言者2，00:06:30）" in out
+
+
+def test_local_mode_dedupes_cross_section_items_after_placeholder_normalisation(monkeypatch):
+    """固定順序：佔位符修復必須先於跨節去重，去重嚴格最後一步。"""
+    service = SummarizationService()
+    # 「決議 vs 主席裁示事項」章節對只在 general 生效；section_meeting 依契約停用去重。
+    template = get_template("general")
+
+    from backend.core import text_postprocess as text_postprocess_module
+
+    calls: list[str] = []
+    real_normalize = text_postprocess_module.normalize_unfilled_placeholders
+    real_dedupe = text_postprocess_module.dedupe_cross_section_items
+
+    def _spy_normalize(text, template=None):  # noqa: ANN001
+        calls.append("normalize")
+        return real_normalize(text, template=template)
+
+    def _spy_dedupe(text, template=None):  # noqa: ANN001
+        calls.append("dedupe")
+        return real_dedupe(text, template=template)
+
+    # _finalize_record_text 以延遲 import 取得這兩個成員，故 monkeypatch 模組屬性有效。
+    monkeypatch.setattr(text_postprocess_module, "normalize_unfilled_placeholders", _spy_normalize)
+    monkeypatch.setattr(text_postprocess_module, "dedupe_cross_section_items", _spy_dedupe)
+
+    record = "時間：中華民國（年）年（月）月（日）日\n" + FIXTURE_A_RECORD
+    cloud = service._finalize_record_text(record, template=template)
+    calls.clear()
+    local = service._finalize_record_text(record, template=template, mode="local")
+
+    assert calls == ["normalize", "dedupe"], "去重必須嚴格在佔位符修復之後"
+    assert "（年）年" not in local and "（年）年" not in cloud
+    duplicated = "各相關科室（資管股、系統權限、業務承辦人）"
+    assert cloud.count(duplicated) == 2 and local.count(duplicated) == 1, (
+        "雲端不得去重；地端必須移除跨節重複條目"
+    )
+
+
+def test_record_prompt_tag_placement_guidance_is_local_only():
+    """W2 導引只進地端訊息；雲端訊息與地端訊息的其餘內容必須逐字元相同。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    notes = _notes_with_two_actions()
+    transcript = TRANSCRIPT_LINE
+    marker = SummarizationService.LOCAL_SOURCE_TAG_PLACEMENT_RULE
+
+    cloud_gen = service._build_record_generation_message(notes, transcript, template=template)
+    cloud_ref = service._build_record_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript, template=template
+    )
+    local_gen = service._build_record_generation_message(
+        notes, transcript, template=template, mode="local"
+    )
+    local_ref = service._build_record_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript, template=template, mode="local"
+    )
+
+    assert "來源標註位置" not in cloud_gen and "來源標註位置" not in cloud_ref
+    assert marker in local_gen and marker in local_ref
+    assert marker.count("\n") + 1 <= 3, "導引不得超過 3 行"
+
+    # 地端訊息 = 雲端訊息 + 插入的導引列，其餘一個字都沒動
+    assert local_gen.replace("\n" + marker + "\n", "", 1) == cloud_gen
+    assert local_ref.replace("\n" + marker + "\n", "", 1) == cloud_ref
+
+    # 雲端 wrapper 與未傳 mode 的降級路徑一律不含導引
+    assert marker not in service._build_cloud_summary_message(notes, transcript, template=template)
+    assert marker not in service._build_cloud_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], transcript, template=template
+    )
+    assert marker not in service._build_summary_from_notes_message(notes, template=template)
+    assert marker not in service._build_refinement_message(
+        "草稿", notes, ["缺少區塊：X"], template=template
+    )
+
+    # 未開啟發言來源契約的模板：即使 mode="local" 也與雲端完全相同
+    general = get_template("general")
+    assert service._build_record_generation_message(
+        notes, transcript, template=general, mode="local"
+    ) == service._build_record_generation_message(notes, transcript, template=general)
+
+
+@pytest.mark.asyncio
+async def test_local_pipeline_reapplies_local_normalisation_after_each_refinement(monkeypatch):
+    """地端兩個呼叫點（初稿＋每輪補強）都必須走 mode="local" 後處理。"""
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    notes = _notes_with_two_actions()
+    transcript = TRANSCRIPT_LINE * 200
+    dirty_draft = RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO
+    # 補強輪再吐一次髒紀錄（換一組正文標註），證明補強輪也被重新正規化。
+    dirty_refined = RECORD_WITH_TABLE_TAGS_AND_ASR_TYPO.replace(
+        "（發言者2，00:06:30）", "（發言者3，00:07:00）"
+    )
+    generated_messages: list[str] = []
+
+    async def _fake_generate(engine, prompt, message, **kwargs):  # noqa: ANN001, ARG001
+        generated_messages.append(message)
+        if len(generated_messages) == 1:
+            return notes
+        return dirty_draft if len(generated_messages) == 2 else dirty_refined
+
+    # 直接側錄兩個呼叫點的 mode，證明「初稿」與「補強輪」都走地端後處理。
+    finalize_modes: list[str] = []
+    real_finalize = SummarizationService._finalize_record_text
+
+    def _spy_finalize(summary, template=None, *, mode="cloud"):  # noqa: ANN001
+        finalize_modes.append(mode)
+        return real_finalize(summary, template=template, mode=mode)
+
+    quality = Mock(side_effect=[["彙整表內出現發言來源標註"], [], []])
+    monkeypatch.setattr(service, "_finalize_record_text", _spy_finalize)
+    monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="lmstudio"))
+    monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=128000))
+    monkeypatch.setattr(service, "_generate_with_local_engine", _fake_generate)
+    monkeypatch.setattr(service, "_merge_notes_until_fit", AsyncMock(return_value="MERGED"))
+    monkeypatch.setattr(service, "_validate_summary_quality", quality)
+    monkeypatch.setattr(service, "_validate_cloud_speaker_traceability", lambda *a, **k: [])
+    monkeypatch.setattr(service, "_validate_cloud_date_grounding", lambda *a, **k: [])
+
+    result = await service._summarize_with_local_pipeline(
+        transcript, settings.DEFAULT_SYSTEM_PROMPT, template=template
+    )
+
+    assert len(generated_messages) == 3, "初稿 1 次＋補強 1 輪"
+    assert finalize_modes == ["local", "local"], "初稿與補強輪都必須走 mode='local'"
+    assert quality.call_count == 2
+    assert "征收股" not in result and "「徵收股」" in result
+    table_lines = [line for line in result.splitlines() if line.strip().startswith("|")]
+    assert table_lines
+    assert all("（發言者" not in line and "00:0" not in line for line in table_lines), (
+        "補強輪重吐的表格出處標註必須在收尾時再次清除"
+    )
+    assert "（發言者3，00:07:00）" in result, "正文標註不得連帶被清除"

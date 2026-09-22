@@ -1,7 +1,7 @@
 # T20260922-1930-01-local-record-quality-parity — PLAN（P1 品質波）
 
 - TASK_ID: `T20260922-1930-01-local-record-quality-parity`
-- PLAN_REVISION: 6（rev 1＝v4.8.0；rev 2＝初版 P1；rev 3＝依 attempt-01 十項重寫；rev 4＝依 attempt-02 四項 MF；rev 5＝依 attempt-03 基線縮小範圍；**rev 6＝依 attempt-03 複審三項一句話級 MF（MF-A/B/C）＋NB-B 措辭精確化**）
+- PLAN_REVISION: 5（rev 1＝v4.8.0；rev 2＝初版 P1；rev 3＝依 attempt-01 十項重寫；rev 4＝依 attempt-02 四項 MF；**rev 5＝依 attempt-03 基線實測縮小為「可證、可量測」的最小完整波**）
 - TASK_CLASS: STANDARD｜REVIEW_REQUIRED: YES｜INDEPENDENT_ACCEPTANCE_REQUIRED: YES｜E2E_REQUIRED: YES（真實音檔 ＋ `section_meeting`）
 - 分支：`fix/local-lmstudio-record-quality`
 - 審查：`review/attempt-01/`、`review/attempt-02/`（皆 `PLAN_REVISION_REQUIRED`）
@@ -29,8 +29,7 @@
 
 **主要目標（CORE）**：地端 `section_meeting` 紀錄的**契約一致性與忠實度**，且**可被確定性量測**：
 
-- **CORE-1**：最終紀錄的**彙整表內出處標註 = 0**（基線 13），且**正文出處標註 ≥ 1**（基線 33）。
-  退化防線（明訂）：`body_source_tag_count` < **17**（基線 33 的一半）→ 視為退化，回 Stage 01 重規劃（不得由實作者自行放寬）。
+- **CORE-1**：最終紀錄的**彙整表內出處標註 = 0**（基線 13），且**正文出處標註 > 0**（基線 33，不得退步）。
 - **CORE-2**：可確證的 ASR 同音誤辨不得原樣流入紀錄（`征收股/增收股→徵收股`、`人事總處` 情境、`瑞裏→瑞里`）。
 
 **次要（SUPPORTING）**：
@@ -65,8 +64,6 @@
 - `backend/core/text_postprocess.py` 新增 `strip_source_tags_from_table_rows(text, template) -> tuple[str, int]`：
   只對 `^\s*\|` 開頭的表格列移除 `_SOURCE_TAG_PATTERN` 形式的標註（含其前面的空白／頓號），其餘文字 byte 級不動。
 - 接線：`_finalize_record_text(..., mode="local")`（生成後 `summarization.py:2093`、每輪補強後 `:2128` 共用）。
-- **啟用條件（明訂）**：僅當模板契約本身禁止彙整表標註時才啟用——判定方式為 `template.forbidden_patterns` 中存在
-  標籤含「發言來源標註」者（即 `section_meeting`；`general` 等無此契約者**完全不動表格內容**）。
 - 理由：模板契約已明文禁止、提示詞 2 輪無效、且標註會原樣流入「列管資料」附件（確定性抽取不清洗）。
 - 附帶效益：`_validate_summary_quality` 的 forbidden 問題消失 → 2 輪補強額度留給真正的缺口。
 
@@ -102,18 +99,15 @@
 ### W6（量測儀器，deterministic）
 - 新增 `scripts/e2e/measure_record_quality.py`（路徑依既有 `scripts/e2e/` 慣例，取代 plan rev3 的 `scripts/quality/`）。
 - `--record <md>`（MD 為權威；DOCX 段落合併會失真 → SKIP 並註明）、`--transcript`、`--template`；輸出 JSON：
-  `char_count`、`body_source_tag_count`（**排除表格列與開頭欄位**：`^(時間|地點|主持人|出席人員|紀錄)`，
-  與 `summarization.py:1026-1061` 既有排除同語意）、`table_source_tag_count`、`instruction_item_count`、`tagged_item_ratio`、
+  `char_count`、`body_source_tag_count`、`table_source_tag_count`、`instruction_item_count`、`tagged_item_ratio`、
   `cross_section_duplicate_pairs`、`known_term_fix_hits`、`unsupported_entities`（**觀察值**，不進閘門）。
 - 白名單與樣式與 W3 共用同一份（不得各寫一套）。不改 `run_owned_e2e.py` 的 required 檢查語意。
 
 ### W8（SUPPORTING-1）— runner DOCX 檢查器模板感知
-- `scripts/e2e/run_owned_e2e.py::validate_formal_docx_bytes` 新增 `template_id` 參數（新增模組層對照表
-  `TEMPLATE_REQUIRED_SECTIONS`，目前僅列 `section_meeting`）：
-  - `general`、未指定、**或未列於對照表的其他模板** → **行為 byte 級不變**（沿用 `GENERAL_REQUIRED_SECTIONS`
-    ＋ `_section_has_substance`；其他模板另記一行 log 說明沿用 general 契約，屬已知限制）。
-  - `section_meeting` → 取 `backend/core/templates.py:390-400` `required_section_patterns` 中**章節級**的 4 項
-    （`一、科長轉知`、`二、科長指示及提醒事項`、`案由及承辦單位`、`散會`），以同語意（容忍空白樣式＋其後非空內容）判定。
+- `scripts/e2e/run_owned_e2e.py::validate_formal_docx_bytes` 新增 `template_id` 參數：
+  `general`（含未指定）**行為 byte 級不變**（沿用 `GENERAL_REQUIRED_SECTIONS`＋`_section_has_substance`）；
+  `section_meeting` 改用其必備章節（`一、科長轉知`、`二、科長指示及提醒事項`、`案由及承辦單位`、`散會`，
+  對齊 `backend/core/templates.py:390-400` 的 `required_section_patterns`），同語意判定「章節存在且其後有非空內容」。
 - 測試：`tests/test_owned_e2e_acceptance.py` 新增 2 測試（section_meeting DOCX 不因 general 章節缺失而 FAIL；general 行為不變）。
 
 ### W7（測試與收斂）
@@ -132,7 +126,7 @@ W2／W2b／W3／W5 全部以 `mode="local"` 閘門（雲端呼叫端不傳），
 
 | 判準 | 內容 | 儀器 | 模型 | 未達備案（事先定義） |
 |---|---|---|---|---|
-| CORE-1 | E2E：`table_source_tag_count = 0`（基線 13）**且** `body_source_tag_count ≥ 1`（基線 33；**退化防線 < 17**） | W6 | MoE 35B | 表格為純確定性 → 未達即實作缺陷，修到綠燈；正文 = 0 或 < 17 → **回 Stage 01 重規劃**，不得臨場改規則 |
+| CORE-1 | E2E：`table_source_tag_count = 0`（基線 13）**且** `body_source_tag_count > 0`（基線 33） | W6 | MoE 35B | 表格為純確定性 → 未達即實作缺陷，修到綠燈；正文若為 0 → **回 Stage 01 重規劃**，不得臨場改規則 |
 | CORE-2 | E2E：`known_term_fix_hits` 左側詞命中 = 0；單元測試含正／負案例（含「人事總數為 45 人」不得被改） | W6＋單元測試 | MoE 35B | 補強輪寫回 → 確認補強輪亦走同一 `_finalize_record_text`（設計已覆蓋）；否則修 |
 | SUPPORTING-1 | `--template section_meeting` 生效 ＋ DOCX 正式性 PASS（verdict PASS） | runner | MoE 35B | W8 修到綠燈 |
 | SUPPORTING-2 | W5：fixture A 刪 10、fixture B 刪 0、issues 不增加 | 單元測試 | — | 收緊為僅切除尾端括號後完全相等，不得放寬為模糊比對 |
@@ -154,7 +148,7 @@ W2／W2b／W3／W5 全部以 `mode="local"` 閘門（雲端呼叫端不傳），
 ## 7. 風險與緩解
 | 風險 | 緩解 |
 |---|---|
-| W2b 誤刪正文／動到其他模板 | 只處理 `^\s*\|` 表格列；**僅在模板契約禁止彙整表標註時啟用**（`section_meeting`）；單元測試含「正文標註不動」與「general 表格不動」兩案例 |
+| W2b 誤刪正文 | 只處理 `^\s*\|` 表格列；`templates.py` 契約本就禁止；單元測試含「正文標註不動」案例 |
 | W3 改錯字 | 只收可確證者；`人事總數` 加語境錨定；負案例測試；其餘全部不收 |
 | W5 誤刪合法內容 | 完全相等才判重；標題／佔位欄位不動；期望值寫死（10／0）＋ issues 不增加回歸 |
 | W8 改壞 general | general 走原分支、既有測試不得修改；新增兩測試 |

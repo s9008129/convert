@@ -467,3 +467,268 @@ def finalize_record(summary: str, protected_terms: Optional[set[str]] = None, te
     if has_excessive_english(cleaned):
         log.warning("[品質] 會議紀錄仍含較多英文詞彙，請人工抽查輸出內容")
     return ensure_record_structure(cleaned, template=template)
+
+
+# ---------------------------------------------------------------------------
+# 會議紀錄契約後處理（T20260922-1930-01 軌 A；僅地端路徑套用，雲端輸出不動）
+# 詞彙修正（W3）→ 彙整表出處標註清除（W2b）→ 跨節重複抑制（W5，最後一步）
+# ---------------------------------------------------------------------------
+
+# 發言來源標註樣式；與 SummarizationService._SOURCE_TAG_PATTERN 同式
+# （雲端發言來源絆索與本處表格清理共用同一契約，兩者不得各自漂移）。
+SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
+
+# 只認 Markdown 表格列（行首可縮排的直線符號）；正文行一律不進清理範圍。
+# TABLE_ROW_PATTERN 是「表格列」定義的公開單一來源（2026-09-22）：本檔 W2b 清除器
+# 與 E2E 量測儀器（軌 C）共用同一份定義，且與 section_meeting 的 forbidden_patterns
+# 「彙整表內出現發言來源標註」（`^\|`）語意一致，三處不得各自漂移。
+# `_TABLE_ROW_PATTERN` 保留為相容別名（同一個 compiled pattern 物件）。
+TABLE_ROW_PATTERN = re.compile(r"^\s*\|")
+_TABLE_ROW_PATTERN = TABLE_ROW_PATTERN
+# 移除標註時一併吃掉緊接在前的分隔空白與頓號／逗號／分號，避免留下懸空標點。
+_TABLE_SOURCE_TAG_STRIP_PATTERN = re.compile(
+    r"[ \t\u3000]*[、，,；;]?[ \t\u3000]*(?:" + SOURCE_TAG_PATTERN.pattern + r")"
+)
+# 模板契約禁止彙整表標註的判定片段（section_meeting 的 forbidden label 含此字串）。
+_TABLE_SOURCE_TAG_FORBIDDEN_LABEL = "發言來源標註"
+
+
+def template_forbids_table_source_tags(template) -> bool:
+    """模板契約是否禁止彙整表列出發言來源標註（2026-09-22；W2b）。
+
+    以 `forbidden_patterns` 的標籤判定（不寫死模板 id）：section_meeting 的
+    「彙整表內出現發言來源標註」含此片段；general 等模板沒有這條契約，
+    因此表格內容完全不動。template=None 或缺屬性時一律回 False。
+    """
+    for label, _pattern in getattr(template, "forbidden_patterns", ()) or ():
+        if _TABLE_SOURCE_TAG_FORBIDDEN_LABEL in label:
+            return True
+    return False
+
+
+def strip_source_tags_from_table_rows(text: str, template=None) -> tuple[str, int]:
+    """移除彙整表列的發言來源標註，回傳（清理後文字, 移除的標註數）。
+
+    W2b：模型把出處標註寫進四欄彙整表，違反 section_meeting 的 forbidden 契約，
+    且會原樣流入「列管資料」附件（附件是確定性抽取、不清洗）。提示詞兩輪無效，
+    故以確定性後處理移除。
+
+    僅在模板契約禁止表格標註時啟用（`template_forbids_table_source_tags`），
+    且只動 `^\\s*\\|` 的表格列；正文（含正文句末標註）與其他模板一個字都不改。
+    """
+    if not text or not template_forbids_table_source_tags(template):
+        return text, 0
+
+    lines = text.split("\n")
+    removed = 0
+    for index, line in enumerate(lines):
+        if not TABLE_ROW_PATTERN.match(line):
+            continue
+        cleaned, count = _TABLE_SOURCE_TAG_STRIP_PATTERN.subn("", line)
+        if count:
+            lines[index] = cleaned
+            removed += count
+    if not removed:
+        return text, 0
+    return "\n".join(lines), removed
+
+
+def apply_record_term_fixes(
+    text: str, fixes: tuple[tuple[str, str], ...]
+) -> tuple[str, list[tuple[str, str]]]:
+    """套用紀錄級詞彙修正清單，回傳（修正後文字, 實際命中的規則）。
+
+    W3：形狀同 `apply_official_term_fixes`；`fixes` 由模板宣告
+    （`MeetingTemplate.record_term_fixes`），只回報「實際命中」的規則，
+    未命中的規則不影響文字、也不出現在回傳清單。
+    """
+    if not text or not fixes:
+        return text, []
+    changes: list[tuple[str, str]] = []
+    fixed = text
+    for pattern, replacement in fixes:
+        compiled = re.compile(pattern)
+        if compiled.search(fixed):
+            changes.append((pattern, replacement))
+            fixed = compiled.sub(replacement, fixed)
+    return fixed, changes
+
+
+# ---------------------------------------------------------------------------
+# 跨章節重複抑制（W5；general 紀錄的「決議」節 vs「主席裁示事項」節）
+# ---------------------------------------------------------------------------
+
+# 重複條目在決議節的替代文字；整節皆重複時改寫單行「無」。
+_DEDUPE_REPLACEMENT_LINE = "（與主席裁示事項重複，詳見該節）"
+_DEDUPE_EMPTY_SECTION_LINE = "無"
+_DONOR_SECTION_KEYWORD = "主席裁示事項"
+
+# 決議節標題（可帶編號與冒號）；僅認整行都是標題者，避免誤抓內文提及。
+_DECISIONS_HEADING_PATTERN = re.compile(
+    r"^\s*(?:[一二三四五六七八九十0-9]+[、.]?\s*)?決議\s*[:：]?\s*$"
+)
+# 章節層級標題（界定章節邊界用）。
+_CHAPTER_HEADING_PATTERN = re.compile(
+    r"^\s*[（(]?[一二三四五六七八九十壹貳參肆伍陸柒捌玖拾百0-9０-９]+[）).、．]?\s*"
+    r"(?:主席裁示事項|報告事項|討論事項|臨時動議|散會|其他事項)"
+)
+# 行首編號／項目符號（最多剝三層，如「（一） 1、」）。
+_LEADING_NUMBERING_PATTERN = re.compile(
+    r"^\s*(?:"
+    r"[（(][0-9０-９一二三四五六七八九十百]{1,4}[）)]"
+    r"|[0-9０-９一二三四五六七八九十百]{1,4}[、．.,)）]"
+    r"|[-*・·‧]+"
+    r")\s*"
+)
+# 標點統一（全形→半形；只用於比對，不寫回文件）。
+_DEDUPE_PUNCTUATION_UNIFY_TABLE = str.maketrans(
+    {
+        "（": "(", "）": ")", "：": ":", "，": ",", "、": ",", "；": ";",
+        "。": ".", "！": "!", "？": "?", "「": '"', "」": '"', "［": "[",
+        "］": "]", "【": "[", "】": "]",
+    }
+)
+# 比對前移除所有標點與空白（含全形空白）。
+_DEDUPE_PUNCTUATION_STRIP_PATTERN = re.compile(
+    r"[\s\u3000、，,。．；;：:！!？?「」『』（）()［］【】\[\]｛｝{}·…—–\-~～\"'“”‘’]+"
+)
+# 行尾「（主辦單位…協辦單位…辦理期程…）」metadata 區塊的起點。
+_METADATA_BLOCK_START_PATTERN = re.compile(r"[（(]主辦單位")
+# 佔位欄位行（主辦單位／協辦單位／辦理期程）永不參與判重。
+_METADATA_FIELD_LINE_PATTERN = re.compile(r"^\s*(?:主辦單位|協辦單位|辦理期程)\s*[:：]")
+# 判重門檻：正規化後扣掉固定欄位名與佔位值，仍須留有 >=2 個漢字的實詞。
+_DEDUPE_STOPWORD_PATTERN = re.compile(
+    r"(?:主辦單位|協辦單位|辦理期程|待確認|未定|同上|略|無)+"
+)
+_DEDUPE_SUBSTANTIVE_PATTERN = re.compile(r"[一-鿿]{2,}")
+
+
+def _strip_leading_numbering(line: str) -> str:
+    """去除行首編號／項目符號（最多三層，如「（一） 1、 內容」）。"""
+    text = line.strip()
+    for _ in range(3):
+        stripped = _LEADING_NUMBERING_PATTERN.sub("", text)
+        if stripped == text:
+            break
+        text = stripped
+    return text
+
+
+def _cut_trailing_metadata_block(text: str) -> str:
+    """切除行尾的「（主辦單位…）」metadata 區塊（括號內可再嵌套括號）。"""
+    last_match = None
+    for match in _METADATA_BLOCK_START_PATTERN.finditer(text):
+        last_match = match
+    if last_match is None:
+        return text
+    tail = text[last_match.start():].rstrip()
+    if not tail.endswith(("）", ")")):
+        return text
+    return text[: last_match.start()].rstrip()
+
+
+def _normalize_dedupe_key(line: str) -> str:
+    """判重用的正規化字串（編號→標點統一→去空白→切 metadata→去標點）。"""
+    text = _strip_leading_numbering(line)
+    text = text.translate(_DEDUPE_PUNCTUATION_UNIFY_TABLE)
+    text = re.sub(r"\s+", "", text)
+    text = _cut_trailing_metadata_block(text)
+    return _DEDUPE_PUNCTUATION_STRIP_PATTERN.sub("", text)
+
+
+def _is_dedupe_candidate(line: str) -> bool:
+    """是否為可判重的條目行（標題／佔位欄位／表格列一律排除）。"""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("|"):
+        return False
+    content = _strip_leading_numbering(stripped)
+    if not content:
+        return False
+    # 標題：去編號後以冒號收尾（如「決議：」「一、 組織規程與編制異動：」）。
+    if content.endswith(("：", ":")):
+        return False
+    if _METADATA_FIELD_LINE_PATTERN.match(content):
+        return False
+    normalized = _normalize_dedupe_key(line)
+    residue = _DEDUPE_STOPWORD_PATTERN.sub("", normalized)
+    return bool(_DEDUPE_SUBSTANTIVE_PATTERN.search(residue))
+
+
+def dedupe_cross_section_items(text: str, template=None) -> tuple[str, int]:
+    """抑制「決議」節與「主席裁示事項」節之間的逐條重複（W5）。
+
+    只在 general 紀錄（使用者 13:49 失敗場）發生：同一批條目同時寫進決議與
+    主席裁示事項。判準極窄——正規化（去編號→標點統一→去空白→切除行尾
+    「（主辦單位…）」metadata→去標點）後**完全相等**、留有實詞、且非標題／
+    非佔位欄位，才算重複；保留 metadata 較完整的主席裁示（donor），決議節的
+    重複條目改寫為「（與主席裁示事項重複，詳見該節）」，整節皆重複則寫「無」。
+
+    防禦性邊界：沒有「主席裁示事項」節、沒有「決議」節即原樣回傳；
+    作用域依 plan §3 W5 限縮為 general-only（2026-09-22 稽核修正）——只有
+    template=None（fixture 直接呼叫）或 template.id == "general" 才處理，
+    其餘模板（section_meeting／isms_monthly／procurement_evaluation 等）一律
+    原樣回傳，不把未核准的模板語意納入改寫面。必須是
+    `_finalize_record_text` 的最後一步。
+    """
+    if not text:
+        return text, 0
+    if template is not None and getattr(template, "id", None) != "general":
+        return text, 0
+
+    lines = text.split("\n")
+    donor_index = None
+    for index, line in enumerate(lines):
+        if _DONOR_SECTION_KEYWORD in line and _CHAPTER_HEADING_PATTERN.match(line):
+            donor_index = index
+            break
+    if donor_index is None:
+        return text, 0
+
+    target_index = None
+    for index in range(donor_index):
+        if _DECISIONS_HEADING_PATTERN.match(lines[index]):
+            target_index = index
+            break
+    if target_index is None:
+        return text, 0
+
+    donor_end = len(lines)
+    for index in range(donor_index + 1, len(lines)):
+        if _CHAPTER_HEADING_PATTERN.match(lines[index]) and _DONOR_SECTION_KEYWORD not in lines[index]:
+            donor_end = index
+            break
+
+    donor_keys = {
+        _normalize_dedupe_key(line)
+        for line in lines[donor_index + 1: donor_end]
+        if _is_dedupe_candidate(line)
+    }
+    donor_keys.discard("")
+    if not donor_keys:
+        return text, 0
+
+    item_indexes = [
+        index
+        for index in range(target_index + 1, donor_index)
+        if _is_dedupe_candidate(lines[index])
+    ]
+    removed_indexes = [
+        index
+        for index in item_indexes
+        if _normalize_dedupe_key(lines[index]) in donor_keys
+    ]
+    if not removed_indexes:
+        return text, 0
+
+    new_lines = list(lines)
+    for index in removed_indexes:
+        new_lines[index] = _DEDUPE_REPLACEMENT_LINE
+    if len(removed_indexes) == len(item_indexes):
+        start, end = min(removed_indexes), max(removed_indexes)
+        removed_set = set(removed_indexes)
+        if all(index in removed_set for index in range(start, end + 1)):
+            # 整節皆為重複：以單行「無」取代，不留一排指向同一節的提示。
+            new_lines[start: end + 1] = [_DEDUPE_EMPTY_SECTION_LINE]
+
+    log.info("[品質] 跨節重複抑制：移除決議節重複條目 {} 條", len(removed_indexes))
+    return "\n".join(new_lines), len(removed_indexes)

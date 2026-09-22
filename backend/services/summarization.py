@@ -121,6 +121,19 @@ class SummarizationService:
         "與彙整表內出現「發言者N」。"
     )
 
+    # 地端專用的來源標註位置導引（W2；T20260922-1930-01）。
+    # 背景（實測根因）：地端模型把「（發言者N，HH:MM:SS）」寫進四欄的
+    # 「決議事項辦理情形彙整表」列內，違反 section_meeting 模板契約，且會原樣
+    # 流入列管資料附件（基線 13/13 列都帶標註）；既有提示詞只說「不得在彙整表
+    # 內出現發言者N」，少了「標註只能寫在正文句末」的位置規範與正例。
+    # 僅在 mode="local" 時注入；雲端呼叫端不傳 mode ⇒ 雲端提示詞 byte 級不變。
+    LOCAL_SOURCE_TAG_PLACEMENT_RULE = (
+        "- 來源標註位置（強制）：時間戳來源標註「（發言者1，00:05:12）」只能寫在正文句末，"
+        "如「各股配合辦理（發言者1，00:05:12）。」\n"
+        "- 四欄的「決議事項辦理情形彙整表」內不得出現任何來源標註；表格列只寫案由、"
+        "承辦單位與辦理情形（列內出現「發言者1」或時間戳即為格式錯誤）"
+    )
+
     # 來源標註偵測樣式：句末「（…HH:MM(:SS)…）」形式，供確定性檢查使用；
     # 同時涵蓋「（發言者1，00:00:00）」與「（科長，00:00:00）」兩種寫法。
     # 補強訊息列出具體遺漏待辦時的最大顯示數量（避免提示詞被長清單淹沒）
@@ -1256,20 +1269,33 @@ class SummarizationService:
 
     @classmethod
     def _speaker_traceability_rule(cls, template: Optional[MeetingTemplate]) -> str:
-        """雲端生成用的發言來源標註規則行（模板未開啟時回空字串）。
+        """發言來源標註規則行（模板未開啟時回空字串）。
 
-        僅在模板明確開啟 speaker_traceability 時注入；地端生成訊息完全不呼叫
-        本方法，確保地端輸出行為不變。
+        雲端與地端（v4.8.0 起）共用同一份規則；是否注入只由
+        template.speaker_traceability 決定。地端生成／補強訊息另於 mode="local"
+        時追加來源標註位置導引（LOCAL_SOURCE_TAG_PLACEMENT_RULE），雲端不變。
         """
         if template is not None and template.speaker_traceability:
             return cls.CLOUD_SPEAKER_TRACEABILITY_RULE
         return ""
+
+    @classmethod
+    def _local_tag_placement_rule(cls, mode: str, speaker_rule: str) -> str:
+        """地端專用的來源標註位置導引列（W2）；雲端（mode 非 local）回空字串。
+
+        只在發言來源標註契約已注入（speaker_rule 非空）時追加；前後各補一個
+        換行，讓導引自成完整行，不會黏在既有規則行或「萃取筆記：」標籤上。
+        """
+        if mode != "local" or not speaker_rule:
+            return ""
+        return "\n" + cls.LOCAL_SOURCE_TAG_PLACEMENT_RULE + "\n"
 
     def _build_record_generation_message(
         self,
         extracted_notes: str,
         transcript: Optional[str] = None,
         template: Optional[MeetingTemplate] = None,
+        mode: str = "cloud",
     ) -> str:
         """最終會議記錄生成訊息（地端與雲端共用；v4.8.0）。
 
@@ -1277,12 +1303,16 @@ class SummarizationService:
         與雲端既有行為同構；transcript 為 None／空字串時＝只餵筆記，是地端在
         context 餘裕不足時的降級路徑（內容與 v4.7.4 的地端路徑相同）。
 
+        mode="local"（僅地端呼叫端傳入）追加來源標註位置導引；預設 "cloud" 的
+        輸出與 v4.8.0 完全相同。
+
         背景（實測對照雲端 Gemini 基準）：雲端生成階段同時看到逐字稿，各單位立場、
         理由、數據、案例與專有名詞都能回原文核對；地端原本只看到被整併壓縮過的
         筆記，在生成之前就已永久丟掉未進筆記的細節。
         """
         has_transcript = bool(transcript and transcript.strip())
         speaker_rule = self._speaker_traceability_rule(template)
+        tag_placement_rule = self._local_tag_placement_rule(mode, speaker_rule)
         detail_rule = (
             "- 原始逐字稿是細節來源：各單位意見、決議與裁示須保留具體理由、數據、"
             "案例、統一口徑與執行方式，嚴禁把多句實質討論壓縮成一句籠統敘述\n"
@@ -1300,7 +1330,7 @@ class SummarizationService:
 - 只輸出最終 Markdown，不要附加說明
 - 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何  thinking / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
 {self.RECORD_DATE_GROUNDING_RULE}
-{speaker_rule}萃取筆記：
+{speaker_rule}{tag_placement_rule}萃取筆記：
 {extracted_notes}{transcript_block}"""
 
     def _build_summary_from_notes_message(
@@ -1318,15 +1348,20 @@ class SummarizationService:
         issues: list[str],
         transcript: Optional[str] = None,
         template: Optional[MeetingTemplate] = None,
+        mode: str = "cloud",
     ) -> str:
         """摘要補強訊息（地端與雲端共用；v4.8.0）。
 
         補強的目的是補回缺漏的細節；沒有逐字稿的補強只能就筆記改寫措辭
         （雲端已於 v4.3.3 用逐字稿解決同一問題，地端 v4.8.0 對齊）。
         transcript 為 None／空字串時即為過去地端／雲端的筆記限定補強。
+
+        mode="local"（僅地端呼叫端傳入）追加來源標註位置導引；預設 "cloud" 的
+        輸出與 v4.8.0 完全相同。
         """
         has_transcript = bool(transcript and transcript.strip())
         speaker_rule = self._speaker_traceability_rule(template)
+        tag_placement_rule = self._local_tag_placement_rule(mode, speaker_rule)
         transcript_block = (
             f"\n原始逐字稿（補充細節時以此為準）：\n{transcript}" if has_transcript else ""
         )
@@ -1348,7 +1383,7 @@ class SummarizationService:
 - 不要輸出  thinking、<thought>、<details>、XML/HTML 標籤或 code fence
 - 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{self._template_generation_extra(template)}
 {self.RECORD_DATE_GROUNDING_RULE}
-{speaker_rule}{transcript_block}"""
+{speaker_rule}{tag_placement_rule}{transcript_block}"""
 
     def _build_refinement_message(
         self,
@@ -1631,11 +1666,18 @@ class SummarizationService:
         context_window: Optional[int],
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """最終生成訊息：context 夠就附逐字稿（雙輸入），不夠就退回只餵筆記。"""
-        notes_only = self._build_record_generation_message(notes, None, template=template)
+        """最終生成訊息：context 夠就附逐字稿（雙輸入），不夠就退回只餵筆記。
+
+        本路徑只服務地端流程，兩條分支都帶 mode="local"（W2 來源標註位置導引）。
+        """
+        notes_only = self._build_record_generation_message(
+            notes, None, template=template, mode="local"
+        )
         if not settings.LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION or not transcript.strip():
             return notes_only
-        dual = self._build_record_generation_message(notes, transcript, template=template)
+        dual = self._build_record_generation_message(
+            notes, transcript, template=template, mode="local"
+        )
         if self._final_message_fits(system_prompt, dual, context_window):
             return dual
         log.warning(
@@ -1656,14 +1698,17 @@ class SummarizationService:
         context_window: Optional[int],
         template: Optional[MeetingTemplate] = None,
     ) -> str:
-        """補強訊息：context 夠就附逐字稿（才能回原文補細節），不夠就退回只餵筆記。"""
+        """補強訊息：context 夠就附逐字稿（才能回原文補細節），不夠就退回只餵筆記。
+
+        本路徑只服務地端流程，兩條分支都帶 mode="local"（W2 來源標註位置導引）。
+        """
         notes_only = self._build_record_refinement_message(
-            current_summary, notes, issues, None, template=template
+            current_summary, notes, issues, None, template=template, mode="local"
         )
         if not settings.LOCAL_LLM_TRANSCRIPT_IN_FINAL_GENERATION or not transcript.strip():
             return notes_only
         dual = self._build_record_refinement_message(
-            current_summary, notes, issues, transcript, template=template
+            current_summary, notes, issues, transcript, template=template, mode="local"
         )
         if self._final_message_fits(system_prompt, dual, context_window):
             return dual
@@ -2090,7 +2135,9 @@ class SummarizationService:
         )
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
-        summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
+        summary = self._finalize_record_text(
+            self._clean_ollama_output(summary), template=template, mode="local"
+        )
 
         # v4.8.0：地端套用與雲端相同的紀錄契約——動態長度閘門（依逐字稿規模）、
         # 發言來源標註絆索、年份依據絆索。三者都是確定性檢查，不靠第二個 LLM 判定。
@@ -2125,7 +2172,11 @@ class SummarizationService:
                 context_window_tokens=context_tokens,
                 lmstudio_selection=lmstudio_selection,
             )
-            summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
+            # 每一輪補強都必須走同一條地端後處理（mode="local"），否則補強輪會把
+            # 已清掉的表格出處標註與 ASR 誤辨字再寫回來。
+            summary = self._finalize_record_text(
+                self._clean_ollama_output(summary), template=template, mode="local"
+            )
             issues = self._validate_summary_quality(
                 summary, merged_notes, min_chars=min_chars, template=template
             )
@@ -2154,13 +2205,29 @@ class SummarizationService:
         return summary
 
     @staticmethod
-    def _finalize_record_text(summary: str, template: Optional[MeetingTemplate] = None) -> str:
+    def _finalize_record_text(
+        summary: str,
+        template: Optional[MeetingTemplate] = None,
+        *,
+        mode: str = "cloud",
+    ) -> str:
         """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。
 
         v4.8.0：加入範本骨架佔位符修復（原先只有雲端後處理有這一道）。
         實測地端紀錄的未填佔位符數量是雲端的 3 倍以上（27 vs 14），並出現空白
         欄位與「（發言者1）」洩漏到開頭欄位；這些都是模型照抄提示詞骨架造成的
         格式債，必須用確定性後處理收斂，不能留給使用者手動修。
+
+        T20260922-1930-01（P1 品質波）：`mode` 區分兩條路徑，順序固定不得互換。
+
+        - `mode="cloud"`（預設）：與 v4.8.0 完全相同
+          （`finalize_record` → `normalize_unfilled_placeholders`），雲端輸出 byte 級不變。
+        - `mode="local"`：地端紀錄契約 —— `finalize_record` → 術語修正
+          （`apply_record_term_fixes`）→ 表格出處標註清除
+          （`strip_source_tags_from_table_rows`）→ 佔位符修復
+          （`normalize_unfilled_placeholders`）→ 跨節重複抑制
+          （`dedupe_cross_section_items`，**嚴格最後一步**；提前去重會被後續
+          改寫破壞「切除尾端括號後完全相等」的判重前提）。
         """
         from backend.core.glossary import english_protected_terms
         from backend.core.text_postprocess import finalize_record, normalize_unfilled_placeholders
@@ -2169,10 +2236,32 @@ class SummarizationService:
             protected = english_protected_terms()
         except Exception:  # noqa: BLE001
             protected = set()
-        return normalize_unfilled_placeholders(
-            finalize_record(summary, protected_terms=protected, template=template),
-            template=template,
+        text = finalize_record(summary, protected_terms=protected, template=template)
+        if mode != "local":
+            return normalize_unfilled_placeholders(text, template=template)
+
+        # 地端專屬階段（軌 A 介面，T20260922-1930-01）；延遲 import 讓雲端路徑
+        # 完全不依賴這些成員，任何一項缺席都不影響雲端輸出。
+        from backend.core.text_postprocess import (
+            apply_record_term_fixes,
+            dedupe_cross_section_items,
+            strip_source_tags_from_table_rows,
         )
+
+        term_fixes = getattr(template, "record_term_fixes", ()) if template is not None else ()
+        text, applied_fixes = apply_record_term_fixes(text, term_fixes)
+        text, stripped_tags = strip_source_tags_from_table_rows(text, template)
+        text = normalize_unfilled_placeholders(text, template=template)
+        text, deduped_items = dedupe_cross_section_items(text, template)
+        if applied_fixes or stripped_tags or deduped_items:
+            log.info(
+                "[品質] 地端紀錄後處理：術語修正 {} 處、表格出處標註移除 {} 處、"
+                "跨節重複移除 {} 條",
+                len(applied_fixes),
+                stripped_tags,
+                deduped_items,
+            )
+        return text
 
     def _finalize_cloud_record_text(
         self, summary: str, template: Optional[MeetingTemplate] = None

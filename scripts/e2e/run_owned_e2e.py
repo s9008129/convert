@@ -94,15 +94,42 @@ FALLBACK_DOCX_MARKERS = (
     "錯誤訊息",
 )
 GENERAL_REQUIRED_SECTIONS = ("一、報告事項", "二、討論事項", "決議", "三、主席裁示事項")
+# 模板感知的 DOCX 正式性檢查常數（2026-09-22 v4.8.1，W8）：
+# - 只列「章節契約與 general 不同」的模板。``general``、未指定、或**未列於本表**
+#   的其他模板一律沿用 ``GENERAL_REQUIRED_SECTIONS``（行為與修正前 byte 級相同；
+#   未列表的模板另印一行 log 說明沿用 general 契約，屬已知限制）。
+# - section_meeting 的 4 個章節級項目取自 backend/core/templates.py
+#   （``_SECTION_MEETING_TEMPLATE`` 的 RecordSectionSpec.presence_pattern／
+#   docx_section_pattern 章節白名單），避免 runner 寫死臆測字面。
+TEMPLATE_REQUIRED_SECTIONS = {
+    "section_meeting": (
+        "一、科長轉知",
+        "二、科長指示及提醒事項",
+        "案由及承辦單位",
+        "散會",
+    ),
+}
+GENERAL_TEMPLATE_ID = "general"
 # 必要章節的比對樣式（2026-09-22 v4.8.0 修正）：
 # 產品契約（backend/core/templates.py 的 required_section_patterns）以容忍空白的樣式
 # 驗證章節，例如 ``一、\s*報告事項``；模型輸出「一、 報告事項：」這種頓號後帶空白的
 # 寫法是合法輸出路徑。舊版 runner 以字面子字串比對，會把合法紀錄誤判為「缺少章節
 # 內容」（實測 attempt-01 的四條 section failure 全部由此而來），因此改為同語意樣式。
-REQUIRED_SECTION_PATTERNS = tuple(
-    (label, re.compile(r"、\s*".join(re.escape(part) for part in label.split("、"))))
-    for label in GENERAL_REQUIRED_SECTIONS
-)
+def _derive_section_patterns(sections: tuple) -> tuple:
+    """由章節字面推導容忍空白樣式（與產品模板契約同語意）。"""
+    return tuple(
+        (label, re.compile(r"、\s*".join(re.escape(part) for part in label.split("、"))))
+        for label in sections
+    )
+
+
+REQUIRED_SECTION_PATTERNS = _derive_section_patterns(GENERAL_REQUIRED_SECTIONS)
+TEMPLATE_REQUIRED_SECTION_PATTERNS = {
+    template_id: _derive_section_patterns(sections)
+    for template_id, sections in TEMPLATE_REQUIRED_SECTIONS.items()
+}
+
+
 UPLOAD_SUCCESS_PATTERN = re.compile(
     r"檔案上傳成功:\s*(?P<original_filename>.+?)\s*->\s*(?P<stored_filename>\S+),"
     r"\s*任務ID:\s*(?P<task_id>\S+)"
@@ -503,13 +530,17 @@ def extract_docx_text(docx_bytes: bytes) -> str:
     return html.unescape("".join(runs))
 
 
-def _section_has_substance(text: str, pattern: str) -> bool:
+def _section_has_substance(text: str, pattern: str, section_patterns=None) -> bool:
     """必要 section pattern 之後、到下一個必要 section 之間需有非空內容。
 
     v4.8.0（2026-09-22）：比對改走 ``REQUIRED_SECTION_PATTERNS`` 的容忍空白樣式，
     與產品模板契約同語意（見該常數註解）。
+    v4.8.1（W8）：``section_patterns`` 可傳入模板專屬的章節樣式集
+    （``TEMPLATE_REQUIRED_SECTION_PATTERNS``）；預設維持 general 樣式集，
+    故 general／未指定模板的行為不變。
     """
-    own_pattern = dict(REQUIRED_SECTION_PATTERNS).get(pattern)
+    patterns = REQUIRED_SECTION_PATTERNS if section_patterns is None else section_patterns
+    own_pattern = dict(patterns).get(pattern)
     if own_pattern is None:
         own_pattern = re.compile(re.escape(pattern))
     match = own_pattern.search(text)
@@ -517,7 +548,7 @@ def _section_has_substance(text: str, pattern: str) -> bool:
         return False
     rest = text[match.end():]
     end = len(rest)
-    for other, other_pattern in REQUIRED_SECTION_PATTERNS:
+    for other, other_pattern in patterns:
         if other == pattern:
             continue
         other_match = other_pattern.search(rest)
@@ -526,8 +557,17 @@ def _section_has_substance(text: str, pattern: str) -> bool:
     return bool(rest[:end].strip())
 
 
-def validate_formal_docx_bytes(docx_bytes: bytes, content_disposition: Optional[str]) -> list:
-    """CM-01 #3：Content-Disposition 正式 label + OOZIP header + OOXML fallback 拒絕。"""
+def validate_formal_docx_bytes(
+    docx_bytes: bytes, content_disposition: Optional[str], template_id: Optional[str] = None
+) -> list:
+    """CM-01 #3：Content-Disposition 正式 label + OOZIP header + OOXML fallback 拒絕。
+
+    v4.8.1（W8）：``template_id`` 決定必要章節契約——列於 ``TEMPLATE_REQUIRED_SECTIONS``
+    的模板（目前僅 ``section_meeting``）以該模板章節判定；``general``／``None``／未列表的
+    模板沿用 ``GENERAL_REQUIRED_SECTIONS``（行為 byte 級不變）。修因：驗收場若用
+    ``--template section_meeting``，舊版 runner 寫死 general 章節，實際是完整科務會議
+    紀錄的 DOCX 永遠被誤判 FAIL（attempt-03 baseline）。
+    """
     failures = []
     disposition = content_disposition or ""
     if not disposition:
@@ -561,9 +601,28 @@ def validate_formal_docx_bytes(docx_bytes: bytes, content_disposition: Optional[
         )
     if FORMAL_LABEL not in text:
         failures.append(f"DOCX OOXML 缺少 formal title「{FORMAL_LABEL}」")
-    for section in GENERAL_REQUIRED_SECTIONS:
-        if not _section_has_substance(text, section):
-            failures.append(f"DOCX OOXML 的 general 模板 section「{section}」缺少非空後續內容")
+    if template_id in TEMPLATE_REQUIRED_SECTIONS:
+        required_sections = TEMPLATE_REQUIRED_SECTIONS[template_id]
+        section_patterns = TEMPLATE_REQUIRED_SECTION_PATTERNS[template_id]
+    else:
+        required_sections = GENERAL_REQUIRED_SECTIONS
+        section_patterns = REQUIRED_SECTION_PATTERNS
+        if template_id and template_id != GENERAL_TEMPLATE_ID:
+            # 已知限制（plan rev6 W8）：未建章的模板沒有專屬章節契約，
+            # 沿用 general 契約判定；只記錄一行，不改變行為。
+            print(
+                f"[WARN] DOCX 正式性檢查：模板 {template_id!r} 未列於 TEMPLATE_REQUIRED_SECTIONS，"
+                "沿用 general 章節契約（已知限制）",
+                file=sys.stderr,
+            )
+    for section in required_sections:
+        if not _section_has_substance(text, section, section_patterns):
+            if template_id in TEMPLATE_REQUIRED_SECTIONS:
+                failures.append(
+                    f"DOCX OOXML 的 {template_id} 模板 section「{section}」缺少非空後續內容"
+                )
+            else:
+                failures.append(f"DOCX OOXML 的 general 模板 section「{section}」缺少非空後續內容")
     return failures
 
 
@@ -859,7 +918,7 @@ def run_full_e2e(
 
     # ---------- stage 5：formal DOCX 驗收（CM-01 #3，API/browser 共用）----------
     if checks.get("docx_downloaded"):
-        docx_failures = validate_formal_docx_bytes(docx_bytes, docx_disposition)
+        docx_failures = validate_formal_docx_bytes(docx_bytes, docx_disposition, meeting_template)
         if docx_failures:
             failure_reasons.extend(docx_failures)
         else:

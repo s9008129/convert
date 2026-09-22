@@ -169,6 +169,10 @@ class MeetingTemplate:
     speaker_traceability: bool = False
     # 表單式 DOCX 版面（v4.6.0）：None 表示採一般公文段落式渲染
     form_layout: Optional[FormLayoutSpec] = None
+    # 紀錄級確定性詞彙修正（T20260922-1930-01；2026-09-22）：地端最終紀錄套用的
+    # (regex, 取代字串) 清單，由 text_postprocess.apply_record_term_fixes 執行。
+    # 預設空 tuple ⇒ 其他模板行為完全不變（只有 section_meeting 宣告本波規則）。
+    record_term_fixes: tuple[tuple[str, str], ...] = ()
 
     def resolve_system_prompt(self) -> str:
         """取得系統提示詞；general 延遲讀取設定值，env 覆寫仍生效。"""
@@ -465,6 +469,9 @@ _SECTION_MEETING_TEMPLATE = MeetingTemplate(
     ),
     glossary_terms=section_meeting.SECTION_MEETING_GLOSSARY_TERMS,
     glossary_corrections=section_meeting.SECTION_MEETING_GLOSSARY_CORRECTIONS,
+    # 地端紀錄級確定性修正（W3）：與上面的 glossary_corrections（逐字稿校正層，
+    # 雲端共用）分離，只在最終紀錄套用。
+    record_term_fixes=section_meeting.SECTION_MEETING_RECORD_TERM_FIXES,
     result_title="# 科務會議紀錄",
     attachment=AttachmentSpec(
         label="列管資料",

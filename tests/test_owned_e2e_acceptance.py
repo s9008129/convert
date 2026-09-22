@@ -1118,7 +1118,10 @@ def _template_flow(tmp_path, *, task_template_id):
         upload_json=_upload_json(),
         task_json={**_default_task_json(), "template_id": task_template_id},
         transcript_response=_transcript_response(),
-        docx_response=_docx_response(),
+        # W8 後 DOCX 正式性檢查為模板感知：section_meeting 場次的 fixture 必須是
+        # 該模板的真實形狀（4 個模板章節），否則 nominal flow 會因 fixture 與
+        # 場景不一致而 FAIL（此非產品缺陷）。
+        docx_response=_docx_response(docx_bytes=_section_meeting_docx_bytes()),
         backend_log_path=flow["data_dir"].parent / "e2e-artifacts" / "backend.log",
         uploads_dir=flow["data_dir"] / "uploads",
         metrics_lines=[METRICS_OK_LINE],
@@ -1173,4 +1176,86 @@ def test_template_mismatch_must_fail_verdict(monkeypatch, capsys, tmp_path):
     )
     assert _reasons_match(result, ("模板未生效", "meeting_template")), (
         f"FAIL 原因必須指向模板不一致，實際：{_failure_reasons(result)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W8（plan rev6）：DOCX 正式性檢查模板感知（section_meeting 不再被 general 章節誤殺）
+# ---------------------------------------------------------------------------
+
+FORMAL_DISPOSITION = (
+    "attachment; filename*=utf-8''20260922184230_%E6%9C%83%E8%AD%B0%E7%B4%80%E9%8C%84.docx"
+)
+
+
+def _section_meeting_docx_bytes() -> bytes:
+    """合法 section_meeting 紀錄：具 4 個模板章節、無 general 章節。"""
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("0903 科務會議紀錄", level=1)
+    doc.add_paragraph("時間：中華民國115年9月3日")
+    doc.add_paragraph("主持人：科長")
+    doc.add_paragraph("決議事項：")
+    doc.add_paragraph("案由及承辦單位：組織異動相關系統權限調整（科長，00:05:36）")
+    doc.add_paragraph("一、科長轉知局務會議工作報告及相關注意事項：")
+    doc.add_paragraph("1. 土地稅科分拆為地價稅科與土地增值稅科。（科長，00:05:36）")
+    doc.add_paragraph("二、科長指示及提醒事項：")
+    doc.add_paragraph("1. 全體同仁設定郵件為文字模式。（科長，00:30:33）")
+    doc.add_paragraph("散會：下午五時三十分。")
+    return _docx_bytes(doc)
+
+
+def _general_less_docx_bytes() -> bytes:
+    """含正式標題、但完全沒有 general 4 章節的合成 DOCX。"""
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("0903 科務會議紀錄", level=1)
+    doc.add_paragraph("時間：中華民國115年9月3日")
+    doc.add_paragraph("案由及承辦單位：組織異動調整")
+    doc.add_paragraph("散會：下午五時三十分。")
+    return _docx_bytes(doc)
+
+
+GENERAL_SECTION_FAILURE_TEMPLATE = "DOCX OOXML 的 general 模板 section「{}」缺少非空後續內容"
+
+
+def test_section_meeting_docx_passes_template_sections_without_general_sections():
+    """section_meeting 完整紀錄（無 general 章節）→ 模板感知檢查必須 PASS。
+
+    attempt-03 基線：runner 寫死 general 章節，導致完整科務會議紀錄 DOCX 永遠
+    被判 FAIL，`--template section_meeting` 場次不可能 PASS（plan W8）。
+    """
+    failures = runner.validate_formal_docx_bytes(
+        _section_meeting_docx_bytes(), FORMAL_DISPOSITION, template_id="section_meeting"
+    )
+
+    assert failures == [], f"section_meeting 4 章節齊備時不得因缺 general 章節被判失敗：{failures}"
+
+
+def test_general_and_unspecified_template_keep_exact_previous_behaviour(capsys):
+    """general／None／未列表模板：失敗字串與修正前逐字元相同（不得被 W8 改壞）。"""
+    docx_bytes = _general_less_docx_bytes()
+    expected = [
+        GENERAL_SECTION_FAILURE_TEMPLATE.format(section)
+        for section in runner.GENERAL_REQUIRED_SECTIONS
+    ]
+
+    failures_none = runner.validate_formal_docx_bytes(docx_bytes, FORMAL_DISPOSITION)
+    failures_general = runner.validate_formal_docx_bytes(
+        docx_bytes, FORMAL_DISPOSITION, template_id="general"
+    )
+    failures_unlisted = runner.validate_formal_docx_bytes(
+        docx_bytes, FORMAL_DISPOSITION, template_id="procurement_evaluation"
+    )
+    captured = capsys.readouterr()
+
+    assert failures_none == expected, f"未指定模板行為必須不變：{failures_none}"
+    assert failures_general == expected, f"general 行為必須不變：{failures_general}"
+    assert failures_unlisted == expected, (
+        f"未列表模板沿用 general 契約（現行行為不變）：{failures_unlisted}"
+    )
+    assert "[WARN]" in captured.err and "procurement_evaluation" in captured.err, (
+        "未列表模板必須另記一行 log 說明沿用 general 契約（已知限制）"
     )
