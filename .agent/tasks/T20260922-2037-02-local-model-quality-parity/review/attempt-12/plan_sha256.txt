@@ -1,0 +1,2 @@
+a7ea4be6a06c30abd9bb68fd51c46c525e1da1ddec52cf6e45bdc0d3ac3a35fb  .agent/tasks/T20260922-2037-02-local-model-quality-parity/plan.md
+# measured at the line above; final rev15 hash confirmed after user correction (interim write state d40cc16a... not used)

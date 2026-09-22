@@ -1,7 +1,7 @@
-# T20260922-2037-02-local-model-quality-parity — PLAN（P4 波：雲端基線與模型無關品質槓桿；rev 15＝attempt-11 收斂）
+# T20260922-2037-02-local-model-quality-parity — PLAN（P4 波：雲端基線與模型無關品質槓桿）
 
 - TASK_ID: `T20260922-2037-02-local-model-quality-parity`
-- PLAN_REVISION: 15
+- PLAN_REVISION: 14
   - rev 1＝品質波開場：27B／MoE 實測與根因量測。
   - rev 2＝把「模型無關的可查核性修復」定為本波 CORE，其餘槓桿列為後續波。
   - rev 3＝依獨立驗收（`e2e/attempt-B2-27b-fix/verify_independent.md`）更正 CORE-1 的**閘門量尺**：
@@ -89,15 +89,6 @@
     完成五場同尺對照（B2／B1／C1／D1／C5：雲端不是天花板、Gemma 4 31B 可重現落後、量尺看不到文體維度、
     雲端標註全退化 → R26–R29）；②使用者要求「機制必須模型無關」，且 macOS（LM Studio）與 Windows 11＋
     RTX 4090（Ollama）都要一體適用；③研究文件 §12（P4 定稿）＋跨 OS 稽核已完成。`[DECIDED]`
-  - rev 15＝依 `review/attempt-11`（gate＝`PLAN_REVISION_REQUIRED`，綁定 rev 14／sha256 `a3acc7d7…`）逐條收斂
-    **F1／F2／F3／F4／B-F1**＋加註 **B-F2**：①F1＝§9.3 驗收改「**釘版量尺**（`coverage-1.0.0`＋checklist sha256
-    `cf012d1f…`）＋**逐條事實**升為主要歸因閘門＋聚合門檻降列觀察值（≥2 次取中位數）＋未達不得放寬／擴類／改 denominator＋
-    `LOCAL_FIDELITY_TRIPWIRES=false` 隔離＋P4-G 新尺不得回溯套用」；②F2＝§9.4 驗收補「雲端 `observe` 預設 byte 不變（I-2）／
-    `enforce` 不開啟」＋「輪數 >1 或 wall 退步 >25%＝未達」，成本接受改記 **planner 決策**（「品質優先於時間」查無來源、不引用）；
-    ③F4／F3＝§9.5／§9.6 驗收拆「本機可執行（fake／payload 級）」＋「Windows／Ollama 實機 gated `[UNVERIFIED]`」兩層；
-    ④B-F1＝§9 四處「16」計數更正為 14（`--template` 時 15）。
-    **刻意未收（附理由）**：**B-F3**（研究文件 §12.9「8192／16384」精確化——審查者自標「可不修」，且屬研究文件修訂）、
-    **設計檔收入 repo**（本輪任務僅准改 `plan.md`；改以 §9 開頭註記＋落地時內化收斂，見 B-F2 條目）。`[DECIDED]`
 - **修訂與證據 append-only 原則**：`plan.md` 只由 Planner 遞增修訂；`review/attempt-NN/*` 與
   `e2e/attempt-*/*` 一律新增、不得就地覆寫（B2 的 `record_quality.json` 曾在儀器微調時被就地覆寫，
   已於 §6.2 記錄並以 `metric_version` 收斂）。
@@ -677,9 +668,6 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
 > 閘門（沿用標頭，不另發明格式）：`TASK_CLASS: STANDARD｜REVIEW_REQUIRED: YES｜INDEPENDENT_ACCEPTANCE_REQUIRED: YES｜E2E_REQUIRED: YES`。
 > 本波含語意變更（runner 閘門語意、回退路徑）→ 依 `AGENTS.md` §6 至少獨立審查＋獨立驗收；
 > **P4-D 的 `required` 升級本身**是後續閘門（≥3 場觀察＋獨立審查），不在本波自動發生。
-> **設計細節檔位置（rev 15，B-F2）**：四份設計細節僅存 `/tmp`（**非 repo 產物**、不持久；`research/` 現無 P4 目錄）——
-> 落地時須把需要的決策摘要**內化**至 `plan.md`／`handoff.md`，不得依賴 `/tmp` 檔存續；W 編號雙軌沿用 rev 14 做法
-> （§12.9 的 W-1／W-2 沿用；有衝突者帶來源前綴標示，如「跨 OS 稽核 W-5」）。
 
 ### 9.1 使用者本輪需求（不可縮小）
 
@@ -713,22 +701,10 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
   ＋ `_validate_record_source_coverage()`，**重用既有比對器**（對稱正規化 `:936-965`、LCS ≥0.6 `:148`、否定詞／數字守衛）；
   等價展開 `11月1日 ≡ 11/1`；數字比對前**先剝來源標註**（否則 `（科長，00:17:52）` 的「17」假命中）；
   呼叫點僅地端 `:2367`／`:2419`（雲端 `:3527`／`:3565` 與雲端提示詞不動）；空集合一律 `log.warning`＋`cov_*` 指標。
-- **驗收（可量測；rev 15 依 F1 改寫歸因治理）**：
-  - **量尺釘版（F1①）**：一切判定一律以 `coverage-1.0.0`＋`quality/fact_checklist.json` sha256
-    `cf012d1f6983f67ecb47cc7a6486e48c110a6b2782ad94cccf0332a4ec6ec001` 量測；**P4-A 驗收一律用釘版量尺，
-    P4-G 的修訂不得回溯套用到 P4-A 的驗收數字**（P4-G 新尺＝新 `metric_version`，數值不得替代本判定、只能並列）。
-  - **主要歸因閘門＝逐條事實（F1②；產品側真正改變之物）**：離線（四份逐字稿×四份紀錄）判缺 5 個數字
-    （600／800／17／13,600／15）＋1–2 個日期（`10月底` 四家全缺；D1 另有 `週一`），**零誤判**；
-    E2E 逐筆命中：`600／800／17／13,600` 由 0/4→4/4、日期類逐筆命中（以同清單 `facts[].covered` 判讀）；B2 不退步。
-  - **聚合門檻＝觀察值（F1②）**：`coverage_all 0.5075→≥0.65`、`coverage_core 0.6786→≥0.80` 列**觀察目標**，
-    須 **≥2 次取中位數**才可宣稱支持；單次結果一律註明「單次抽樣、不可歸因」（同模型 D1 vs C1 差 6.0–7.1 pp 為證）。
-  - **未達處理（F1③）**：逐條達成但聚合未達 → **如實記錄＋根因分析**；**不得**為湊門檻**放寬量尺**、**擴類**硬追、
-    或**改 denominator**。
-  - **共同歸因隔離（F1④）**：P4-A 驗收場以 `LOCAL_FIDELITY_TRIPWIRES=false` 量測（避免 P4-B(C) 對同一批事實
-    F024／F025 雙重歸因）；若無法隔離，須明示共同歸因、召回功勞不得獨歸 P4-A。
-  - **閘門不破**：現有閘門不得破（`required` **實測 14 項**／`--template` 時 **15 項**；`run_summary.checks` 另含
-    1 個非 required 鍵，故歷史紀錄寫 16/16 不衝突，見量測 JSON）；新增 15 項單元測試（含反例與開關）。
-  - 副作用：每輪補強約 **+350–400 s**（需 E2E 實測確認）。
+- **驗收（可量測）**：離線（四份逐字稿×四份紀錄）判缺 5 個數字（600／800／17／13,600／15）＋1–2 個日期
+  （`10月底` 四家全缺；D1 另有 `週一`），**零誤判**；E2E：D1 `coverage_all 0.5075→≥0.65`、`coverage_core 0.6786→≥0.80`、
+  B2 不退步、16 項 E2E 閘門不得破、`600／800／17／13,600` 由 0/4→4/4；新增 15 項單元測試（含反例與開關）。
+  副作用：每輪補強約 **+350–400 s**（需 E2E 實測確認）。
 - **回退開關**：`LOCAL_LLM_RECORD_COVERAGE_MODE=off`（一行回本波前行為）；`observe`＝只記 log／metrics；
   `LOCAL_LLM_RECORD_COVERAGE_CATEGORIES` 可縮類別；`ITEM_LIMIT=12` 控制問題長度。
 - **跨 OS 影響**：純 Python（零 I/O、零平台判斷；OpenCC 失效原樣降級、兩平台對稱）；唯一待驗＝
@@ -750,15 +726,8 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
   C 捏造＝0（四場）；漏寫四場一致＝800／600／13,600／15%／17 人（正對 F024／F025）；B 命中 B1 真缺陷
   「主持人：科長（發言者1）」。**重要修正**：現行 `unsupported_entities` 3 筆中 2–3 筆其實是**正確官名**
   （稽查股／徵收股；逐字稿為 ASR 誤寫）→ 原「3→≤1」門檻改用 **registry-aware** 版本（產品與量尺共用同一份函式）。
-- **驗收（可量測；rev 15 依 F2 補雲端與輪數治理）**：
-  - 地端：捏造 ≤1（校準實績 0）；數字漏寫清單命中率上升（F024／F025 由 missing→covered）；不得報出 registry 官名；
-    關閉開關（`LOCAL_FIDELITY_TRIPWIRES=false`）＝產品輸出 byte 級不變。
-  - **雲端不動（F2）**：`CLOUD_FIDELITY_TRIPWIRES_MODE=observe`（預設）下，雲端輸出與問題清單 **byte 級不變（I-2）**；
-    `enforce` **本波不得開啟**。
-  - **輪數不退步（F2）**：D1 現況 **0 輪 → 落地後預期 1 輪**，但**輪數 >1（需第 2 輪）或 wall 時間退步 >25%＝未達**；
-    額外輪次下 B2／D1 coverage 不退步＋不收斂保護實證（問題集合不變即停）。每模型預期輪數／牆鐘增量的成本接受
-    ＝**planner 決策**（設計檔所載「使用者品質優先於時間」於 §0／§9.1 使用者需求**查無來源**，不引用）。
-  - E2E（27B＋Gemma 各一次）：現有 required 閘門全數通過（**實測 14 項**／`--template` 時 **15 項**，見量測 JSON）、不退步。
+- **驗收（可量測）**：捏造 ≤1（校準實績 0）；數字漏寫清單命中率上升（F024／F025 由 missing→covered）；
+  不得報出 registry 官名；關閉開關＝byte 級不變；E2E（27B＋Gemma 各一次）16/16 PASS、既有閘門不退步。
 - **回退開關**：`LOCAL_FIDELITY_TRIPWIRES=false`（一行）；雲端 `CLOUD_FIDELITY_TRIPWIRES_MODE=observe`（預設；不動對照基準）。
 - **跨 OS 影響**：全字串處理（`re`／`unicodedata`／LCS；讀音層用已列依賴 `pypinyin`）；檢查器掛在
   LM Studio／Ollama **共用**的 `_summarize_with_local_pipeline`（`summarization.py:2238`）；唯一 I/O＝既有 glossary 讀取；Windows `[UNVERIFIED]`。
@@ -774,12 +743,7 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
 - **設計摘要**：①Ollama `options` 改讀同一份 config（`repeat_penalty` 另立 config key，保留 400 降級）；
   ②補強路徑補同一 WARNING；③0.7 vs 0.3 A/B（每組 2 次、取中位數與全距）；報告強制登錄
   engine／model／`context_window`＋`context_window_source`／sampling 值／Windows `LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS`。
-- **驗收（可量測；rev 15 依 F4 拆兩層）**：
-  - **①本機可執行（payload 級 surrogate）**：Ollama `options` 值＝同一份 config（fake-engine payload 斷言）；補強
-    WARNING 存在性；`context_window`＋`context_window_source` 落檔欄位斷言；400 降級保留；A/B 0.7 vs 0.3（每組 2 次）
-    中位數＋全距——coverage 中位數不退 ≥2 pp、字元數全距收斂；A/B 中位數表落檔。
-  - **②Windows／Ollama 實機（gated，`[UNVERIFIED]`）**：兩引擎同級（coverage／`on_start` 差異 ≤0.03）須 4090 實機量測；
-    **不得以 Mac 上兩次 LM Studio 跑代替**。W-2 維持「只登錄」＝「登錄欄位存在」寫成明確斷言（不做數值強改）。
+- **驗收（可量測）**：coverage 中位數不退 ≥2 pp；字元數全距收斂；兩引擎同級（coverage／`on_start` 差異 ≤0.03）；A/B 中位數表落檔。
 - **回退開關**：保留舊常數路徑（一行 rollback 回寫死值）；A/B 前後對照存證。
 - **跨 OS 影響**：**直接修 W-1（取樣不同源）**——不修＝「模型無關＋OS 無關」槓桿在 Windows 等於沒套用；
   W-2（context 不同源）本波只**登錄來源**、不強改（兩平台數字不直接互比）；Windows `[UNVERIFIED]`。
@@ -787,9 +751,8 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
 
 ### 9.6 P4-D：runner 品質閘門接線＋標註辨別力去重複化`[全域阻斷]`
 
-- **意圖**：**不得再有 false PASS**——目前 required checks 共 **14 項**（`--template` 時 15 項），**無一來自品質儀器**；
-  並修標註辨別力（可查核但不可檢索）。
-- **現況證據**：required／verdict 慣例在 `scripts/e2e/run_owned_e2e.py:1291-1313`（**實測 14 項／`--template` 時 15 項**，無一來自品質儀器）；
+- **意圖**：**不得再有 false PASS**——目前 16 個 required checks 與品質儀器無關；並修標註辨別力（可查核但不可檢索）。
+- **現況證據**：required／verdict 慣例在 `scripts/e2e/run_owned_e2e.py:1291-1313`（16 項無一來自品質儀器）；
   標註重複實測：B2 52 tags／15 distinct＝**0.288**（`科長 00:31:34×7`、`00:08:15×6`）、D1 24／16＝0.667；
   重複幾乎全是「同標籤＋同段首」，且 11/15 已受規則 0 保護（`backend/core/text_postprocess.py:934-1019`）→ 吸附不動它；
   `CLOUD_SPEAKER_TRACEABILITY_RULE`（`summarization.py:115-129`）雲地共用 → 辨別力**不得**靠改提示詞。
@@ -804,13 +767,6 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
   D1 ≥0.667 不退步（模擬 0.708）；`traceable`／`on_start`／`excluding_zero`／`body≥17`／`table=0` 均不退步；
   runner 三模式：`off`＝`run_summary.json` 無 `quality` 鍵且 verdict 同現行；`observe`＝quality 有值、verdict 不因品質值改變；
   `required`＝低品質 fixture 必 FAIL 且 `failure_reasons` 逐條指名；**3 場 observe 穩定後才談升級**。
-- **本機可執行驗收（rev 15，F3；不需真的 Ollama）**：
-  - **provider 拆分**：非 LM-Studio provider 情境下 required＝**共通項**，`model_inventory_unique`／
-    `model_snapshot_consistent` 不因缺席而 FAIL（monkeypatch 單元測試）。
-  - **`mode_used` 斷言**：後端實際生效模式與請求不符 ⇒ **FAIL**（fake 情境本機可測）。
-  - **Ollama 模式處置**：登錄 `effective_local_llm_provider`；LM Studio 專屬 inventory 檢查轉為「provider 相符宣告」
-    或**明確豁免**（runner 現 **0 Ollama 分支**：`rg -i ollama scripts/e2e/run_owned_e2e.py`＝0 命中 → 落地時須定義該分支）。
-- **Windows／Ollama full E2E（gated）**：維持 `[UNVERIFIED]` 至 4090 實機；本波不得宣稱該段已過。
 - **回退開關**：runner `--quality-mode observe|off`（預設 off）；產品 `LOCAL_SOURCE_TAG_DIVERSIFY_ENABLED=false`（一行回 P3 byte 級）。
 - **跨 OS 影響**：新閘門由產物＋逐字稿＋checklist 計算、引擎無關；**但 required 現綁 LM Studio inventory**
   （`run_owned_e2e.py:1291-1305`、`:434-450`）→ 需拆「共通必要／provider 相依」並加 `mode_used` 事後斷言
@@ -843,8 +799,7 @@ MoE `on_start` 37.0% → **74.1%**（7 筆因位移 > 120 s 而被 `TAG_SNAP_MAX
   闆/板、ASR 變體）＋6–8 筆假陽性；不量文體／敘事／語氣／表格完整度／段落組織（§12.1 結論 3）。
 - **設計摘要**：①修 probes 與等價展開；②新增文體／敘事維度儀器；修訂以**新 `metric_version`／新清單 sha256** 落地，
   **不得**就地改寫 `coverage-1.0.0` 語意。
-- **驗收（可量測）**：假陰性、假陽性各降 ≥50%；新儀器可重現（同輸入 byte 相同、`metric_version` 釘死）；
-  **P4-A 驗收不受本修訂回溯**（一律用釘版 `coverage-1.0.0`＋`cf012d1f…`，新尺僅並列觀察，見 §9.3）。
+- **驗收（可量測）**：假陰性、假陽性各降 ≥50%；新儀器可重現（同輸入 byte 相同、`metric_version` 釘死）。
 - **回退開關**：量尺為新增／修訂工具、不改產品行為；清單與儀器皆 tracked，以 git 版本回退（新舊並存可比）。
 - **跨 OS 影響**：純 Python、OpenCC 可降級；驗收需檢查 `opencc_available=true`（否則兩平台數字不可比）；
   文體儀器不得依賴任一引擎專屬欄位。
