@@ -756,6 +756,10 @@ TRANSCRIPT_SEGMENT_PATTERN = re.compile(
 SOURCE_TAG_TIME_PATTERN = re.compile(r"(\d{1,3}):(\d{2})(?::(\d{2}))?")
 # 「同一發言者最近段落」的吸附容忍距離（秒）。超過此距離視為不可回溯、原樣保留。
 TAG_SNAP_TOLERANCE_SECONDS = 180
+# 吸附的位移上限（秒）：精確度保護。實測 183 段的段落長度中位數 3 秒、p90 28 秒，
+# 但也有 336 秒的開場長段；若原時間戳落在長段中間，硬吸附到段首會把「大概第 4 分半」
+# 變成「00:00:00」，反而更難查。因此位移超過此值時保留原時間戳（仍在真實段落內）。
+TAG_SNAP_MAX_SHIFT_SECONDS = 120
 # 標註內「發言者標籤」與時間戳之間的分隔符。
 _SPEAKER_LABEL_STRIP_CHARS = "，,、;；:： 	　"
 
@@ -825,9 +829,11 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
         "segments": 0,
         "tags": 0,
         "snapped": 0,
+        "changed": 0,
         "snapped_exact": 0,
         "snapped_nearest": 0,
         "snapped_speaker_mismatch": 0,
+        "kept_far": 0,
         "untraceable": 0,
     }
     if not text or not transcript or not template_supports_source_tags(template):
@@ -874,12 +880,19 @@ def snap_source_tags_to_transcript(text: str, transcript: str, template=None) ->
             stats["untraceable"] += 1
             return tag
 
+        if abs(target - seconds) > TAG_SNAP_MAX_SHIFT_SECONDS:
+            # 位移過大（長段落）→ 保留模型原時間戳：它仍在真實段落內，不會造假，
+            # 但硬拉到段首會損失精確度。
+            stats["kept_far"] += 1
+            return tag
+
         with_seconds = time_match.group(3) is not None
         replacement = _seconds_to_hms(target, with_seconds=with_seconds)
         stats["snapped"] += 1
         stats[f"snapped_{status}"] += 1
         if replacement == time_match.group():
             return tag
+        stats["changed"] += 1
         new_inner = inner[: time_match.start()] + replacement + inner[time_match.end():]
         return f"（{new_inner}）"
 
@@ -892,13 +905,15 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
     * ``tags_total``：正文標註數（含表格列；表格標註另由 E2E 契約清除）。
     * ``tags_inside_any_segment``／``traceable_tag_ratio``：時間戳落在逐字稿任一
       真實段落內（＝「這個時間點會議真的在進行」）。
-    * ``tags_exact_segment_start``／``exact_tag_ratio``：時間戳恰好等於某真實段落起點
-      （吸附後的主指標）。
+    * ``tags_on_real_segment_start``／``on_start_tag_ratio``：時間戳恰好等於**任一**真實
+      段落起點（吸附後的主指標；不看發言者標籤，因為模型可能用「科長」等角色名）。
+    * ``tags_exact_segment_start``／``exact_tag_ratio``：時間戳恰為某段起點**且**發言者
+      標籤與該段發言者一致（嚴格版，角色名標註不計入）。
     * ``tags_inside_same_speaker_segment``：時間戳落在**該標註指名發言者**的段落內
       （＝「這個時間點確實在講這句話」）。
     """
     segments = iter_transcript_segments(transcript)
-    total = inside_any = exact = inside_same = 0
+    total = inside_any = exact = inside_same = on_start = 0
     for match in SOURCE_TAG_PATTERN.finditer(text or ""):
         inner = match.group()[1:-1]
         time_match = SOURCE_TAG_TIME_PATTERN.search(inner)
@@ -913,6 +928,8 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         )
         if any(seg[0] <= seconds <= seg[1] for seg in segments):
             inside_any += 1
+        if any(seg[0] == seconds for seg in segments):
+            on_start += 1
         if any(
             _normalize_speaker_label(seg[2]) == speaker_label and seg[0] == seconds
             for seg in segments
@@ -930,5 +947,7 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         "traceable_tag_ratio": (inside_any / total) if total else None,
         "tags_exact_segment_start": exact,
         "exact_tag_ratio": (exact / total) if total else None,
+        "tags_on_real_segment_start": on_start,
+        "on_start_tag_ratio": (on_start / total) if total else None,
         "tags_inside_same_speaker_segment": inside_same,
     }

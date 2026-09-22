@@ -292,8 +292,9 @@ def measure_record_quality(
             "tag_traceability": (
                 "出處標註真實性（逐字稿段落時間表為 ground truth）："
                 "traceable_tag_ratio＝時間戳落在逐字稿任一真實段落內的比例；"
-                "tags_exact_segment_start／exact_tag_ratio＝時間戳恰為某段落起點"
+                "tags_on_real_segment_start／on_start_tag_ratio＝時間戳恰為任一真實段落起點"
                 "（吸附後的主指標：標註真的指到一句話的開頭）；"
+                "tags_exact_segment_start／exact_tag_ratio＝再要求發言者標籤與該段一致（嚴格版）；"
                 "tags_inside_same_speaker_segment＝落在標註指名發言者的段落內"
             ),
         },

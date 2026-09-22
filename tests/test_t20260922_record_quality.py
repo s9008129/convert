@@ -637,6 +637,7 @@ def test_snap_source_tags_to_transcript_吸附到真實段落邊界():
     assert "（發言者1，00:01:12）" not in snapped
     assert stats["tags"] == 4
     assert stats["snapped"] == 3
+    assert stats["changed"] == 3, "三筆都真的被改寫（第 4 筆不可回溯、原樣保留）"
     assert stats["snapped_exact"] == 2
     # 「科長」不是逐字稿的發言者標籤，但時間戳落在真實段落內 → 只改時間、不改歸屬。
     assert "（科長，00:02:00）" in snapped
@@ -697,6 +698,8 @@ def test_measure_tag_traceability_shared_definition():
     # 但發言者標籤不是逐字稿的標籤，故保守地不計入 exact（只計入 inside_any）。
     assert after["tags_exact_segment_start"] == 2
     assert after["exact_tag_ratio"] == 0.5
+    assert after["tags_on_real_segment_start"] == 3, "不看發言者標籤的段落起點命中（含「科長」那筆）"
+    assert after["on_start_tag_ratio"] == 0.75
     assert after["tags_inside_any_segment"] == 3
     assert after["traceable_tag_ratio"] == 0.75, "不可回溯的那一筆仍為 0.75（fail-soft 不造假）"
 
