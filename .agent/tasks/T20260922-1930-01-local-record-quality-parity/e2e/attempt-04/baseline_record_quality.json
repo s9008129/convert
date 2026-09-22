@@ -1,0 +1,63 @@
+{
+  "char_count": 3238,
+  "body_source_tag_count": 33,
+  "table_source_tag_count": 13,
+  "non_prefixed_tableish_source_tag_count": 0,
+  "instruction_item_count": 9,
+  "tagged_item_ratio": 0.9706,
+  "cross_section_duplicate_pairs": 0,
+  "known_term_fix_hits": {
+    "left_hits": 0,
+    "right_hits": 3,
+    "left_by_form": {
+      "征收股": 0,
+      "增收股": 0,
+      "人事總數(?=\\s*(?:Email|E-mail|電子郵件|郵件|寄|偽造|釣魚))": 0,
+      "瑞裏": 0
+    },
+    "right_by_form": {
+      "徵收股": 1,
+      "人事總處": 0,
+      "瑞里": 2
+    },
+    "transcript": {
+      "left_hits": 3,
+      "right_hits": 0,
+      "left_by_form": {
+        "征收股": 1,
+        "增收股": 1,
+        "人事總數(?=\\s*(?:Email|E-mail|電子郵件|郵件|寄|偽造|釣魚))": 0,
+        "瑞裏": 1
+      },
+      "right_by_form": {
+        "徵收股": 0,
+        "人事總處": 0,
+        "瑞里": 0
+      }
+    }
+  },
+  "unsupported_entities": [
+    "徵收股",
+    "煙酒業務股",
+    "稽徵股"
+  ],
+  "notes": {
+    "definitions": {
+      "char_count": "Markdown 全文 len(text)（含換行）；DOCX 一律 SKIP（段落合併使行結構失真）",
+      "body_source_tag_count": "非表格列（不符合 TABLE_ROW_PATTERN＝^\\s*\\|）且非開頭欄位（^(時間|地點|主持人|出席人員|紀錄)，plan rev6 記法、不含冒號）的 SOURCE_TAG_PATTERN 命中數（同 summarization.py:1026-1061 排除語意）",
+      "table_source_tag_count": "符合 TABLE_ROW_PATTERN（^\\s*\\|）表格列的 SOURCE_TAG_PATTERN 命中數（正文契約排除區；與 strip_source_tags_from_table_rows 同一定義）",
+      "instruction_item_count": "「科長指示及提醒事項」章節內行首為 'N.' 或 '（N）' 的 leaf item 數；找不到該章節時以全文 leaf item 計",
+      "tagged_item_ratio": "正文 leaf item 中至少一個 SOURCE_TAG_PATTERN 的比率（基線 33/34≈97.1%）",
+      "cross_section_duplicate_pairs": "dedupe_cross_section_items 回報移除的條目數（＝決議節／主席裁示節重複對數）",
+      "known_term_fix_hits": "left_hits＝SECTION_MEETING_RECORD_TERM_FIXES 左側（錯形 regex）命中數；right_hits＝右側修正字面出現數；transcript＝同規則套用逐字稿（未提供時 null）"
+    },
+    "observed": {
+      "excluded_header_field_tag_count": 0,
+      "template_resolution": "template=section_meeting",
+      "transcript_provided": true
+    },
+    "unsupported_entities": "觀察值：紀錄中以「…」明示、結尾為組織後綴（股／科／室／處／局／中心／公司）且逐字稿未出現的單位名稱（高精確、低召回）；**永不作為閘門**（字面比對無法區分捏造與 ASR 變體重建，plan §1／W6）。未提供 --transcript 時為 null。",
+    "non_prefixed_tableish_source_tag_count": "觀察值：行內含 '|'（ASCII）或 '｜'（全形）、具表格樣態（行首為管線字元，或行內 ≥2 個管線字元）但**不符合**表格列定義（TABLE_ROW_PATTERN＝^\\s*\\|）的行上之 SOURCE_TAG_PATTERN 命中數；**永不作為閘門**。產品契約與 W2b 清除器（strip_source_tags_from_table_rows）皆定義彙整表列為 ^\\s*\\|，因此全形 '｜'／非行首的真表格列是已知殘餘缺口（P1-13 層級回報），此計數僅供可視化，不影響 table／body 計數語意。",
+    "sampling_caveat": "指標為確定性字面統計；E2E 判讀仍受單次抽樣（temperature 0.7）限制。"
+  }
+}

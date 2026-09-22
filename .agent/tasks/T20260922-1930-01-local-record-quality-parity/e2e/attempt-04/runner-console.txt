@@ -1,0 +1,5 @@
+[INFO] backend child PID=42346 port=53685 DATA_DIR=/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-fixed-01/backend_data
+[INFO] expected build_revision=c611e6d58856c24f229a9637efd0d7ae0148cf5f
+[INFO] /api/health 200，build_revision='c611e6d58856c24f229a9637efd0d7ae0148cf5f'
+[INFO] backend child（PID 42346）已終止（exit=0）
+[OK] verdict=PASS，artifacts：/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04，runtime：/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-fixed-01

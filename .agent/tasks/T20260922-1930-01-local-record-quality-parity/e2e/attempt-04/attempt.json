@@ -1,0 +1,83 @@
+{
+  "attempt": "attempt-04",
+  "task_id": "T20260922-1930-01-local-record-quality-parity",
+  "head_sha": "c611e6d58856c24f229a9637efd0d7ae0148cf5f",
+  "build_revision": "c611e6d58856c24f229a9637efd0d7ae0148cf5f",
+  "branch": "fix/local-lmstudio-record-quality",
+  "worktree_clean_before_start": true,
+  "command": "DATA_DIR=\"$PWD/data\" uv run --no-sync python scripts/e2e/run_owned_e2e.py --audio \"/Users/hsiaojohnny/Downloads/0903-科務會議.m4a\" --processing-mode local --template section_meeting --artifacts-dir .agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04 --runtime-dir data/cache/e2e/p1-fixed-01",
+  "started_at": "2026-09-22T20:19:53+08:00",
+  "finished_at": "2026-09-22T20:27:13+08:00",
+  "duration_seconds": 440,
+  "runner_reported_started_at": "2026-09-22T20:19:54.023056+08:00",
+  "runner_reported_finished_at": "2026-09-22T20:27:13.490336+08:00",
+  "runner_reported_duration_seconds": 439.47,
+  "exit_code": 0,
+  "verdict": "PASS",
+  "failure_reasons": [],
+  "model": "qwen3.6-35b-a3b-splash",
+  "meeting_template": "section_meeting",
+  "processing_mode": "local",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "core1": {
+    "table_source_tag_count": 0,
+    "table_source_tag_count_baseline": 13,
+    "body_source_tag_count": 27,
+    "body_source_tag_count_baseline": 33,
+    "degenerate_line_body_lt_17": false,
+    "non_prefixed_tableish_source_tag_count": 0,
+    "tagged_item_ratio": 1.0,
+    "tagged_item_ratio_baseline": 0.9706,
+    "tagged_items": "27/27（基線 33/34）",
+    "pass": true
+  },
+  "core2": {
+    "record_left_hits": 0,
+    "record_right_hits": 5,
+    "record_right_by_form": {
+      "徵收股": 2,
+      "人事總處": 0,
+      "瑞里": 3
+    },
+    "transcript_left_hits": 3,
+    "transcript_left_by_form": {
+      "征收股": 1,
+      "增收股": 1,
+      "瑞裏": 1
+    },
+    "e2e_discriminating_power": "none（基線紀錄 left_hits 已為 0；本次 run [品質] 地端紀錄後處理 0 次觸發 → 不構成 W3 生效證據）",
+    "unit_test_evidence": {
+      "targeted_5_files": "84 passed",
+      "full_suite": "881 passed, 2 skipped"
+    },
+    "pass": true
+  },
+  "runner_checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "formal_docx_valid": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "produced_files": {
+    "record_md_runtime": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-fixed-01/backend_data/outputs/0903-科務會議_327a48e6.md",
+    "record_docx_runtime": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p1-fixed-01/meeting_record.docx",
+    "evidence_record_md_copy": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record.md",
+    "evidence_docx_copy": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/meeting_record.docx",
+    "record_quality_json": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record_quality.json",
+    "baseline_record_quality_json": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/baseline_record_quality.json",
+    "runner_console": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/runner-console.txt",
+    "report": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/e2e_report.md"
+  }
+}
