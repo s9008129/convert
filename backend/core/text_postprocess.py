@@ -732,3 +732,203 @@ def dedupe_cross_section_items(text: str, template=None) -> tuple[str, int]:
 
     log.info("[品質] 跨節重複抑制：移除決議節重複條目 {} 條", len(removed_indexes))
     return "\n".join(new_lines), len(removed_indexes)
+
+# ---------------------------------------------------------------------------
+# 出處標註真實性（T20260922-2037-02 軌 A；P1-14 的確定性部分）
+#
+# 實測（0903 場、v4.8.1、MoE 35B）：27 個正文標註中有 23 個的時間戳「不存在於
+# 逐字稿的任何段落起點」——模型寫得出標註，但時間戳多半是憑印象生成的。同一份
+# 紀錄的 25/27 個時間戳其實**落在**該發言者的真實段落內；也就是說，錯的不是
+# 「指到誰、指到哪一段」，而是「指到段落裡的一個不存在的秒數」。
+#
+# 因此這裡不去問模型、也不重寫內容，只做一件事：把時間戳吸附到它所屬的真實
+# 段落邊界（``[start-end] 發言者N：`` 的 start）。這是確定性、可稽核、可回復的
+# 後處理，且只作用於有 ``speaker_traceability`` 契約的模板。
+# ---------------------------------------------------------------------------
+
+# ASR 逐字稿的段落列：``[00:07:11-00:07:16] 發言者1：…``
+# （小時允許 1–3 位：103 分鐘以上的會議會出現 ``01:43:00``；時間戳與破折號間
+# 允許空白，因為不同 ASR 來源的格式略有差異）。
+TRANSCRIPT_SEGMENT_PATTERN = re.compile(
+    r"^\[(\d{1,3}):(\d{2}):(\d{2})\s*-\s*(\d{1,3}):(\d{2}):(\d{2})\]\s*([^：:]{1,24})[：:]"
+)
+# 標註內容裡的時間戳（``（發言者1，00:03:45）``）。
+SOURCE_TAG_TIME_PATTERN = re.compile(r"(\d{1,3}):(\d{2})(?::(\d{2}))?")
+# 「同一發言者最近段落」的吸附容忍距離（秒）。超過此距離視為不可回溯、原樣保留。
+TAG_SNAP_TOLERANCE_SECONDS = 180
+# 標註內「發言者標籤」與時間戳之間的分隔符。
+_SPEAKER_LABEL_STRIP_CHARS = "，,、;；:： 	　"
+
+
+def _hms_to_seconds(hours: str, minutes: str, seconds: str) -> int:
+    """``HH:MM:SS`` 三欄字串轉秒數（純函式，供段落與標註共用）。"""
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+
+
+def _seconds_to_hms(total_seconds: int, *, with_seconds: bool) -> str:
+    """秒數轉回 ``HH:MM(:SS)``；``with_seconds`` 依原標註的精度決定。"""
+    hours, remainder = divmod(max(0, int(total_seconds)), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if with_seconds:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _normalize_speaker_label(label: str) -> str:
+    """發言者標籤正規化（去空白）；逐字稿與標註的空白慣例可能不同。"""
+    return re.sub(r"\s+", "", label or "")
+
+
+def iter_transcript_segments(transcript: str) -> list:
+    """解析逐字稿段落時間表，回傳 ``[(start_seconds, end_seconds, speaker)]``。
+
+    只認行首 ``[start-end] 發言者：`` 的段落列（逐字稿產生器的固定格式）；
+    「發言者統計」那種 ``- 發言者1：00:37:28（…）`` 的累計時長列刻意不認，
+    因為它們不是段落。
+    """
+    segments = []
+    for raw_line in (transcript or "").splitlines():
+        match = TRANSCRIPT_SEGMENT_PATTERN.match(raw_line.strip())
+        if not match:
+            continue
+        start = _hms_to_seconds(*match.group(1, 2, 3))
+        end = _hms_to_seconds(*match.group(4, 5, 6))
+        if end < start:
+            start, end = end, start
+        segments.append((start, end, match.group(7).strip()))
+    return segments
+
+
+def template_supports_source_tags(template) -> bool:
+    """模板是否有「發言來源標註」契約（``speaker_traceability``）。"""
+    return bool(getattr(template, "speaker_traceability", False))
+
+
+def snap_source_tags_to_transcript(text: str, transcript: str, template=None) -> tuple:
+    """把發言來源標註的時間戳吸附到逐字稿的真實段落邊界，回傳（文字, 統計）。
+
+    規則（依序，全部確定性）：
+
+    1. 標註的發言者標籤在逐字稿中存在，且時間戳落在該發言者的某段落內
+       → 吸附到該段落的 ``start``（``snapped_exact``）。
+    2. 否則，同發言者最近的段落 ``start`` 距離 ≤ ``TAG_SNAP_TOLERANCE_SECONDS``
+       → 吸附（``snapped_nearest``）；模型只寫「大概幾秒」時仍可回溯。
+    3. 否則，時間戳落在**任何**真實段落內（發言者標籤與逐字稿不同名時）
+       → 吸附到該段落 ``start``（``snapped_speaker_mismatch``，時間為真、
+       發言者標籤維持模型原文——不代模型改歸屬）。
+    4. 其餘（找不到任何依據）→ 原樣保留並計入 ``untraceable``。
+
+    fail-soft：任何一步不成立都保留原標註（不刪、不改寫、不動內文），因此
+    最壞情況與現行行為完全相同；只有「時間戳確實對得上逐字稿」時才會替換。
+    """
+    stats = {
+        "segments": 0,
+        "tags": 0,
+        "snapped": 0,
+        "snapped_exact": 0,
+        "snapped_nearest": 0,
+        "snapped_speaker_mismatch": 0,
+        "untraceable": 0,
+    }
+    if not text or not transcript or not template_supports_source_tags(template):
+        return text, stats
+    segments = iter_transcript_segments(transcript)
+    stats["segments"] = len(segments)
+    if not segments:
+        return text, stats
+
+    by_speaker: dict = {}
+    for segment in segments:
+        by_speaker.setdefault(_normalize_speaker_label(segment[2]), []).append(segment)
+
+    def replace_tag(match: "re.Match") -> str:
+        stats["tags"] += 1
+        tag = match.group()
+        inner = tag[1:-1]
+        time_match = SOURCE_TAG_TIME_PATTERN.search(inner)
+        if not time_match:
+            stats["untraceable"] += 1
+            return tag
+        seconds = _hms_to_seconds(
+            time_match.group(1), time_match.group(2), time_match.group(3) or "0"
+        )
+        speaker_label = _normalize_speaker_label(
+            inner[: time_match.start()].strip(_SPEAKER_LABEL_STRIP_CHARS)
+        )
+        target = None
+        status = ""
+        same_speaker = by_speaker.get(speaker_label, ())
+        if same_speaker:
+            containing = [seg for seg in same_speaker if seg[0] <= seconds <= seg[1]]
+            if containing:
+                target, status = containing[0][0], "exact"
+            else:
+                nearest = min(same_speaker, key=lambda seg: abs(seg[0] - seconds))
+                if abs(nearest[0] - seconds) <= TAG_SNAP_TOLERANCE_SECONDS:
+                    target, status = nearest[0], "nearest"
+        if target is None:
+            containing_any = [seg for seg in segments if seg[0] <= seconds <= seg[1]]
+            if containing_any:
+                target, status = containing_any[0][0], "speaker_mismatch"
+        if target is None:
+            stats["untraceable"] += 1
+            return tag
+
+        with_seconds = time_match.group(3) is not None
+        replacement = _seconds_to_hms(target, with_seconds=with_seconds)
+        stats["snapped"] += 1
+        stats[f"snapped_{status}"] += 1
+        if replacement == time_match.group():
+            return tag
+        new_inner = inner[: time_match.start()] + replacement + inner[time_match.end():]
+        return f"（{new_inner}）"
+
+    return SOURCE_TAG_PATTERN.sub(replace_tag, text), stats
+
+
+def measure_tag_traceability(text: str, transcript: str) -> dict:
+    """標註可回溯性量測（量測儀器與產品共用同一份定義），回傳純量統計。
+
+    * ``tags_total``：正文標註數（含表格列；表格標註另由 E2E 契約清除）。
+    * ``tags_inside_any_segment``／``traceable_tag_ratio``：時間戳落在逐字稿任一
+      真實段落內（＝「這個時間點會議真的在進行」）。
+    * ``tags_exact_segment_start``／``exact_tag_ratio``：時間戳恰好等於某真實段落起點
+      （吸附後的主指標）。
+    * ``tags_inside_same_speaker_segment``：時間戳落在**該標註指名發言者**的段落內
+      （＝「這個時間點確實在講這句話」）。
+    """
+    segments = iter_transcript_segments(transcript)
+    total = inside_any = exact = inside_same = 0
+    for match in SOURCE_TAG_PATTERN.finditer(text or ""):
+        inner = match.group()[1:-1]
+        time_match = SOURCE_TAG_TIME_PATTERN.search(inner)
+        if not time_match:
+            continue
+        total += 1
+        seconds = _hms_to_seconds(
+            time_match.group(1), time_match.group(2), time_match.group(3) or "0"
+        )
+        speaker_label = _normalize_speaker_label(
+            inner[: time_match.start()].strip(_SPEAKER_LABEL_STRIP_CHARS)
+        )
+        if any(seg[0] <= seconds <= seg[1] for seg in segments):
+            inside_any += 1
+        if any(
+            _normalize_speaker_label(seg[2]) == speaker_label and seg[0] == seconds
+            for seg in segments
+        ):
+            exact += 1
+        if any(
+            _normalize_speaker_label(seg[2]) == speaker_label and seg[0] <= seconds <= seg[1]
+            for seg in segments
+        ):
+            inside_same += 1
+    return {
+        "segments": len(segments),
+        "tags_total": total,
+        "tags_inside_any_segment": inside_any,
+        "traceable_tag_ratio": (inside_any / total) if total else None,
+        "tags_exact_segment_start": exact,
+        "exact_tag_ratio": (exact / total) if total else None,
+        "tags_inside_same_speaker_segment": inside_same,
+    }

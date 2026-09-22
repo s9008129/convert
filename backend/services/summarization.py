@@ -2136,7 +2136,10 @@ class SummarizationService:
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
         summary = self._finalize_record_text(
-            self._clean_ollama_output(summary), template=template, mode="local"
+            self._clean_ollama_output(summary),
+            template=template,
+            mode="local",
+            transcript=transcript,
         )
 
         # v4.8.0：地端套用與雲端相同的紀錄契約——動態長度閘門（依逐字稿規模）、
@@ -2175,7 +2178,10 @@ class SummarizationService:
             # 每一輪補強都必須走同一條地端後處理（mode="local"），否則補強輪會把
             # 已清掉的表格出處標註與 ASR 誤辨字再寫回來。
             summary = self._finalize_record_text(
-                self._clean_ollama_output(summary), template=template, mode="local"
+                self._clean_ollama_output(summary),
+                template=template,
+                mode="local",
+                transcript=transcript,
             )
             issues = self._validate_summary_quality(
                 summary, merged_notes, min_chars=min_chars, template=template
@@ -2210,6 +2216,7 @@ class SummarizationService:
         template: Optional[MeetingTemplate] = None,
         *,
         mode: str = "cloud",
+        transcript: Optional[str] = None,
     ) -> str:
         """會議紀錄記錄級後處理（自 task_processor 移入，P1-9）。
 
@@ -2228,6 +2235,14 @@ class SummarizationService:
           （`normalize_unfilled_placeholders`）→ 跨節重複抑制
           （`dedupe_cross_section_items`，**嚴格最後一步**；提前去重會被後續
           改寫破壞「切除尾端括號後完全相等」的判重前提）。
+
+        T20260922-2037-02（P2 可查核性波）：地端再插入一步「出處標註真實性」
+        （`snap_source_tags_to_transcript`），順序為
+        `finalize_record` → 術語修正 → **標註吸附** → 表格標註清除 → 佔位符修復
+        → 跨節重複抑制。此步與引擎、模型無關（LM Studio／Ollama 共用同一條
+        `_summarize_with_local_pipeline`，見 `_generate_with_local_engine` 分派），
+        只依賴「逐字稿段落時間表」這個模型無關的事實來源；`transcript` 缺席時
+        完全不作用（雲端路徑與舊呼叫端行為 byte 級不變）。
         """
         from backend.core.glossary import english_protected_terms
         from backend.core.text_postprocess import finalize_record, normalize_unfilled_placeholders
@@ -2245,19 +2260,27 @@ class SummarizationService:
         from backend.core.text_postprocess import (
             apply_record_term_fixes,
             dedupe_cross_section_items,
+            snap_source_tags_to_transcript,
             strip_source_tags_from_table_rows,
         )
 
         term_fixes = getattr(template, "record_term_fixes", ()) if template is not None else ()
         text, applied_fixes = apply_record_term_fixes(text, term_fixes)
+        text, tag_snap_stats = snap_source_tags_to_transcript(text, transcript or "", template)
         text, stripped_tags = strip_source_tags_from_table_rows(text, template)
         text = normalize_unfilled_placeholders(text, template=template)
         text, deduped_items = dedupe_cross_section_items(text, template)
-        if applied_fixes or stripped_tags or deduped_items:
+        if applied_fixes or stripped_tags or deduped_items or tag_snap_stats["snapped"]:
             log.info(
-                "[品質] 地端紀錄後處理：術語修正 {} 處、表格出處標註移除 {} 處、"
-                "跨節重複移除 {} 條",
+                "[品質] 地端紀錄後處理：術語修正 {} 處、出處標註吸附 {} 處"
+                "（段落內 {}／最近段落 {}／跨發言者 {}；不可回溯保留 {}）、"
+                "表格出處標註移除 {} 處、跨節重複移除 {} 條",
                 len(applied_fixes),
+                tag_snap_stats["snapped"],
+                tag_snap_stats["snapped_exact"],
+                tag_snap_stats["snapped_nearest"],
+                tag_snap_stats["snapped_speaker_mismatch"],
+                tag_snap_stats["untraceable"],
                 stripped_tags,
                 deduped_items,
             )

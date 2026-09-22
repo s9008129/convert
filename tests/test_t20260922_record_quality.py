@@ -35,7 +35,9 @@ from backend.core.glossary import english_protected_terms  # noqa: E402
 from backend.core.templates import get_template  # noqa: E402
 from backend.core.text_postprocess import (  # noqa: E402
     finalize_record,
+    measure_tag_traceability,
     normalize_unfilled_placeholders,
+    snap_source_tags_to_transcript,
 )
 from backend.services.summarization import SummarizationService  # noqa: E402
 
@@ -575,9 +577,9 @@ async def test_local_pipeline_reapplies_local_normalisation_after_each_refinemen
     finalize_modes: list[str] = []
     real_finalize = SummarizationService._finalize_record_text
 
-    def _spy_finalize(summary, template=None, *, mode="cloud"):  # noqa: ANN001
+    def _spy_finalize(summary, template=None, *, mode="cloud", transcript=None):  # noqa: ANN001
         finalize_modes.append(mode)
-        return real_finalize(summary, template=template, mode=mode)
+        return real_finalize(summary, template=template, mode=mode, transcript=transcript)
 
     quality = Mock(side_effect=[["彙整表內出現發言來源標註"], [], []])
     monkeypatch.setattr(service, "_finalize_record_text", _spy_finalize)
@@ -603,3 +605,98 @@ async def test_local_pipeline_reapplies_local_normalisation_after_each_refinemen
         "補強輪重吐的表格出處標註必須在收尾時再次清除"
     )
     assert "（發言者3，00:07:00）" in result, "正文標註不得連帶被清除"
+
+# ---------------------------------------------------------------------------
+# 契約 7（P2 可查核性波，T20260922-2037-02）：出處標註吸附
+#
+# 實測（0903 場、v4.8.1、MoE 35B）：27 個正文標註中僅 4 個時間戳恰為逐字稿段落
+# 起點，但 25 個落在該發言者的真實段落內 —— 模型指對了段落，卻寫了段落內一個
+# 不存在的秒數。修法＝確定性吸附到段落邊界（不問模型、不改內文）。
+# ---------------------------------------------------------------------------
+
+SNAP_TRANSCRIPT = """[00:00:00-00:00:30] 發言者1：報告事項開始，先確認上次會議決議。
+[00:01:00-00:01:45] 發言者1：文康活動經費依照規定辦理，便當與禮券都要有佐證。
+[00:02:00-00:02:20] 發言者2：補充說明，瑞里地區的宣導排在十月十四日。
+"""
+
+SNAP_RECORD = """（本測試用最小紀錄）
+1.文康活動經費依規定辦理，便當與禮券要有佐證（發言者1，00:01:12）。
+2.瑞里地區宣導排在十月十四日（發言者2，00:02:03）。
+3.主席裁示由科長負責追蹤（科長，00:02:10）。
+4.沒有時間依據的事項（發言者1，05:30:00）。
+"""
+
+
+def test_snap_source_tags_to_transcript_吸附到真實段落邊界():
+    """契約：段落內的時間戳 → 吸附到該發言者該段落的 start（不改發言者標籤）。"""
+    template = get_template("section_meeting")
+    snapped, stats = snap_source_tags_to_transcript(SNAP_RECORD, SNAP_TRANSCRIPT, template)
+
+    assert "（發言者1，00:01:00）" in snapped, "1. 應吸附到 00:01:00 段落起點"
+    assert "（發言者2，00:02:00）" in snapped, "2. 應吸附到 00:02:00 段落起點"
+    assert "（發言者1，00:01:12）" not in snapped
+    assert stats["tags"] == 4
+    assert stats["snapped"] == 3
+    assert stats["snapped_exact"] == 2
+    # 「科長」不是逐字稿的發言者標籤，但時間戳落在真實段落內 → 只改時間、不改歸屬。
+    assert "（科長，00:02:00）" in snapped
+    assert stats["snapped_speaker_mismatch"] == 1
+    # 05:30:00 不存在於逐字稿任何段落 → 原樣保留（fail-soft）。
+    assert "（發言者1，05:30:00）" in snapped
+    assert stats["untraceable"] == 1
+
+
+def test_snap_source_tags_fail_soft_conditions_完全不作用():
+    """契約：沒有逐字稿／模板無標註契約／逐字稿無段落時，byte 級不變。"""
+    template = get_template("section_meeting")
+    general = get_template("general")
+
+    for kwargs in (
+        {"transcript": "", "template": template},
+        {"transcript": SNAP_TRANSCRIPT, "template": general},
+        {"transcript": SNAP_TRANSCRIPT, "template": None},
+        {"transcript": "（這不是逐字稿，沒有任何段落列）", "template": template},
+    ):
+        out, stats = snap_source_tags_to_transcript(
+            SNAP_RECORD, kwargs["transcript"], kwargs["template"]
+        )
+        assert out == SNAP_RECORD
+        assert stats["snapped"] == 0
+
+
+def test_finalize_record_text_local_吸附_但_cloud_不變():
+    """契約：`mode="local"`＋逐字稿才吸附；`mode="cloud"` 必須 byte 級不變。"""
+    service = SummarizationService.__new__(SummarizationService)
+    template = get_template("section_meeting")
+
+    cloud = service._finalize_record_text(SNAP_RECORD, template=template)
+    assert cloud == service._finalize_record_text(
+        SNAP_RECORD, template=template, mode="cloud"
+    )
+    assert "（發言者1，00:01:12）" in cloud
+
+    local = service._finalize_record_text(
+        SNAP_RECORD, template=template, mode="local", transcript=SNAP_TRANSCRIPT
+    )
+    assert "（發言者1，00:01:00）" in local
+    assert "（發言者1，00:01:12）" not in local
+
+
+def test_measure_tag_traceability_shared_definition():
+    """契約：量測儀器與產品共用同一份段落定義（吸附前 0.25 → 吸附後 0.75）。"""
+    template = get_template("section_meeting")
+    before = measure_tag_traceability(SNAP_RECORD, SNAP_TRANSCRIPT)
+    assert before["tags_total"] == 4
+    assert before["tags_exact_segment_start"] == 0
+    assert before["tags_inside_same_speaker_segment"] == 2
+    assert before["traceable_tag_ratio"] == 0.75
+
+    snapped, _stats = snap_source_tags_to_transcript(SNAP_RECORD, SNAP_TRANSCRIPT, template)
+    after = measure_tag_traceability(snapped, SNAP_TRANSCRIPT)
+    # 吸附後恰為段落起點者 2 筆（發言者1／發言者2）；「科長」那筆時間已對齊真實段落，
+    # 但發言者標籤不是逐字稿的標籤，故保守地不計入 exact（只計入 inside_any）。
+    assert after["tags_exact_segment_start"] == 2
+    assert after["exact_tag_ratio"] == 0.5
+    assert after["tags_inside_any_segment"] == 3
+    assert after["traceable_tag_ratio"] == 0.75, "不可回溯的那一筆仍為 0.75（fail-soft 不造假）"
+

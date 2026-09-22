@@ -76,6 +76,7 @@ from backend.core.text_postprocess import (  # noqa: E402
     SOURCE_TAG_PATTERN,
     TABLE_ROW_PATTERN,
     dedupe_cross_section_items,
+    measure_tag_traceability,
 )
 
 # 開頭欄位排除（plan rev6 W6 記法，不含冒號；為 summarization.py:130
@@ -250,6 +251,13 @@ def measure_record_quality(
     _, dedupe_removed = dedupe_cross_section_items(record_text, template)
 
     term_hits = count_known_term_fix_hits(record_text)
+    # P2-1：出處標註可回溯性（與產品 snap_source_tags_to_transcript 共用同一份
+    # 段落解析定義；未提供逐字稿時整欄為 null）。
+    tag_traceability = (
+        measure_tag_traceability(record_text, transcript_text)
+        if transcript_text is not None
+        else None
+    )
     if transcript_text is not None:
         term_hits["transcript"] = count_known_term_fix_hits(transcript_text)
         unsupported_entities: Optional[list] = find_unsupported_entities(record_text, transcript_text)
@@ -280,6 +288,13 @@ def measure_record_quality(
             "known_term_fix_hits": (
                 "left_hits＝SECTION_MEETING_RECORD_TERM_FIXES 左側（錯形 regex）命中數；"
                 "right_hits＝右側修正字面出現數；transcript＝同規則套用逐字稿（未提供時 null）"
+            ),
+            "tag_traceability": (
+                "出處標註真實性（逐字稿段落時間表為 ground truth）："
+                "traceable_tag_ratio＝時間戳落在逐字稿任一真實段落內的比例；"
+                "tags_exact_segment_start／exact_tag_ratio＝時間戳恰為某段落起點"
+                "（吸附後的主指標：標註真的指到一句話的開頭）；"
+                "tags_inside_same_speaker_segment＝落在標註指名發言者的段落內"
             ),
         },
         "observed": {
@@ -314,6 +329,7 @@ def measure_record_quality(
         "tagged_item_ratio": tagged_item_ratio,
         "cross_section_duplicate_pairs": dedupe_removed,
         "known_term_fix_hits": term_hits,
+        "tag_traceability": tag_traceability,
         "unsupported_entities": unsupported_entities,
         "notes": notes,
     }

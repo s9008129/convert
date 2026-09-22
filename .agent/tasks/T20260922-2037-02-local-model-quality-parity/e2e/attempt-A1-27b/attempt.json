@@ -1,0 +1,22 @@
+{
+  "attempt": "attempt-A1-27b",
+  "task_id": "T20260922-2037-02-local-model-quality-parity",
+  "purpose": "修復前基線：dense 27B（qwen3.8-27b-splash）真實音檔 E2E，用於與 MoE 35B 對照",
+  "head_sha": "4f1fb237fac56a61591841363c46b56653c19582",
+  "branch": "fix/qwen-local-quality-parity",
+  "command": "DATA_DIR=\"$PWD/data\" uv run --no-sync python scripts/e2e/run_owned_e2e.py --audio \"/Users/hsiaojohnny/Downloads/0903-科務會議.m4a\" --processing-mode local --template section_meeting --artifacts-dir .agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-A1-27b --runtime-dir data/cache/e2e/p2-27b-01",
+  "started_at": "2026-09-22T20:39:32+08:00",
+  "finished_at": "2026-09-22T20:54:42+08:00",
+  "duration_seconds": 910,
+  "exit_code": 0,
+  "verdict": "PASS",
+  "failure_reasons": [],
+  "model": "qwen3.8-27b-splash",
+  "lmstudio_instance_context_length": 128000,
+  "meeting_template": "section_meeting",
+  "processing_mode": "local",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "record_md": "data/cache/e2e/p2-27b-01/backend_data/outputs/0903-科務會議_f012e80c.md",
+  "transcript_txt": "data/cache/e2e/p2-27b-01/backend_data/outputs/0903-科務會議_f012e80c_逐字稿.txt",
+  "notes": "本 run 由 subagent 執行（完成後該 agent 因平台 429 中止，未回報）；主 agent 已核對 run_summary.json/PASS 並把 LM Studio 還原為 qwen3.6-35b-a3b-splash(ctx=128000)。"
+}

@@ -45,6 +45,7 @@ EXPECTED_KEYS = {
     "tagged_item_ratio",
     "cross_section_duplicate_pairs",
     "known_term_fix_hits",
+    "tag_traceability",
     "unsupported_entities",
     "notes",
 }
@@ -219,6 +220,9 @@ def test_json_output_has_exact_keys_and_observation_only_note(capsys, tmp_path):
     )
     assert "P1-13" in payload["notes"]["non_prefixed_tableish_source_tag_count"], (
         "notes 必須說明殘餘缺口的層級（P1-13）與不閘門理由"
+    )
+    assert "tag_traceability" in payload["notes"]["definitions"], (
+        "tag_traceability 必須在 notes 說明其 ground truth（逐字稿段落時間表）"
     )
     assert isinstance(payload["known_term_fix_hits"]["transcript"], dict), (
         "提供 --transcript 時必須附逐字稿的同規則命中"
