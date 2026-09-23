@@ -1,0 +1,19 @@
+{
+  "task_id": "f9fee652",
+  "filename": "1f4fe4d30243.m4a",
+  "original_filename": "0903-科務會議.m4a",
+  "file_size": 45107503,
+  "status": "completed",
+  "progress": 100.0,
+  "stage": "完成",
+  "queue_position": null,
+  "estimated_wait_seconds": 0,
+  "processing_mode": "local",
+  "user_prompt": null,
+  "template_id": "section_meeting",
+  "created_at": "2026-09-23T15:07:44.430559",
+  "started_at": "2026-09-23T15:07:44.430993",
+  "completed_at": "2026-09-23T15:42:20.791804",
+  "error_message": null,
+  "summary_failed": false
+}
