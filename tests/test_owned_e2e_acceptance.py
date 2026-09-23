@@ -23,8 +23,10 @@ import io
 import json
 import subprocess  # 僅取用 TimeoutExpired 給 shim，不會啟動任何 process
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import pytest
@@ -1259,3 +1261,75 @@ def test_general_and_unspecified_template_keep_exact_previous_behaviour(capsys):
     assert "[WARN]" in captured.err and "procurement_evaluation" in captured.err, (
         "未列表模板必須另記一行 log 說明沿用 general 契約（已知限制）"
     )
+
+
+# ---------------------------------------------------------------------------
+# 跨 OS（crossos-p4-audit-01 BLOCKER）：Windows 無 tzdata 時 import 不得被阻斷
+# ---------------------------------------------------------------------------
+
+FIXED_UTC_TIMESTAMP = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
+
+
+def _ambient_zoneinfo_available() -> bool:
+    """capability 偵測（非平台判斷）：本機是否有可用 IANA tz database。"""
+    try:
+        ZoneInfo("Asia/Taipei")
+    except ZoneInfoNotFoundError:
+        return False
+    return True
+
+
+def test_resolve_taipei_tz_falls_back_to_utc_plus_8_without_tzdata():
+    """測試 A：loader 丟 ZoneInfoNotFoundError（Windows 無 tzdata）→ 固定 +08:00。
+
+    稽核 BLOCKER：run_owned_e2e.py 原本在 module import 時直接
+    ``ZoneInfo("Asia/Taipei")``，Windows 無 IANA tz database 且 tzdata 未列入依賴
+    時整個 runner（與以 importlib 載入它的本測試檔）都無法載入。
+    """
+
+    def missing_tzdata_loader(_key):
+        raise ZoneInfoNotFoundError("No time zone found with key Asia/Taipei")
+
+    tz = runner.resolve_taipei_tz(loader=missing_tzdata_loader)
+    local = FIXED_UTC_TIMESTAMP.astimezone(tz)
+
+    assert local.utcoffset() == timedelta(hours=8), (
+        f"fallback 必須是固定 +08:00：{local.utcoffset()!r}"
+    )
+    assert (local.hour, local.minute) == (9, 0), (
+        f"2026-09-23T01:00:00+00:00 在 +08:00 應為 09:00，實際 {local.isoformat()}"
+    )
+    assert local.strftime("%z") == "+0800", f"%z 必須為 +0800：{local.strftime('%z')!r}"
+    # 下游使用點相容：now／isoformat／attempt stamp 不得因 fallback 改變格式
+    assert datetime.now(tz).utcoffset() == timedelta(hours=8)
+    assert local.isoformat().endswith("+08:00")
+    stamp = datetime.now(tz).strftime("%Y%m%d-%H%M%S")
+    assert len(stamp) == 15 and (stamp[:8] + stamp[9:]).isdigit(), (
+        f"attempt stamp 格式必須維持 YYYYMMDD-HHMMSS：{stamp!r}"
+    )
+
+
+def test_resolve_taipei_tz_keeps_zoneinfo_path_when_loader_succeeds():
+    """測試 B：loader 正常 → 必走 ``ZoneInfo("Asia/Taipei")`` 原路徑（零回歸）。
+
+    macOS／有 tzdata 的環境（含本機）維持既有行為：module 常數 ``TAIPEI`` 必須仍是
+    ``ZoneInfo`` 實例且 key 不變，import-time 結果與修正前 byte 級相同。
+    """
+    calls = []
+
+    def spy_loader(key):
+        calls.append(key)
+        return ZoneInfo(key)
+
+    if not _ambient_zoneinfo_available():
+        pytest.skip("此環境無 IANA tzdata（等同 Windows 情境，fallback 已由測試 A 覆蓋）")
+
+    resolved = runner.resolve_taipei_tz(loader=spy_loader)
+    local = FIXED_UTC_TIMESTAMP.astimezone(resolved)
+
+    assert calls == ["Asia/Taipei"], f"loader 必須以 Asia/Taipei 呼叫一次：{calls!r}"
+    assert resolved is ZoneInfo("Asia/Taipei"), "正常路徑必須回傳真實 ZoneInfo（不得包裝）"
+    assert isinstance(runner.TAIPEI, ZoneInfo), f"TAIPEI 常數型別回歸：{type(runner.TAIPEI)!r}"
+    assert runner.TAIPEI.key == "Asia/Taipei", f"TAIPEI key 回歸：{runner.TAIPEI.key!r}"
+    assert (local.hour, local.minute) == (9, 0), f"09:00 換算回歸：{local.isoformat()}"
+    assert local.strftime("%z") == "+0800"

@@ -67,16 +67,31 @@ import subprocess
 import sys
 import time
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TAIPEI = ZoneInfo("Asia/Taipei")
+
+
+def resolve_taipei_tz(loader=ZoneInfo):
+    """建立 Asia/Taipei tzinfo（loader 可注入，預設 zoneinfo.ZoneInfo）。
+
+    Windows 無 IANA tz database（tzdata 未列入依賴）時 ZoneInfo("Asia/Taipei")
+    會在 import 直接丟 ZoneInfoNotFoundError；故退回固定 +08:00 位移——台灣自
+    1979 年起無日光節約時間，對本 runner 的 now／isoformat／strftime 完全等價。
+    """
+    try:
+        return loader("Asia/Taipei")
+    except ZoneInfoNotFoundError:
+        return timezone(timedelta(hours=8))
+
+
+TAIPEI = resolve_taipei_tz()
 # 與 backend/core/platform_config.py 的 darwin-arm64 native 預設一致；
 # runner 不 import backend 模組，避免載入 production settings 副作用。
 DEFAULT_LMSTUDIO_BASE_URL = "http://127.0.0.1:1234"
