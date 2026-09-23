@@ -2040,6 +2040,10 @@ class SummarizationService:
                     continue
                 missing_labels.append(item)
             stats[f"missing_{category}"] = len(missing_labels)
+            # P7-A：未涵蓋「項目身分」清單（供補強不回退守衛做集合比較；additive 內部鍵，
+            # 不進 `cov_*` metrics 行、不改既有欄位格式）。項目字串取自期望集合本身，
+            # 同一場的期望集合為常數 ⇒ 跨輪可比。
+            stats[f"missing_items_{category}"] = list(missing_labels)
             if not expected_items:
                 log.warning(
                     "紀錄覆蓋率檢查：{}期望集合為空（來源：萃取筆記「議題與決議」區塊）→ "
@@ -2067,6 +2071,9 @@ class SummarizationService:
                     continue
                 missing_numbers.append((literal, snippet))
             stats["missing_number"] = len(missing_numbers)
+            stats["missing_items_number"] = [
+                f"{literal}（{snippet}）" for literal, snippet in missing_numbers
+            ]
             if not expected_numbers:
                 log.warning(
                     "紀錄覆蓋率檢查：數字期望集合為空（來源：逐字稿段落列）→ "
@@ -2096,6 +2103,9 @@ class SummarizationService:
                 if not self._date_canonical_is_covered(canonical, folded_record)
             ]
             stats["missing_date"] = len(missing_dates)
+            stats["missing_items_date"] = [
+                f"{canonical}（{snippet}）" for canonical, snippet in missing_dates
+            ]
             if not expected_dates:
                 log.warning(
                     "紀錄覆蓋率檢查：日期期望集合為空（來源：逐字稿段落列）→ "
@@ -3168,6 +3178,82 @@ class SummarizationService:
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
 
+    def _validate_local_record(
+        self,
+        summary: str,
+        merged_notes: str,
+        transcript: str,
+        template: Optional[MeetingTemplate],
+        min_chars: int,
+    ) -> list:
+        """地端紀錄的一組確定性檢查（初稿後與每一輪補強後共用；P7-A 抽出）。
+
+        呼叫順序與項目與 v4.8.0／P4 各波完全相同——抽成函式只是為了讓「補強輪回退後
+        重算」走同一組檢查，避免回退路徑漏掉某一項，導致 log／metrics 與實際交付版本不一致。
+        只回報、不改寫、不刪句；`enforce` 與 `observe` 的差異仍由
+        `_validate_record_source_coverage()` 內部決定。
+        """
+        issues = self._validate_summary_quality(
+            summary, merged_notes, min_chars=min_chars, template=template
+        )
+        issues += self._validate_cloud_speaker_traceability(summary, template)
+        issues += self._validate_cloud_date_grounding(summary, transcript)
+        # P4-A（§9.3）：逐條對帳擴類（議題／決議／數字／日期；只回報不改寫）；
+        # P4-B（§4.3）：忠實度絆索 problems 原樣併入同一份補強問題清單。
+        issues += self._validate_record_source_coverage(
+            summary, merged_notes, transcript, template=template
+        )
+        issues += self._validate_record_fidelity(summary, transcript, template)
+        return issues
+
+    def _core_coverage_snapshot(self) -> Optional[tuple]:
+        """P7-A：目前 `_record_coverage_stats` 的核心覆蓋快照 `(未涵蓋數, 期望數, 未涵蓋身分集合)`。
+
+        - 逐條對帳未執行（`LOCAL_LLM_RECORD_COVERAGE_MODE=off`）或期望集合為 0 ⇒ `None`
+          （守衛據此停用比較＝不作用、不誤傷；`off` 仍為 byte 級回本波前）。
+        - `observe`／`enforce` 兩種模式都照算（`observe` 只是不把問題交給補強清單），
+          因此守衛在 `observe` 下同樣可運作——這正是「先觀察、後升級」的驗收路徑。
+        - 第三項＝未涵蓋項目的身分（`類別:項目字串`），供「未涵蓋數相同但換項」的
+          等量互換判定；取不到身分時為空集合（此時只比數量）。
+        """
+        stats = getattr(self, "_record_coverage_stats", None) or {}
+        expected = 0
+        missing = 0
+        identities: set = set()
+        for category in ("topic", "decision", "number", "date"):
+            if f"expected_{category}" not in stats:
+                continue
+            expected += int(stats.get(f"expected_{category}", 0) or 0)
+            missing += int(stats.get(f"missing_{category}", 0) or 0)
+            for item in stats.get(f"missing_items_{category}") or []:
+                identities.add(f"{category}:{item}")
+        if expected <= 0:
+            return None
+        return (missing, expected, frozenset(identities))
+
+    @staticmethod
+    def _refinement_regression_reason(
+        best_snapshot: Optional[tuple], candidate_snapshot: Optional[tuple]
+    ) -> Optional[str]:
+        """P7-A：候選版本相對最佳版本是否構成「事實回退」→ 回傳原因字串，否則 `None`。
+
+        兩條判定（皆以逐條對帳的未涵蓋項目為準）：
+        ①未涵蓋數變多；②未涵蓋數相同但**換項**（原本已寫到的事實被寫掉、別的補回來）。
+        刻意**不**採「掉了就回退」的嚴格版：那會為了保住 1 項而放棄同一輪淨修好的多項，
+        反而降低補強價值（見計畫 §5「已知邊界」）。取不到項目身分時只比數量。
+
+        抽成純函式＝讓同一條判定能被單元測試與離線重播直接呼叫（與產品路徑同一份程式碼）。
+        """
+        if best_snapshot is None or candidate_snapshot is None:
+            return None
+        if candidate_snapshot[0] > best_snapshot[0]:
+            return "未涵蓋數變多"
+        if candidate_snapshot[0] == best_snapshot[0]:
+            newly_missing = candidate_snapshot[2] - best_snapshot[2]
+            if newly_missing:
+                return f"等量互換（原本已寫到的事實被寫掉 {len(newly_missing)} 項）"
+        return None
+
     async def _summarize_with_local_pipeline(
         self,
         transcript: str,
@@ -3300,22 +3386,25 @@ class SummarizationService:
         # v4.8.0：地端套用與雲端相同的紀錄契約——動態長度閘門（依逐字稿規模）、
         # 發言來源標註絆索、年份依據絆索。三者都是確定性檢查，不靠第二個 LLM 判定。
         min_chars = self._estimate_cloud_min_summary_chars(transcript)
-        issues = self._validate_summary_quality(
-            summary, merged_notes, min_chars=min_chars, template=template
+        issues = self._validate_local_record(
+            summary, merged_notes, transcript, template, min_chars
         )
-        issues += self._validate_cloud_speaker_traceability(summary, template)
-        issues += self._validate_cloud_date_grounding(summary, transcript)
-        # P4-A（§9.3）：逐條對帳擴類（議題／決議／數字／日期；只回報不改寫）；
-        # P4-B（§4.3）：忠實度絆索 problems 原樣併入同一份補強問題清單。
-        issues += self._validate_record_source_coverage(
-            summary, merged_notes, transcript, template=template
-        )
-        issues += self._validate_record_fidelity(summary, transcript, template)
         attempts = 0
         # P3 波（R23）：不收斂保護。補強是「整份紀錄重生成」，若上一輪之後問題集合
         # 完全沒變，代表再跑一輪只會白燒算力、還有把已正確段落改壞的風險
         # （實測 27B：第 2 輪與第 1 輪問題集合相同、輸出逐字相同，白燒 710 s）。
         previous_issue_signature: Optional[tuple] = None
+        # P7-A（T20260923-1700-03）：不回退守衛。補強輪＝整份紀錄重生成，實測會
+        # 「補回一項、掉另一項」（gemma 場同一場：數字未涵蓋 3 → 0 → 又 1）。這裡對每一版
+        # 取核心覆蓋快照（逐條對帳統計；`off` 模式取不到 ⇒ 守衛不作用），只在某輪
+        # 「未涵蓋數變多」時丟棄該輪輸出、改交付最佳版本（同分取最後一版）；
+        # 一行 LOCAL_LLM_REFINEMENT_NO_REGRESSION=false 即回本波前（交付最後一版）。
+        # 比較基準刻意只有核心覆蓋率：其餘維度（忠實度／長度／待辦）各有各的補強職責，
+        # 一起比會出現「用捏造換事實」的反向交易，也稀釋「事實不得因補強而變少」的保證。
+        no_regression = bool(getattr(settings, "LOCAL_LLM_REFINEMENT_NO_REGRESSION", True))
+        best_summary = summary
+        best_snapshot = self._core_coverage_snapshot() if no_regression else None
+        guard_comparable = best_snapshot is not None
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             issue_signature = tuple(sorted(issues))
             if issue_signature == previous_issue_signature:
@@ -3358,16 +3447,56 @@ class SummarizationService:
                 mode="local",
                 transcript=transcript,
             )
-            issues = self._validate_summary_quality(
-                summary, merged_notes, min_chars=min_chars, template=template
+            # 每一輪補強後重算同一組檢查（覆蓋率／忠實度／結構／標註／年份；只回報不改寫）。
+            issues = self._validate_local_record(
+                summary, merged_notes, transcript, template, min_chars
             )
-            issues += self._validate_cloud_speaker_traceability(summary, template)
-            issues += self._validate_cloud_date_grounding(summary, transcript)
-            # 每一輪補強後重算覆蓋率與忠實度（與首輪同一組檢查；只回報不改寫）。
-            issues += self._validate_record_source_coverage(
-                summary, merged_notes, transcript, template=template
-            )
-            issues += self._validate_record_fidelity(summary, transcript, template)
+            if no_regression and guard_comparable:
+                snapshot = self._core_coverage_snapshot()
+                if snapshot is None:
+                    guard_comparable = False
+                    log.info(
+                        "地端補強不回退守衛：第 {} 輪取不到核心覆蓋快照（逐條對帳未執行）"
+                        "→ 本場停用比較，交付最後一版",
+                        attempts,
+                    )
+                elif snapshot[1] != best_snapshot[1]:
+                    guard_comparable = False
+                    log.info(
+                        "地端補強不回退守衛：期望集合由 {} 項變為 {} 項（基準不同不可比）"
+                        "→ 本場停用比較，交付最後一版",
+                        best_snapshot[1],
+                        snapshot[1],
+                    )
+                else:
+                    reason = self._refinement_regression_reason(best_snapshot, snapshot)
+                    if reason:
+                        log.warning(
+                            "地端補強第 {} 輪造成事實回退（{}）：核心未涵蓋 {} → {} 項"
+                            "（期望 {} 項）→ 丟棄本輪輸出，交付最佳版本（{} 字元）",
+                            attempts,
+                            reason,
+                            best_snapshot[0],
+                            snapshot[0],
+                            snapshot[1],
+                            len(best_summary),
+                        )
+                        summary = best_summary
+                        # 交付版本換了 → 問題清單與 cov_* 必須跟著重算，否則 log 會與實際不符。
+                        issues = self._validate_local_record(
+                            summary, merged_notes, transcript, template, min_chars
+                        )
+                    else:
+                        log.info(
+                            "地端補強不回退守衛：第 {} 輪核心未涵蓋 {} → {} 項（期望 {} 項）{}",
+                            attempts,
+                            best_snapshot[0],
+                            snapshot[0],
+                            snapshot[1],
+                            "（持平，取本輪）" if snapshot[0] == best_snapshot[0] else "（更好，取本輪）",
+                        )
+                        best_summary = summary
+                        best_snapshot = snapshot
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")

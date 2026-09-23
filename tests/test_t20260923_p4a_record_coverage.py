@@ -470,9 +470,16 @@ def test_T17_類別開關可縮類別(monkeypatch):
     monkeypatch.setattr(settings, "LOCAL_LLM_RECORD_COVERAGE_CATEGORIES", "unknown,topic")
     service2 = _service()
     service2._validate_record_source_coverage(COVERAGE_RECORD, NOTES_FIXTURE, COVERAGE_TRANSCRIPT)
-    assert set(service2._record_coverage_stats) == {"expected_topic", "missing_topic", "issues_added"}, (
-        "未知名稱一律過濾（只留交集類別）"
-    )
+    # P7-A 追加：`missing_items_<類別>`（未涵蓋項目身分清單，供補強不回退守衛做集合比較）。
+    # additive 內部鍵——`cov_*` metrics 行格式與回傳問題清單皆不變（見
+    # `tests/test_t20260923_p7a_refine_no_regression.py`）。本斷言意圖（未知名稱一律過濾、
+    # 只留交集類別）不變。
+    assert set(service2._record_coverage_stats) == {
+        "expected_topic",
+        "missing_topic",
+        "missing_items_topic",
+        "issues_added",
+    }, "未知名稱一律過濾（只留交集類別）"
 
 
 def test_T18_item_limit超出以其餘N項帶過(monkeypatch):

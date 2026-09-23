@@ -1,0 +1,60 @@
+{
+  "better": {
+    "version": "中途較佳版（600 元已寫回）",
+    "chars": 2193,
+    "snapshot_missing_expected": [
+      26,
+      46
+    ],
+    "missing_by_category": {
+      "topic": 2,
+      "decision": 24,
+      "number": 0,
+      "date": 0
+    },
+    "expected_by_category": {
+      "topic": 8,
+      "decision": 25,
+      "number": 9,
+      "date": 4
+    },
+    "missing_items_core_count": 26,
+    "missing_items_core_sample": [
+      "decision:指示10月14日瑞里發放作業，需早點出發，並特別注意2位高齡老人之現場分發問題。",
+      "decision:指示先確定主辦人（抽簽），再決定具體執行細節。",
+      "decision:指示先開預備缺公告，避免11月1日再找人來得太晚。",
+      "decision:指示各同仁下個禮拜一內稽前，將各自負責區域物品歸位、整理好。",
+      "decision:指示各股針對系統權限、設備、人員配合事項先行準備，以配合11月1日生效之組織變動。"
+    ]
+  },
+  "final": {
+    "version": "最後一版（真實交付）",
+    "chars": 2184,
+    "snapshot_missing_expected": [
+      27,
+      46
+    ],
+    "missing_by_category": {
+      "topic": 2,
+      "decision": 24,
+      "number": 1,
+      "date": 0
+    },
+    "expected_by_category": {
+      "topic": 8,
+      "decision": 25,
+      "number": 9,
+      "date": 4
+    },
+    "missing_items_core_count": 27,
+    "missing_items_core_sample": [
+      "decision:指示10月14日瑞里發放作業，需早點出發，並特別注意2位高齡老人之現場分發問題。",
+      "decision:指示先確定主辦人（抽簽），再決定具體執行細節。",
+      "decision:指示先開預備缺公告，避免11月1日再找人來得太晚。",
+      "decision:指示各同仁下個禮拜一內稽前，將各自負責區域物品歸位、整理好。",
+      "decision:指示各股針對系統權限、設備、人員配合事項先行準備，以配合11月1日生效之組織變動。"
+    ]
+  },
+  "guard_would_revert": true,
+  "guard_reason": "未涵蓋數變多"
+}
