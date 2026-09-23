@@ -1,5 +1,68 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.10.0] - 2026-09-23
+
+### 🎯 主題：地端會議紀錄「事實留存」的模型無關四槓桿＋跨 OS 修補（P4 波）
+
+使用者需求：Mac ＋ LM Studio 的地端模型（本輪聚焦 dense `Qwen3.8-27B-Splash` 與
+`gemma-4-31B-it-MLX-4bit`）生成品質要拉近雲端 Gemini；**品質機制必須與模型無關**，
+日後在辦公室 Windows 11 ＋ RTX 4090 ＋ Ollama 也一體適用；並明確要求不測 MoE 35B-A3B。
+
+### 🔧 修正
+
+1. **P4-A 逐條對帳由 1 類擴到 4＋1 類**（`_validate_record_source_coverage`）：
+   議題／決議／數字／日期四類期望集合改由萃取筆記＋逐字稿推導，重用既有對稱正規化與
+   LCS ≥0.6 比對器；**期望集合為空一律 `log.warning` ＋ `cov_*` 指標**，修掉「零告警靜默 no-op」。
+   呼叫點僅地端，雲端提示詞與輸出 byte 級不變。
+2. **P4-A 假陽性兩波修補**（`0054db4`、`f374c27`）：修掉引用標頭污染 LCS、議題粗體標題、
+   空殼條目、複合決議子句（改子句 AND）、斜線日期正規化（`11/1 ≡ 11月1日`）、議題詞級覆蓋；
+   每波皆附離線重播（0 模型成本）＋負向對照（該判缺的仍判缺）。
+3. **P4-B 忠實度絆索**（`backend/core/fidelity_checks.py`，純函式、無 I/O、fail-soft）：
+   自創專名／無依據歸屬／數字失真三類檢查掛進地端與雲端既有呼叫點，**只回報、不改寫、不刪句**，
+   問題丟進既有補強清單；`LOCAL_FIDELITY_TRIPWIRES=false` 一行回退。
+4. **P4-C 兩引擎取樣同源**：Ollama `options` 由寫死的 `top_p/top_k/repeat_penalty` 改讀**同一份
+   config**（LM Studio 早已如此），並補上補強路徑「無法附逐字稿」WARNING；`context_window_source` 落檔。
+5. **P4-D runner 品質閘門＋標註辨別力**：`--quality-mode {off,observe,required}`（**預設 `off`
+   ＝ byte 級不變**）＋ `--coverage-checklist`（永遠只做觀測）；正文標註吸附新增規則 6
+   （同標籤同時戳去重複化，保留首筆、其餘改到同標籤 ±120 s 內未使用的真實段首）。
+6. **跨作業系統修補（Windows BLOCKER）**：runner 移除對 `tzdata` 的 import-time 依賴
+   （Windows 無 IANA tz database，原寫法會讓 runner 直接載入失敗），改為 `Asia/Taipei` 常數位移；
+   附 2 項回歸測試。
+
+### 📊 實測（同一支 `0903-科務會議.m4a`、`section_meeting`、釘版 `coverage-1.0.0`＋清單 `cf012d1f…`）
+
+| 場次 | 模型 | 補強輪數 | 牆鐘 s | `coverage_all` | `coverage_core` | 字元數 |
+|---|---|---|---|---|---|---|
+| C5（雲端基線） | `gemini-3.5-flash-lite`＋地端校正 | 1 | 無資料 | **0.8060** | **0.8929** | 2593 |
+| **E3** | **`Qwen3.8-27B-Splash`（地端）** | 2 | **1396.1** | **0.7761** | **0.8571** | 3396 |
+| B2（上一版） | `Qwen3.8-27B-Splash`（地端） | 2 | 1710 | 0.8209 | 0.8929 | 4062 |
+| E1／E2 | `gemma-4-31B-it-MLX-4bit`（地端） | 2 | 2278.8／2107.9 | 0.6119 | 0.8214 | 2552／2318 |
+| D1（P4 前） | `gemma-4-31B-it-MLX-4bit`（地端） | 0 | 1227.2 | 0.508 | — | — |
+
+- 三場 P4 後 E2E 皆 `verdict=PASS`、16/16 checks、`failure_reasons=[]`；DOCX 結構檢查全綠。
+- **地端 27B 與雲端的事實留存差縮到 3.0 pp（all）／3.6 pp（core）**；分類上 `number` 4/4 反而優於
+  雲端 2/4，弱點在 `date` 2/4（雲端 4/4）與 topic（0.64 vs 0.72）。`[VERIFIED 量尺重跑一致]`
+- 跨模型／跨 OS 可移植性獨立稽核：四槓桿**零模型名稱分支**、LM Studio 與 Ollama **共用同一條 pipeline**、
+  Windows 靜態相容 PASS（`e2e/portability-audit-02/report.md`）。
+
+### ⚠️ 未達項與新發現（如實登錄，未放寬任何門檻）
+
+1. **補強輪數仍為 2 > 1**（三場皆然）：E3 的 2 輪由**一筆假陽性**造成（括號詞組 `公務車使用`
+   未連續出現），非模型漏寫；時間成本 E3 +13.8%（達標）、gemma +71.8%／+85.7%（未達）。
+2. **§9.4「牆鐘 ≤+25%」在 gemma 上自相矛盾**：單輪生成 ≈485 s 已 = +39.5% → 任何 gemma 場必然未達，
+   已升級為 planner 決策（`.agent/tasks/T20260922-2037-02-local-model-quality-parity/escalation.md`）。
+3. **Qwen 場 `cov_expected_decision=0`**（決議期望集合為空、連 3 次 WARNING）：決議類補強在該場為 no-op，
+   最終 decision 9/9 是模型本身寫到，功勞不得歸 P4-A。
+4. **P4-B 忠實度觀測值未投影進 stored 證據**（只在 in-run log）→ 跨場比較缺可攜證據。
+5. **Windows／Ollama 實機未驗**：`[UNVERIFIED]`（靜態與 payload 級已驗；需 4090 實機量測）。
+
+### 📌 下一步建議
+
+1. 修掉括號詞組假陽性（P4-A 收尾），讓 27B／gemma 的補強有機會收斂到 1 輪。
+2. 27B 需**第 2 次同 build 取樣**才能滿足「≥2 取中位數」的聚合宣稱（目前 n=1）。
+3. planner 裁決 §9.4 門檻語意、P4-B fidelity 證據投影、preflight 證據完整性（空目錄／`attempt.json`）。
+4. 在 Windows 11 ＋ RTX 4090 ＋ Ollama 以同一支音檔跑一次實機驗收（同尺量測）。
+
 ## [v4.9.0] - 2026-09-22
 
 ### 🎯 主題：地端紀錄「可查核性」的模型無關修復——出處標註時間戳確定性吸附、量測儀器強化與量尺更正
