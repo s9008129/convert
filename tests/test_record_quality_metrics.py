@@ -44,6 +44,12 @@ EXPECTED_KEYS = {
     "instruction_item_count",
     "tagged_item_ratio",
     "cross_section_duplicate_pairs",
+    # P7-B（T20260923-1810-01）：模板無關的觀測值新增欄位（additive；皆標明永不閘門）。
+    # 理由：cross_section_duplicate_pairs 依賴 general 模板章節語意，對 section_meeting
+    # 結構性恆 0（量不到可見重複），因此另立全文條目與近似重複兩組觀測值。
+    "full_document_item_count",
+    "full_document_avg_item_chars",
+    "near_duplicate_items",
     "known_term_fix_hits",
     "tag_traceability",
     "unsupported_entities",
@@ -219,6 +225,16 @@ def test_json_output_has_exact_keys_and_observation_only_note(capsys, tmp_path):
     )
     assert "永不作為閘門" in payload["notes"]["non_prefixed_tableish_source_tag_count"], (
         "non_prefixed_tableish_source_tag_count 必須在 notes 明訂為觀察值（永不閘門）"
+    )
+    # P7-B：新觀測值同樣必須在 notes 明訂「永不作為閘門」，且說明與 instruction_item_count 的定義差異。
+    assert "永不作為閘門" in payload["notes"]["definitions"]["full_document_item_stats"], (
+        "full_document_item_stats 必須在 notes 明訂為觀察值（永不作為閘門）"
+    )
+    assert "不得混用" in payload["notes"]["definitions"]["full_document_item_stats"], (
+        "notes 必須說明 full_document_item_count 與 instruction_item_count 定義不同、不得混用"
+    )
+    assert "永不作為閘門" in payload["notes"]["definitions"]["near_duplicate_items"], (
+        "near_duplicate_items 必須在 notes 明訂為觀察值（永不作為閘門）"
     )
     assert "P1-13" in payload["notes"]["non_prefixed_tableish_source_tag_count"], (
         "notes 必須說明殘餘缺口的層級（P1-13）與不閘門理由"

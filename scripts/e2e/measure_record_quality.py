@@ -52,6 +52,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -186,6 +187,92 @@ def count_instruction_items(text: str) -> int:
     return len(extract_body_items("\n".join(lines[start:end])))
 
 
+# ---------------------------------------------------------------------------
+# P7-B（T20260923-1810-01）：模板無關的「全文條目」與「近似重複」觀測值。
+#
+# 背景（Stage 02 attempt-01 審查 I3／I4）：既有 `cross_section_duplicate_pairs`
+# 是 `dedupe_cross_section_items` 的回報值，而該函式需要「決議」＋「主席裁示事項」
+# 兩個章節且 `template.id != "general"` 直接回傳 ⇒ 對 section_meeting **結構性恆 0**，
+# 用它衡量 qwen 的可見重複等於量不到。這裡改以**模板無關**的方式直接量全文條目：
+# 正規化後（去編號、去標點與空白）相似度 ≥ 門檻即算一對，完全不依賴任何模板語意。
+# 純觀測值：不參與 verdict、不改產品行為。
+# ---------------------------------------------------------------------------
+
+_ITEM_NUMBER_PREFIX_PATTERN = re.compile(r"^\s*(?:\d+[.、]|[（(]\d+[)）])\s*")
+_DUP_DROP_PATTERN = re.compile(r"[^\w\u3400-\u4dbf\u4e00-\u9fff]+")
+_DUP_METADATA_TAIL_PATTERN = re.compile(r"[（(][^（()）]{0,40}(?:單位|主辦|承辦)[^（()）]{0,40}[)）]\s*$")
+
+
+def normalize_item_for_duplicate(item: str) -> str:
+    """近似重複比較用的條目正規化：去編號 → 去行尾 metadata → 去標點與空白。"""
+    text = _ITEM_NUMBER_PREFIX_PATTERN.sub("", item.strip())
+    text = _DUP_METADATA_TAIL_PATTERN.sub("", text)
+    return _DUP_DROP_PATTERN.sub("", text)
+
+
+def extract_all_items(text: str) -> list:
+    """全文 leaf item（含表格列以外的所有編號行）；回傳 [(行號 1-based, 條目原文)]。"""
+    items = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or "|" in stripped:
+            continue
+        if ITEM_LINE_PATTERN.match(stripped):
+            items.append((index, stripped))
+    return items
+
+
+def measure_near_duplicates(text: str, threshold: float = 0.80, top_n: int = 5) -> dict:
+    """全文近似重複觀測值（模板無關）。
+
+    `count`＝正規化後相似度 ≥ `threshold` 的對數（兩側都需 ≥ 8 字，避免短句誤報）；
+    `exact_count`＝正規化後完全相等的對數；`top`＝前 `top_n` 對（附行號與相似度）。
+    """
+    raw_items = extract_all_items(text)
+    normalized = [
+        (line_no, raw, normalize_item_for_duplicate(raw)) for line_no, raw in raw_items
+    ]
+    normalized = [entry for entry in normalized if len(entry[2]) >= 8]
+    pairs = []
+    exact = 0
+    for i in range(len(normalized)):
+        for j in range(i + 1, len(normalized)):
+            left, right = normalized[i][2], normalized[j][2]
+            if left == right:
+                exact += 1
+                ratio = 1.0
+            else:
+                ratio = difflib.SequenceMatcher(None, left, right).ratio()
+            if ratio >= threshold:
+                pairs.append(
+                    {
+                        "left_line": normalized[i][0],
+                        "right_line": normalized[j][0],
+                        "ratio": round(ratio, 4),
+                        "left": normalized[i][1][:60],
+                        "right": normalized[j][1][:60],
+                    }
+                )
+    pairs.sort(key=lambda entry: entry["ratio"], reverse=True)
+    return {
+        "count": len(pairs),
+        "exact_count": exact,
+        "item_count": len(normalized),
+        "threshold": threshold,
+        "top": pairs[:top_n],
+    }
+
+
+def measure_full_item_stats(text: str) -> dict:
+    """全文條目數與平均條目字數（觀測值；定義見 notes）。"""
+    items = extract_all_items(text)
+    lengths = [len(_ITEM_NUMBER_PREFIX_PATTERN.sub("", raw).strip()) for _line, raw in items]
+    return {
+        "full_document_item_count": len(items),
+        "full_document_avg_item_chars": round(sum(lengths) / len(lengths), 1) if lengths else 0.0,
+    }
+
+
 def count_known_term_fix_hits(text: str, fixes: tuple = SECTION_MEETING_RECORD_TERM_FIXES) -> dict:
     """已知誤辨字串的左側（錯形）與右側（修正）字面命中，分開計數。
 
@@ -243,6 +330,7 @@ def measure_record_quality(
     *,
     transcript_text: Optional[str] = None,
     template_id: Optional[str] = None,
+    near_duplicate_threshold: float = 0.80,
 ) -> dict:
     """量測入口：回傳 plan W6 定義的固定 JSON schema（＋notes 解讀欄）。"""
     body_tags, table_tags, header_tags, non_prefixed_tags = count_source_tag_regions(
@@ -311,6 +399,20 @@ def measure_record_quality(
             "cross_section_duplicate_pairs": (
                 "dedupe_cross_section_items 回報移除的條目數（＝決議節／主席裁示節重複對數）"
             ),
+            "full_document_item_stats": (
+                "P7-B 觀測值（模板無關）：full_document_item_count＝全文行首為 "
+                "'N.'／'（N）' 的 leaf item 數（排除表格列）；"
+                "full_document_avg_item_chars＝同一批條目去掉編號後的平均字元數。"
+                "與 instruction_item_count 的定義不同（後者只看「科長指示及提醒事項」章節），"
+                "兩者不得混用。**永不作為閘門**。"
+            ),
+            "near_duplicate_items": (
+                "P7-B 觀測值（模板無關）：對全文 leaf item 兩兩比較，正規化"
+                "（去編號→去行尾 metadata→去標點與空白）後 difflib 相似度 ≥ 門檻即計一對；"
+                "count／exact_count／top 為計數與前幾對範例。"
+                "存在的理由：cross_section_duplicate_pairs 依賴 general 模板的章節語意，"
+                "對 section_meeting 結構性恆 0，量不到可見重複。**永不作為閘門**。"
+            ),
             "known_term_fix_hits": (
                 "left_hits＝SECTION_MEETING_RECORD_TERM_FIXES 左側（錯形 regex）命中數；"
                 "right_hits＝右側修正字面出現數；transcript＝同規則套用逐字稿（未提供時 null）"
@@ -373,8 +475,12 @@ def measure_record_quality(
         "table_source_tag_count": table_tags,
         "non_prefixed_tableish_source_tag_count": non_prefixed_tags,
         "instruction_item_count": count_instruction_items(record_text),
+        **measure_full_item_stats(record_text),
         "tagged_item_ratio": tagged_item_ratio,
         "cross_section_duplicate_pairs": dedupe_removed,
+        "near_duplicate_items": measure_near_duplicates(
+            record_text, threshold=near_duplicate_threshold
+        ),
         "known_term_fix_hits": term_hits,
         "tag_traceability": tag_traceability,
         "unsupported_entities": unsupported_entities,
@@ -400,6 +506,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--transcript", type=Path, default=None, help="逐字稿 txt（選用；提供時才輸出 unsupported_entities）")
     parser.add_argument("--template", default=None, help="會議模板 id（如 section_meeting；供 W5 跨章節去重）")
+    parser.add_argument(
+        "--near-duplicate-threshold",
+        type=float,
+        default=0.80,
+        help="P7-B 觀測值 near_duplicate_items 的相似度門檻（預設 0.80；純觀測，不影響 verdict）",
+    )
     parser.add_argument("--out", type=Path, default=None, help="另寫一份 JSON 檔（stdout 仍輸出同一份）")
     return parser.parse_args(argv)
 
@@ -428,7 +540,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         transcript_text = args.transcript.read_text(encoding="utf-8")
 
     result = measure_record_quality(
-        record_text, transcript_text=transcript_text, template_id=args.template
+        record_text,
+        transcript_text=transcript_text,
+        template_id=args.template,
+        near_duplicate_threshold=args.near_duplicate_threshold,
     )
     payload = json.dumps(result, ensure_ascii=False, indent=2)
     if args.out is not None:

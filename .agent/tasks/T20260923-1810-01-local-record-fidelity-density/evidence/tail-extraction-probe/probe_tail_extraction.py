@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -89,6 +90,7 @@ def main() -> int:
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
+    started = time.monotonic()
     with urllib.request.urlopen(req, timeout=3600) as resp:  # noqa: S310
         body = json.loads(resp.read().decode("utf-8"))
 
@@ -107,6 +109,7 @@ def main() -> int:
         "notes_chars": len(notes),
         "usage": body.get("usage"),
         "finish_reason": body["choices"][0].get("finish_reason"),
+        "elapsed_seconds": round(time.monotonic() - started, 1),
         "probe_hits": hits,
         "probe_hit_count": sum(1 for v in hits.values() if v),
         "probe_total": len(PROBES),
