@@ -680,7 +680,7 @@ async def _run_pipeline_metrics_probe(monkeypatch, *, notes: str, summary: str, 
 
 
 # ---------------------------------------------------------------------------
-# T-30 ~ T-35：P6-A 實測修補（真實 `qwen3.8-27b-splash` 筆記格式，0903 場）
+# T-30 ~ T-37：P6-A 實測修補（真實 `qwen3.8-27b-splash` 筆記格式，0903 場）
 #
 # 證據：正式程式路徑重跑（`section_meeting` 模板、temperature 0.6、139.9 s、
 # 4865 字筆記）＋ E4／E5／E5b 三場 log `cov_expected_decision=0`（同場
