@@ -29,39 +29,62 @@
    （Windows 無 IANA tz database，原寫法會讓 runner 直接載入失敗），改為 `Asia/Taipei` 常數位移；
    附 2 項回歸測試。
 
+### 📚 新增文件與獨立分析（皆附可重跑證據）
+
+- `doc/操作手冊/地端模型品質優化與驗證手冊_v4.10.md`：四槓桿與開關／回退、macOS＋LM Studio 與
+  Windows 11＋Ollama 操作步驟、兩把量尺用法、疑難排解、殘餘風險（引用皆附 `檔案:行號`）。
+- `quality-parity-01/report.md`：地端 vs 雲端「量尺以外」落差分析（46 項細節探針、ASR 亂碼殘留、
+  出處標註辨別力、取捨策略）＋ 6 條優化建議與各自驗收指標。
+- `timing-forensics-02/report.md`：階段耗時拆解與瓶頸歸因（dense 27B prefill ≈98 tok/s × 每次 1.8–2 萬 token）。
+- `pre-push-review-01/report.md`：推送前獨立審查（`PUSH_SAFE_WITH_NOTES`；確認未動門檻常數、
+  `off` 模式行為、雲端提示詞與 `task_processor.py:259/262`）。
+- `verify_independent.md`＋`run_notes_addendum.md`：Stage 05 獨立驗收（E4＝`ACCEPTED_WITH_GAPS`）
+  與 `run_notes.md` 兩處更正（階段標籤對調、E3 輪數誤值）＋決議類 no-op 補登錄。
+
 ### 📊 實測（同一支 `0903-科務會議.m4a`、`section_meeting`、釘版 `coverage-1.0.0`＋清單 `cf012d1f…`）
 
 | 場次 | 模型 | 補強輪數 | 牆鐘 s | `coverage_all` | `coverage_core` | 字元數 |
 |---|---|---|---|---|---|---|
 | C5（雲端基線） | `gemini-3.5-flash-lite`＋地端校正 | 1 | 無資料 | **0.8060** | **0.8929** | 2593 |
-| **E3** | **`Qwen3.8-27B-Splash`（地端）** | 2 | **1396.1** | **0.7761** | **0.8571** | 3396 |
+| **E4（最終驗收，`818b71e`）** | **`Qwen3.8-27B-Splash`（地端）** | **1（停損）** | **992.2** | **0.7015** | **0.8214** | **2717** |
+| E3（P4-A 修補後） | `Qwen3.8-27B-Splash`（地端） | 2 | 1396.1 | 0.7761 | 0.8571 | 3396 |
 | B2（上一版） | `Qwen3.8-27B-Splash`（地端） | 2 | 1710 | 0.8209 | 0.8929 | 4062 |
 | E1／E2 | `gemma-4-31B-it-MLX-4bit`（地端） | 2 | 2278.8／2107.9 | 0.6119 | 0.8214 | 2552／2318 |
 | D1（P4 前） | `gemma-4-31B-it-MLX-4bit`（地端） | 0 | 1227.2 | 0.508 | — | — |
 
-- 三場 P4 後 E2E 皆 `verdict=PASS`、16/16 checks、`failure_reasons=[]`；DOCX 結構檢查全綠。
-- **地端 27B 與雲端的事實留存差縮到 3.0 pp（all）／3.6 pp（core）**；分類上 `number` 4/4 反而優於
-  雲端 2/4，弱點在 `date` 2/4（雲端 4/4）與 topic（0.64 vs 0.72）。`[VERIFIED 量尺重跑一致]`
+- 四場 P4 後地端 E2E（E1／E2／E3／E4）皆 `verdict=PASS`、16/16 checks、`failure_reasons=[]`；DOCX 結構檢查全綠。
+- **三項缺陷修補在 E4 in-run 生效**：議題假陽性 1→0、B1 歸屬假陽性 14→0、數字子字串假命中→正確揭露 2 筆真缺口；
+  補強由 2 輪降為 1 輪（問題集合逐輪相同 → 停損），牆鐘 **992.2 s＝−28.9% vs E3、−19.1% vs D1**。`[VERIFIED]`
+  證據：`e2e/attempt-E4-qwen27b-p4-final/run_notes.md`＋`verify_independent.md`。
+- **地端 27B 與雲端的事實留存差：E3 場 3.0 pp（all）／3.6 pp（core）；E4 場 10.4 pp／7.2 pp**
+  ——同一模型兩次抽樣擺動達 7.5 pp，**不可宣稱已達雲端水準**，聚合宣稱需更多取樣。`[VERIFIED 量尺重跑一致]`
 - 跨模型／跨 OS 可移植性獨立稽核：四槓桿**零模型名稱分支**、LM Studio 與 Ollama **共用同一條 pipeline**、
   Windows 靜態相容 PASS（`e2e/portability-audit-02/report.md`）。
 
 ### ⚠️ 未達項與新發現（如實登錄，未放寬任何門檻）
 
-1. **補強輪數仍為 2 > 1**（三場皆然）：E3 的 2 輪由**一筆假陽性**造成（括號詞組 `公務車使用`
-   未連續出現），非模型漏寫；時間成本 E3 +13.8%（達標）、gemma +71.8%／+85.7%（未達）。
+1. **補強輪數在 27B 已降為 1（E4，停損收斂）**；gemma 的 E1／E2 仍為 2 輪。時間成本 E4 −28.9% vs E3、
+   −19.1% vs D1（達標）、gemma +71.8%／+85.7%（未達）。
 2. **§9.4「牆鐘 ≤+25%」在 gemma 上自相矛盾**：單輪生成 ≈485 s 已 = +39.5% → 任何 gemma 場必然未達，
    已升級為 planner 決策（`.agent/tasks/T20260922-2037-02-local-model-quality-parity/escalation.md`）。
 3. **Qwen 場 `cov_expected_decision=0`**（決議期望集合為空、連 3 次 WARNING）：決議類補強在該場為 no-op，
    最終 decision 9/9 是模型本身寫到，功勞不得歸 P4-A。
-4. **P4-B 忠實度觀測值未投影進 stored 證據**（只在 in-run log）→ 跨場比較缺可攜證據。
-5. **Windows／Ollama 實機未驗**：`[UNVERIFIED]`（靜態與 payload 級已驗；需 4090 實機量測）。
+4. **P4-B 忠實度觀測值已投影**（`record_quality.json.unsupported_entities_count`：E2＝2／E3＝4／E4＝3），
+   本項解除。新登錄：絆索 A 對 ASR 變體（逐字稿「煙酒文神穀股」→紀錄「煙酒文宣股」）會產生軟性噪音，
+   且同一數字缺口會被「覆蓋率對帳」與「絆索 C」各報一次 → 問題數灌水。
+5. **E4 `coverage_all` 0.7015 低於 E3 0.7761、亦低於雲端 0.8060**；`coverage_core` 0.8214 亦低於雲端 0.8929。
+   真缺口仍在（15%／600／100 元／下週一內稽／社交工程郵件／搬遷細節），**模型補寫能力才是目前上限**：
+   E4 的補強輪輸出與首版逐字相同（2706 字元／2051 tokens）＝對 27B 而言是 no-op。
+6. **Windows／Ollama 實機未驗**：`[UNVERIFIED]`（靜態與 payload 級已驗；需 4090 實機量測）。
 
 ### 📌 下一步建議
 
-1. 修掉括號詞組假陽性（P4-A 收尾），讓 27B／gemma 的補強有機會收斂到 1 輪。
-2. 27B 需**第 2 次同 build 取樣**才能滿足「≥2 取中位數」的聚合宣稱（目前 n=1）。
-3. planner 裁決 §9.4 門檻語意、P4-B fidelity 證據投影、preflight 證據完整性（空目錄／`attempt.json`）。
-4. 在 Windows 11 ＋ RTX 4090 ＋ Ollama 以同一支音檔跑一次實機驗收（同尺量測）。
+1. ~~修掉括號詞組假陽性~~／~~B1 邊界假陽性~~／~~數字子字串假命中~~ 已完成（`849e934`／`eb9dfeb`／`818b71e`），
+   E4 已驗；接續處理**真缺口補寫**：27B 對「15%／600」的補強輪為逐字 no-op → 需分段提示或更強模型。
+2. 去重複揭露（同一缺口被覆蓋率與絆索 C 各報一次）、絆索 A 對 ASR 變體的軟性噪音。
+3. 27B 目前 n=2 且擺動 7.5 pp：聚合宣稱需多次重跑取中位數。
+4. planner 裁決 §9.4 門檻語意與 preflight 證據完整性（空目錄／`attempt.json`）。
+5. 在 Windows 11 ＋ RTX 4090 ＋ Ollama 以同一支音檔跑一次實機驗收（同尺量測）。
 
 ## [v4.9.0] - 2026-09-22
 
