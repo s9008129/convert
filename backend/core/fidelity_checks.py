@@ -500,7 +500,20 @@ def _table_rows(record_text: str) -> list:
 
 
 def _tag_owner_issues(record_text: str, transcript_text: str) -> list:
-    """B1：``（發言者N，HH:MM:SS）`` 的時間戳落在**他人**段落內 → 回報。"""
+    """B1：``（發言者N，HH:MM:SS）`` 的時間戳落在**他人**段落內 → 回報。
+
+    段落查找是**集合**語意，不是「檔案序第一個命中的段落」。段落區間與吸附規則 0／
+    量尺 ``tags_inside_same_speaker_segment`` 共用同一份**閉區間**定義
+    （``text_postprocess._segment_contains``），而逐字稿相鄰段落的邊界必然重疊
+    （前段 ``end`` ＝ 後段 ``start``）；因此邊界時間戳會被前後兩段**同時**包含，
+    標註只有在前後兩段的發言者都不是標註指名者時，才算「落在他人段落內」。
+
+    舊版取「檔案序第一個命中的段落」＝在邊界上永遠判給**前一段**，於是凡是引用
+    「該段落起點」的標註（段首＝前段段尾）都會被誤判為歸屬錯誤：E3 場
+    （Qwen3.8-27B-Splash）14／14 全屬此類假陽性，且它與量尺對同一份紀錄的
+    ``tags_inside_same_speaker_segment``（45／45）直接矛盾。P4-D 吸附又保證標註
+    落在真實段首，使這類標註成為常態。
+    """
     from backend.core.text_postprocess import iter_transcript_segments
 
     segments = iter_transcript_segments(transcript_text)
@@ -520,13 +533,18 @@ def _tag_owner_issues(record_text: str, transcript_text: str) -> list:
             + int(time_match.group(2)) * 60
             + int(time_match.group(3) or 0)
         )
-        owner = None
+        # 所有含此時間戳的段落（去重、保留檔案序＝決定性輸出）；只有標註指名者
+        # 不在其中時才算歸屬錯誤。非「發言者N」的段落不參與判定（與標註標籤同
+        # 一命名空間才可比對；舊版遇到此類首段是整支跳過，語意不變）。
+        owners = []
         for start, end, speaker in segments:
-            if start == seconds or (start <= seconds <= end):
-                owner = speaker
-                break
-        if owner and re.fullmatch(r"發言者\d+", owner) and owner != label:
-            issues.append("tag_owner|（%s）落在 %s 的逐字稿段落內" % (body.strip(), owner))
+            if start <= seconds <= end and re.fullmatch(r"發言者\d+", speaker):
+                if speaker not in owners:
+                    owners.append(speaker)
+        if owners and label not in owners:
+            issues.append(
+                "tag_owner|（%s）落在 %s 的逐字稿段落內" % (body.strip(), "／".join(owners))
+            )
     return issues
 
 
