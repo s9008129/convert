@@ -1,5 +1,76 @@
 # 政府智慧會議紀錄生成系統 - 變更紀錄
 
+## [v4.10.1] - 2026-09-23
+
+### 🎯 主題：P5 波——「一定要修的 ASR 固定誤辨」改成跨 OS／跨模型共用的資料檔，並修掉校正層耗時膨脹
+
+使用者需求：Mac ＋ LM Studio 的地端模型（本輪聚焦 `qwen3.8-27b-splash` 與
+**`gemma-4-31B-it-MLX-4bit`**）生成的會議紀錄品質要拉近雲端 Gemini；品質機制必須**模型無關**，
+日後在 Windows 11 ＋ RTX 4090 ＋ Ollama 也一體適用（明示不測 MoE `qwen3.6-35b-a3b-splash`）。
+
+### 🔧 修正
+
+1. **P5-A 確定性誤辨層（資料檔驅動）**：新增 `data/glossary/確定性誤辨校正.txt`
+   （43 組 `錯=>對`、`!複合詞` 排除語法、行尾註解與逐筆證據註解）＋ `backend/core/glossary.py`
+   的 `apply_known_corrections()`（長形優先；單字配對須同時登錄排除詞才放行）。套用三層：
+   逐字稿清理層 `text_postprocess.py::apply_official_term_fixes`、校正層
+   `correction.py::correct_transcript`（逐段先確定性修、再交模型）、紀錄層
+   `text_postprocess.py::apply_record_term_fixes`（僅 `mode=="local"`）。
+   **無 ground truth 的錯形一律不登錄**（寧可留錯字，也不把不確定寫成規則）。
+2. **P5-A.1 詞表 11→43 組並延伸到紀錄層**（`5247436`）；`CorrectionReport` 新增
+   `deterministic_changes`／`known_fixes_applied`（不污染既有「採納 N 處」計數）。
+3. **P5-A.2 校正層觸發判定改看「確定性修正後」文字**（`ce99502`）：已登錄錯形既已修掉，
+   就不該再為它們付一次 LLM。實測同一份 0903 逐字稿 45 段觸發 **35→12 段**，
+   校正階段由 14.5 分鐘級回到 **103 s**。
+4. **同音閘門保護詞護欄**：`correction.py::_would_destroy_protected_term` 以同一份詞表推導保護詞，
+   ±24 字視窗內不得把正確詞改成錯的。
+5. **詞表讀取改 `utf-8-sig`＋壞檔 fail-soft**（`58e65de`）：Windows 記事本存檔加的 BOM
+   原本會讓**第一行配對靜默失效**；誤存 Big5／ANSI 原本會讓 `UnicodeDecodeError` 往上拋
+   （改為跳過該檔並告警）。附 2 項回歸測試（BOM／CRLF／壞檔）。
+
+### 📊 實測（同一支音檔 `0903-科務會議.m4a`、同一份 ASR 快取、同一模板 `section_meeting`）
+
+「亂碼」＝19 型已登錄 ASR 錯形清單的命中數（可重跑，腳本見 `e2e/attempt-E5-qwen27b-p5/README.md`）。
+
+| 場次 | 模型 | 逐字稿亂碼 | 紀錄亂碼 | 紀錄字元 | 亂碼／千字 | `coverage_all` | `coverage_core` | 任務耗時 | runner verdict |
+| --- | --- | --- | --- | ---: | ---: | --- | --- | ---: | --- |
+| E4（P5 前） | qwen3.8-27b | 46 型／109 次 | 7 型／10 次 | 2,717 | 3.68 | 0.7015 | 0.8214 | 985.2 s | — |
+| **E5 #1（P5 後）** | qwen3.8-27b | **13 型／15 次** | 4 型／5 次 | 3,132 | **1.60** | 0.6866 | 0.7857 | 1,273.7 s | （runner 被執行環境回收，見下） |
+| **E5 #2（P5 後）** | qwen3.8-27b | **13 型／15 次** | 7 型／11 次 | 5,423 | 2.03 | **0.8507** | **0.9643** | 1,662.1 s | **PASS（16/16）** |
+| **E5（P5 後）** | **gemma-4-31B-it-MLX-4bit** | **12 型／14 次** | **1 型／1 次** | 2,375 | **0.42** | 0.5522 | 0.7143 | 2,127.6 s | **PASS（16/16）** |
+| C5（對照） | 雲端 gemini-3.5-flash-lite | 1 型／1 次 | 2 型／2 次 | 2,593 | 0.77 | 0.8060 | 0.8929 | — | — |
+
+- **逐字稿亂碼 109 → 15 次（-86.2%）**，且 qwen 兩場完全相同（13 型／15 次）→ 確定性層是
+  **可重現**且**模型無關**的（gemma 亦為 12 型／14 次）。
+- qwen E5 #2 的 `coverage_core` 0.9643 **高於雲端 0.8929**；但同一顆模型 #1 場只有 0.7857 →
+  **單場抽樣變異（16.4 個百分點）大於「地端 vs 雲端」的差距**，兩場都必須一起看。
+- gemma 的紀錄亂碼率（0.42／千字）**低於雲端（0.77／千字）**，但覆蓋率較低 →
+  「字面精準」與「內容完整」是兩個獨立的軸。
+- **未達項（如實登錄）**：使用者自訂門檻「紀錄亂碼 ≤3 處」在 qwen 兩場（5、11）**未達**；
+  gemma 達標（1 處）。`Windows 11 ＋ Ollama` 實機仍未驗 `[UNVERIFIED]`。
+
+### 🧪 獨立稽核與驗收（皆為可重跑證據）
+
+- `e2e/attempt-E5-qwen27b-p5b/`、`e2e/attempt-E5-gemma31b-p5b/`：runner 完整產物（`verdict=PASS`、
+  16/16 checks、`coverage_observation.json`、`record_quality.json`、`sha256_manifest.json`）。
+- `e2e/model-agnostic-audit-01/report.md`：模型無關性稽核 → **六個品質層全部 `MODEL_AGNOSTIC`**。
+- `e2e/crossos-p5-audit-01/report.md`：Windows 11 可攜性稽核 → `WINDOWS_SAFE_WITH_NOTES`（本版已修掉其中兩條）。
+- `e2e/gemma-e5-preflight-01/report.md`：gemma 模型 id 對應（`gemma-4-31B-it-MLX-4bit` 目錄名 ↔
+  API `gemma-4-31b-it-mlx`）與 48 GiB 記憶體可行性。
+- `e2e/glossary-replay-verify-01/report.md`：離線重播獨立複核（43 組 115 次替換、43/43 全命中可重現）。
+- `e2e/residual-gap-01/report.md`：優化建議落實盤點與殘餘風險誠實清單。
+
+### 🔍 更正
+
+`5247436` 訊息中的「亂碼命中 60 處 → 11 處」**不可重現**（獨立複核：同一份校正前逐字稿在 20 型
+清單下 PRE=**24** → POST=**11**；六種可查核定義為 24／22／57／116／126／128）。「→11 處」
+「115 次替換」「43 組配對全數命中」成立；排除複合詞實為 47 條（非 45）。自本版起一律採用可重跑基準。
+
+### 📚 文件
+
+- `doc/操作手冊/地端模型品質優化與驗證手冊_v4.10.md`：新增 §2.5（P5-A 資料檔語法與護欄）、
+  §6.5（兩模型實測對照）、§5.4-4（Windows 詞表編碼）、§8-10～16（殘餘風險）與附錄更新。
+
 ## [v4.10.0] - 2026-09-23
 
 ### 🎯 主題：地端會議紀錄「事實留存」的模型無關四槓桿＋跨 OS 修補（P4 波）
