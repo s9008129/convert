@@ -1,0 +1,1014 @@
+{
+  "metric_version": "coverage-1.0.0",
+  "label": "E2-gemma31b-p4a-fix",
+  "record_path": "data/cache/e2e/p4-gemma31b-e2/backend_data/outputs/0903-科務會議_7bf495fe.md",
+  "record_sha256": "6b7e8fc16d01a468c84022640fbadfd60d529cb1b3f8e6513db93463f2e02a60",
+  "record_char_count": 2318,
+  "record_normalized_char_count": 1638,
+  "checklist_path": ".agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json",
+  "checklist_sha256": "cf012d1f6983f67ecb47cc7a6486e48c110a6b2782ad94cccf0332a4ec6ec001",
+  "checklist_version": "1.0.0",
+  "meeting": "0903-科務會議",
+  "fact_total": 67,
+  "fact_core_total": 28,
+  "fact_supporting_total": 39,
+  "covered_total": 41,
+  "covered_core": 23,
+  "covered_supporting": 18,
+  "coverage_all": 0.6119,
+  "coverage_core": 0.8214,
+  "coverage_supporting": 0.4615,
+  "missing_core_ids": [
+    "F044",
+    "F048",
+    "F060",
+    "F065",
+    "F066"
+  ],
+  "missing_core_statements": [
+    "年底選舉將近，涉及本機關的議題要特別小心、注意政治敏感。",
+    "先前辦公室的照片被外流到臉書，留言至今沒有撤下。",
+    "政風室旁邊的空辦公室（未來要給工產科使用）霉味很重。",
+    "財政四科搬遷分兩階段，第一階段由工產科、財管科先遷入。",
+    "原空間將移交新聞行銷處：局長室改為新聞行銷處處長辦公室、隔壁會議室改為副處長辦公室。"
+  ],
+  "missing_supporting_ids": [
+    "F014",
+    "F016",
+    "F017",
+    "F018",
+    "F026",
+    "F029",
+    "F030",
+    "F031",
+    "F032",
+    "F039",
+    "F040",
+    "F041",
+    "F043",
+    "F051",
+    "F057",
+    "F058",
+    "F059",
+    "F062",
+    "F063",
+    "F064",
+    "F067"
+  ],
+  "by_category": {
+    "decision": {
+      "total": 9,
+      "covered": 7,
+      "coverage": 0.7778
+    },
+    "name": {
+      "total": 3,
+      "covered": 3,
+      "coverage": 1.0
+    },
+    "action_item": {
+      "total": 9,
+      "covered": 7,
+      "coverage": 0.7778
+    },
+    "number": {
+      "total": 4,
+      "covered": 3,
+      "coverage": 0.75
+    },
+    "constraint": {
+      "total": 13,
+      "covered": 9,
+      "coverage": 0.6923
+    },
+    "topic": {
+      "total": 25,
+      "covered": 8,
+      "coverage": 0.32
+    },
+    "date": {
+      "total": 4,
+      "covered": 4,
+      "coverage": 1.0
+    }
+  },
+  "normalization": {
+    "steps": [
+      "unicode_nfkc",
+      "casefold",
+      "opencc_fold_s2twp",
+      "strip_whitespace_and_newlines",
+      "strip_punctuation_and_symbols"
+    ],
+    "opencc_available": true,
+    "opencc_source": "opencc-s2twp",
+    "folded_to": "台灣正體（OpenCC s2twp）",
+    "kept_chars": "ASCII 英數字 ＋ 中日韓漢字（基本區／擴充 A＋B 以上／相容表意文字）",
+    "removed_chars": "空白與換行（含 Windows CRLF）、中英文標點與符號、括號、破折號、'、'、'：'、'，'、'.'、'-'、'_'、'|'、Markdown 表格管線與 '#'、'*'、'>'、全形空白",
+    "fuzzy": false,
+    "fuzzy_requested": false,
+    "fuzzy_mode": "disabled"
+  },
+  "warnings": [],
+  "transcript": {
+    "transcript_path": "data/cache/e2e/p4-gemma31b-e2/backend_data/outputs/0903-科務會議_7bf495fe_逐字稿.txt",
+    "transcript_sha256": "199d37b5a2ecdfd2bcac283e94d830a4357e5599836539cd1230b8ae5408060a",
+    "transcript_char_count": 15667,
+    "fact_total": 67,
+    "covered_total": 66,
+    "covered_core": 28,
+    "coverage_all": 0.9851,
+    "coverage_core": 1.0,
+    "missing_core_ids": [],
+    "missing_supporting_ids": [
+      "F058"
+    ],
+    "note": "觀察值：同一組 probes 對逐字稿（含時間戳與發言者標籤）的涵蓋率，用來分辨『模型漏寫』與『清單事實根本沒出現在逐字稿（ASR 變體／清單瑕疵）』；永不作為閘門。"
+  },
+  "facts": [
+    {
+      "id": "F001",
+      "category": "decision",
+      "tier": "core",
+      "statement": "組織規程與編制表修正案已經縣府法規審查小組審查通過，自今年11月1日生效。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 2,
+      "matched_positions": [
+        429,
+        434
+      ],
+      "reason": null
+    },
+    {
+      "id": "F002",
+      "category": "decision",
+      "tier": "core",
+      "statement": "土地稅科拆分為「地價稅科」與「土地增值稅科」兩科。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        444,
+        449
+      ],
+      "reason": null
+    },
+    {
+      "id": "F003",
+      "category": "name",
+      "tier": "core",
+      "statement": "消費稅科（逐字稿作「校費稅科」）改名為「使用牌照稅科」。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        462
+      ],
+      "reason": null
+    },
+    {
+      "id": "F004",
+      "category": "decision",
+      "tier": "core",
+      "statement": "印花稅業務會移到土地增值稅科，據悉將有兩個承辦人員一起過去。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        477,
+        449
+      ],
+      "reason": null
+    },
+    {
+      "id": "F005",
+      "category": "name",
+      "tier": "core",
+      "statement": "菸酒管理科整併到法務科，並更名為「菸酒及稅務管理科」。",
+      "probe_group_count": 7,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        521
+      ],
+      "reason": null
+    },
+    {
+      "id": "F006",
+      "category": "name",
+      "tier": "core",
+      "statement": "房屋稅科的股別名稱從「一股、二股」改為「稽徵股」與「徵收股」。",
+      "probe_group_count": 6,
+      "covered": true,
+      "matched_group_index": 4,
+      "matched_positions": [
+        575,
+        559
+      ],
+      "reason": null
+    },
+    {
+      "id": "F007",
+      "category": "decision",
+      "tier": "core",
+      "statement": "本科編制內有一個職缺改為「電子作業管理師」，同樣在11月1日生效。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        175
+      ],
+      "reason": null
+    },
+    {
+      "id": "F008",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "因為等11月1日再找人太晚，本科將先開預估缺、最近先公告。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        182
+      ],
+      "reason": null
+    },
+    {
+      "id": "F009",
+      "category": "decision",
+      "tier": "supporting",
+      "statement": "人事室的書記職缺改為科員。",
+      "probe_group_count": 3,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        669,
+        675
+      ],
+      "reason": null
+    },
+    {
+      "id": "F010",
+      "category": "number",
+      "tier": "core",
+      "statement": "局內委任人員比例由40%降為25%，約15%的人可望升任稅務員。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        700,
+        704
+      ],
+      "reason": null
+    },
+    {
+      "id": "F011",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "升任稅務員須透過甄選、評分決定人選，不是原缺直接升遷。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        760
+      ],
+      "reason": null
+    },
+    {
+      "id": "F012",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "因組織改名與調整，涉及系統、權限、設備等事項的同仁要先準備配合。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 3,
+      "matched_positions": [
+        155,
+        157,
+        241
+      ],
+      "reason": null
+    },
+    {
+      "id": "F013",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "會中談到防詐宣導的執行方式，與會者表示頂多發放宣導單。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        206
+      ],
+      "reason": null
+    },
+    {
+      "id": "F014",
+      "category": "number",
+      "tier": "supporting",
+      "statement": "本次分配到瑞里（村）發放，總戶數100多戶。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F015",
+      "category": "date",
+      "tier": "supporting",
+      "statement": "瑞里發放排定在10月14日。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        953
+      ],
+      "reason": null
+    },
+    {
+      "id": "F016",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "瑞里較遠，提醒要早點出發、開車小心。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F017",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "有一份公文會辦，彙整各科室分配到各村里的名單。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F018",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "有九十幾歲的住戶，需要到現場（公寓）分發。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F019",
+      "category": "topic",
+      "tier": "core",
+      "statement": "上次颱風期間土地稅科倉庫漏水，部分土地卡受損、已經沒救。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        437,
+        1013,
+        1018
+      ],
+      "reason": null
+    },
+    {
+      "id": "F020",
+      "category": "action_item",
+      "tier": "core",
+      "statement": "土地稅科將整理出需要重新列印的土地卡，請本科協助重新列印。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1024,
+        221
+      ],
+      "reason": null
+    },
+    {
+      "id": "F021",
+      "category": "date",
+      "tier": "core",
+      "statement": "下週一要辦內稽，本科是下午受檢（對方整天內稽）。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        246,
+        243
+      ],
+      "reason": null
+    },
+    {
+      "id": "F022",
+      "category": "constraint",
+      "tier": "core",
+      "statement": "文康活動必須真的辦理活動、拍照佐證，才能發禮品、禮券或現金；沒辦活動就發會有問題。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        266,
+        1119
+      ],
+      "reason": null
+    },
+    {
+      "id": "F023",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "文康活動不一定要外出用餐，也可以在辦公室內利用中午時間辦理（例如買便當、點心）。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        266,
+        825
+      ],
+      "reason": null
+    },
+    {
+      "id": "F024",
+      "category": "number",
+      "tier": "supporting",
+      "statement": "以往曾以「吃便當加飲料」方式辦理，扣除便當費用後每人發600元禮券。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1159,
+        1151
+      ],
+      "reason": null
+    },
+    {
+      "id": "F025",
+      "category": "number",
+      "tier": "core",
+      "statement": "今年文康活動經費為每人800元、共17人，合計13600元。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1215,
+        1221
+      ],
+      "reason": null
+    },
+    {
+      "id": "F026",
+      "category": "decision",
+      "tier": "supporting",
+      "statement": "活動主辦以抽籤順序輪流，原則上每個人都要辦一次，去年辦過的人不用再辦。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F027",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "會中討論到主辦人比較辛苦，是否多分一點禮券給主辦人。",
+      "probe_group_count": 3,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        273,
+        1126
+      ],
+      "reason": null
+    },
+    {
+      "id": "F028",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "現金發放的程序還沒確定，需要再向相關單位詢問（若太麻煩就用禮券）。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        291,
+        294
+      ],
+      "reason": null
+    },
+    {
+      "id": "F029",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "買點心要考慮三位工程師（以往訂便當時會一起處理）。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F030",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "會中討論文康活動能否在上班時間辦，提到中午可以、或請假的方式。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F031",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "拍照佐證要小心，曾經有人因為照片出現日期而被發現。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F032",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "有同仁提到可用類似慶生聚會的形式辦理。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F033",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "廉政講習提醒「差勤」與「財產」等事項可能會有廉政風險（例如整天公差提早結束後剩餘時間的運用）。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 2,
+      "matched_positions": [
+        775,
+        1612
+      ],
+      "reason": null
+    },
+    {
+      "id": "F034",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "加班時不要在辦公室外到處跑（去買便當例外）。",
+      "probe_group_count": 3,
+      "covered": true,
+      "matched_group_index": 2,
+      "matched_positions": [
+        818,
+        1151
+      ],
+      "reason": null
+    },
+    {
+      "id": "F035",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "不要開自己的車到辦公室洗車。",
+      "probe_group_count": 2,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        832
+      ],
+      "reason": null
+    },
+    {
+      "id": "F036",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "不得公器私用，例如開公務車出差後順便去接小孩。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 3,
+      "matched_positions": [
+        843,
+        851
+      ],
+      "reason": null
+    },
+    {
+      "id": "F037",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "差勤等費用要照實報支，不要浮報。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        802
+      ],
+      "reason": null
+    },
+    {
+      "id": "F038",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "小額採購要小心，避免違規或與廠商交換利益；也不要收受廠商請客、飲料。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        862
+      ],
+      "reason": null
+    },
+    {
+      "id": "F039",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "局長提到未來可能增加審核員與秘書（小秘）人力。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F040",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "參考嘉義市作法：局長的小秘由八等審核員擔任，負責整理各大報的財稅相關新聞給局長。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F041",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "涉及本機關的新聞，科長要在8點前回覆局長。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F042",
+      "category": "decision",
+      "tier": "core",
+      "statement": "銷售稅科的檢舉業務移撥給菸酒及稅務管理科（以後檢舉業務不在消稅科）。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        898,
+        508
+      ],
+      "reason": null
+    },
+    {
+      "id": "F043",
+      "category": "constraint",
+      "tier": "supporting",
+      "statement": "有關單位索取資料時要提供、不要拒絕。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F044",
+      "category": "constraint",
+      "tier": "core",
+      "statement": "年底選舉將近，涉及本機關的議題要特別小心、注意政治敏感。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F045",
+      "category": "topic",
+      "tier": "core",
+      "statement": "出現假冒人事總處名義的中秋節社交工程郵件，局內很多人點擊。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1279
+      ],
+      "reason": null
+    },
+    {
+      "id": "F046",
+      "category": "constraint",
+      "tier": "core",
+      "statement": "防範社交工程的方式：郵件設定「純文字模式」後再點連結（系統不會記錄），不要亂點連結或下載附件。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        359
+      ],
+      "reason": null
+    },
+    {
+      "id": "F047",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "科長提到先前提供的那五個測試題目，應該是 AI 想出來的、很逼真。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        60,
+        333
+      ],
+      "reason": null
+    },
+    {
+      "id": "F048",
+      "category": "topic",
+      "tier": "core",
+      "statement": "先前辦公室的照片被外流到臉書，留言至今沒有撤下。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F049",
+      "category": "decision",
+      "tier": "core",
+      "statement": "科長要求科內群組的訊息、照片不得外流給親友，並將此事列入會議紀錄。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        378,
+        389
+      ],
+      "reason": null
+    },
+    {
+      "id": "F050",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "多元支付業務要發想創新，先盤點現有項目、先有想法，需要花錢再來找錢。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        327,
+        340
+      ],
+      "reason": null
+    },
+    {
+      "id": "F051",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "因城鄉差異（服務量少，如 Kiosk 等多元服務效益有限），難以比照都會區、甚至做到跨縣市。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F052",
+      "category": "action_item",
+      "tier": "core",
+      "statement": "要構思創新作為，尤其是跟 AI 有關的（包含資料庫上的 AI 應用）。",
+      "probe_group_count": 4,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        340,
+        60
+      ],
+      "reason": null
+    },
+    {
+      "id": "F053",
+      "category": "action_item",
+      "tier": "core",
+      "statement": "下一次科（務）會議要報告各自的創新想法與做法。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1406,
+        409
+      ],
+      "reason": null
+    },
+    {
+      "id": "F054",
+      "category": "date",
+      "tier": "core",
+      "statement": "辦公室搬遷時程可能會拖很久。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 1,
+      "matched_positions": [
+        1426,
+        1477
+      ],
+      "reason": null
+    },
+    {
+      "id": "F055",
+      "category": "topic",
+      "tier": "core",
+      "statement": "上次颱風（上班日）三樓嚴重淹水，水溢流到禮堂與走廊。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 2,
+      "matched_positions": [
+        1016,
+        1441
+      ],
+      "reason": null
+    },
+    {
+      "id": "F056",
+      "category": "topic",
+      "tier": "core",
+      "statement": "淹水主因：樓上施作防水工程刨除舊防水層，使早期埋設的排水管外露、破損後水沿管線滲出。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 2,
+      "matched_positions": [
+        1443,
+        1446
+      ],
+      "reason": null
+    },
+    {
+      "id": "F057",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "處置方式：在樓上外牆挖四個孔讓積水排出，並把有管線的地方封起來。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F058",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "樓上國稅局的天花板沒事，因為水是沿排水管滲透到其高架地板下，不是樓上直接漏水。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F059",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "整棟大樓都有霉味，本科（三樓）感受最明顯、一、二樓比較聞不出來。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F060",
+      "category": "topic",
+      "tier": "core",
+      "statement": "政風室旁邊的空辦公室（未來要給工產科使用）霉味很重。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F061",
+      "category": "date",
+      "tier": "core",
+      "statement": "工產科與財管科預計10月底就要搬進（現址）。",
+      "probe_group_count": 5,
+      "covered": true,
+      "matched_group_index": 0,
+      "matched_positions": [
+        1481,
+        1485
+      ],
+      "reason": null
+    },
+    {
+      "id": "F062",
+      "category": "action_item",
+      "tier": "supporting",
+      "statement": "黴味處理須先找出發霉處（天花板上方梁柱、排風管保溫鋁箔內可能積水），處理可能要花很多錢；當天已約廠商來看。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F063",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "要有長期在現址辦公的心理準備，座位與設備如有需要就購置、以舒適為原則。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F064",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "會中提到可把本科辦公室當作示範點爭取先處理，對方有認同。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F065",
+      "category": "decision",
+      "tier": "core",
+      "statement": "財政四科搬遷分兩階段，第一階段由工產科、財管科先遷入。",
+      "probe_group_count": 5,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F066",
+      "category": "topic",
+      "tier": "core",
+      "statement": "原空間將移交新聞行銷處：局長室改為新聞行銷處處長辦公室、隔壁會議室改為副處長辦公室。",
+      "probe_group_count": 4,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    },
+    {
+      "id": "F067",
+      "category": "topic",
+      "tier": "supporting",
+      "statement": "財管科將使用土地稅科的辦公室空間，該空間同樣有味道問題。",
+      "probe_group_count": 3,
+      "covered": false,
+      "matched_group_index": null,
+      "matched_positions": [],
+      "reason": "no_probe_group_matched"
+    }
+  ],
+  "notes": {
+    "definitions": {
+      "metric_version": "量尺版本（coverage-1.0.0）；欄位語意變更時遞增，不得就地改義。",
+      "coverage_all": "已涵蓋事實數／事實總數（0~1）。",
+      "coverage_core": "core 事實涵蓋率；分母＝fact_core_total（0 筆時為 0.0）。",
+      "coverage_supporting": "supporting 事實涵蓋率；分母＝fact_supporting_total（0 筆時為 0.0，請以計數欄判讀）。",
+      "covered_total": "至少命中一個 probe group 的事實數（group 內 AND、group 間 OR）。",
+      "missing_core_ids": "未涵蓋的 core fact id（清單順序）。",
+      "missing_core_statements": "對應 missing_core_ids 的 statement（同序）。",
+      "by_category": "每類 category 的 total／covered／coverage（類別順序＝清單首次出現順序）。",
+      "record_char_count": "受測紀錄 Markdown 全文 len(text)（含換行）；與 measure_record_quality.py 的 char_count 同定義。",
+      "record_normalized_char_count": "正規化後字元數；matched_positions 的索引以此字串為準。",
+      "matched_group_index": "第一個命中的 probe group index（0 起算）；命中即停。",
+      "matched_positions": "該 group 內各 token 在正規化後紀錄的首次出現起始索引（依 token 宣告順序，最多前 3 個）。",
+      "reason": "未涵蓋時固定為 no_probe_group_matched（所有 probe group 皆未全數命中）。",
+      "normalization": "實際套用的正規化步驟與 OpenCC 可用性；受測紀錄與 checklist token 一律套同一條管線（雙向對稱）。",
+      "warnings": "輸入或 probes 品質告警（空清單、token <2 字、正規化後為空、tier 未知、重複 id、OpenCC／pypinyin 不可用…）。",
+      "transcript": "觀察值：同一組 probes 對逐字稿的涵蓋率；未提供 --transcript 時為 null。"
+    },
+    "semantics": {
+      "probes": "任一 group 內全部 token 都出現在受測紀錄 → 該事實算被涵蓋（group 內 AND、group 間 OR）。",
+      "scope": "只量『事實有沒有以可辨識的詞面被寫進紀錄』；不是語意蘊含判定，也不評價敘述正確性與出處標註（那是 measure_record_quality.py 的 tag_traceability）。",
+      "determinism": "同輸入（紀錄＋清單＋參數）→ byte 相同輸出；不呼叫網路、LLM、LM Studio；預設不寫時間戳（--timestamp 才寫 generated_at）。",
+      "fuzzy": "fuzzy=false 時純字面；--fuzzy-homophone 開啟時，字面未命中才改用逐字拼音近音（台灣口音聲母/韻母混淆組，同 backend.services.correction），僅供除錯與觀察。"
+    },
+    "limitations": [
+      "字面量尺：換句話說、語序重排、同義改寫的事實可能被計為漏寫（false negative），漏寫清單必須人工抽查再定案。",
+      "反向風險：紀錄中零散出現關鍵詞即算涵蓋，關鍵詞堆砌或表格殘留可能造成 false positive。",
+      "不判否定與數字正確性：『同意』與『不同意』在 token 層面同分；probe 只要求數字 token 出現，不檢查數值是否正確。",
+      "fuzzy 只處理同音近音錯字，不處理 ASR 漏字／斷詞錯誤；此類差異會落在漏寫清單。",
+      "清單品質（fact 是否真的來自逐字稿）不由本量尺保證；--transcript 觀察值是第一層交叉檢查。",
+      "單次抽樣限制（temperature 0.7），跨模型差異解讀仍需搭配重跑次數。"
+    ]
+  }
+}
