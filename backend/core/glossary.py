@@ -17,7 +17,7 @@ from typing import Optional
 
 from backend.core.logger import log
 
-_GLOSSARY_CACHE: dict = {"mtime": None, "terms": [], "corrections": []}
+_GLOSSARY_CACHE: dict = {"mtime": None, "terms": [], "corrections": [], "exclusions": []}
 
 
 def _glossary_dir() -> str:
@@ -53,6 +53,7 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
 
     terms: list[str] = []
     corrections: list[tuple[str, str]] = []
+    exclusions: list[str] = []
     seen: set[str] = set()
 
     if os.path.isdir(directory):
@@ -64,6 +65,13 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
                     for raw_line in handle:
                         line = raw_line.strip()
                         if not line or line.startswith("#"):
+                            continue
+                        # `!複合詞`：排除複合詞——含登錄錯形但屬正常用語的詞，
+                        # 確定性替換不得在它內部套用（例：!評審員 之於 審員=>審計員）
+                        if line.startswith("!"):
+                            compound = line[1:].strip()
+                            if len(compound) >= 2 and compound not in exclusions:
+                                exclusions.append(compound)
                             continue
                         if "=>" in line:
                             wrong, _, right = line.partition("=>")
@@ -80,7 +88,9 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
             except OSError as exc:
                 log.warning("讀取詞彙表 {} 失敗: {}", name, exc)
 
-    _GLOSSARY_CACHE.update({"mtime": mtime, "terms": terms, "corrections": corrections})
+    _GLOSSARY_CACHE.update(
+        {"mtime": mtime, "terms": terms, "corrections": corrections, "exclusions": exclusions}
+    )
     if terms:
         log.info("詞彙表載入完成：{} 詞、{} 條已知誤辨修正", len(terms), len(corrections))
     return terms, corrections
@@ -106,6 +116,86 @@ def english_protected_terms() -> set[str]:
     """回傳詞彙表中的英文/含英文專名，供英文行清理白名單保護。"""
     terms, _ = load_glossary()
     return {term for term in terms if re.search(r"[A-Za-z]", term)}
+
+
+_CJK_ONLY_RE = re.compile(r"^[㐀-鿿]+$")
+_MIN_MISRECOGNITION_LEN = 2
+
+
+def protected_terms(min_len: int = 2) -> tuple[str, ...]:
+    """回傳「不得被模型改動」的保護詞（純中日韓、長度 ≥ min_len）。
+
+    語意：保護詞表是確定性護欄——LLM 校正層若提出會消滅保護詞的替換，一律退回
+    （除非該替換本身登錄在已知誤辨白名單）。資料來源同詞彙表，因此換模型、
+    換作業系統都吃同一份詞表。
+    """
+    terms, _ = load_glossary()
+    return tuple(
+        term
+        for term in terms
+        if len(term) >= min_len and _CJK_ONLY_RE.match(term)
+    )
+
+
+def apply_known_corrections(text: str) -> tuple[str, list[tuple[str, str, int]]]:
+    """確定性套用詞彙表「錯誤寫法=>正確寫法」清單（模型無關、零 LLM 成本）。
+
+    這一層刻意不吃 LLM 的自由生成：資料檔登錄的固定誤辨一定被修好，不受被測
+    模型能力影響（實測 27B 校正層漏修 `內機→內稽`，直接吃掉一條 core 事實）。
+    只接受錯誤形長度 ≥2 的配對（單字替換誤傷風險過高，仍交由同音閘門處理）。
+    `!複合詞` 排除清單內的錯形不替換（例：`保護數…` 不是 `戶數` 的誤辨）。
+    """
+    if not text:
+        return text, []
+    _, corrections = load_glossary()
+    if not corrections:
+        return text, []
+
+    exclusions: tuple[str, ...] = tuple(_GLOSSARY_CACHE.get("exclusions") or ())
+    applied: list[tuple[str, str, int]] = []
+    fixed = text
+    # 長形優先：避免短形先命中而讓長形配對失效（例如「內機房」與「內機」）
+    for wrong, right in sorted(corrections, key=lambda pair: -len(pair[0])):
+        if len(wrong) < _MIN_MISRECOGNITION_LEN:
+            continue
+        fixed, count = _replace_pair(fixed, wrong, right, exclusions)
+        if not count:
+            continue
+        applied.append((wrong, right, count))
+    return fixed, applied
+
+
+def _replace_pair(
+    text: str, wrong: str, right: str, exclusions: tuple[str, ...]
+) -> tuple[str, int]:
+    """替換 `wrong` → `right`，但落在排除複合詞內部的 occurrence 不動。"""
+    blockers = [word for word in exclusions if wrong in word]
+    if not blockers:
+        return text.replace(wrong, right), text.count(wrong)
+
+    blocked_spans: list[tuple[int, int]] = []
+    for word in blockers:
+        start = text.find(word)
+        while start != -1:
+            blocked_spans.append((start, start + len(word)))
+            start = text.find(word, start + 1)
+
+    parts: list[str] = []
+    hits = 0
+    cursor = 0
+    position = text.find(wrong)
+    while position != -1:
+        end = position + len(wrong)
+        if any(start <= position and end <= stop for start, stop in blocked_spans):
+            parts.append(text[cursor:end])
+        else:
+            parts.append(text[cursor:position])
+            parts.append(right)
+            hits += 1
+        cursor = end
+        position = text.find(wrong, end)
+    parts.append(text[cursor:])
+    return "".join(parts), hits
 
 
 def glossary_prompt_block(max_terms: int = 200) -> str:

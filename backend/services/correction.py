@@ -19,7 +19,7 @@ from typing import Optional
 
 from backend.core.config import settings
 from backend.core.errors import StableServiceError, describe_exception
-from backend.core.glossary import glossary_prompt_block
+from backend.core.glossary import apply_known_corrections, glossary_prompt_block
 from backend.core.logger import log
 from backend.core.prompts import TRANSCRIPT_CORRECTION_SYSTEM_PROMPT, build_correction_user_message
 
@@ -50,6 +50,10 @@ class CorrectionReport:
     segments_corrected: int = 0
     segments_discarded: int = 0
     changes: list[CorrectionChange] = field(default_factory=list)
+    # 確定性誤辨修正（詞彙表 `錯=>對`）：不吃 LLM、與模型無關，獨立於
+    # `changes`（LLM 閘門結果）之外統計，避免污染既有「採納 N 處」語意。
+    deterministic_changes: list[CorrectionChange] = field(default_factory=list)
+    known_fixes_applied: int = 0
     error: Optional[str] = None
 
     @property
@@ -58,7 +62,7 @@ class CorrectionReport:
 
     def to_markdown(self) -> str:
         """輸出修改對照表（附於會議紀錄之後，供人工複核）。"""
-        accepted = self.accepted_changes
+        accepted = self.deterministic_changes + self.accepted_changes
         if not accepted:
             return "（本次語意校正未修改任何內容）"
         lines = ["| 原文 | 校正後 |", "| :--- | :--- |"]
@@ -127,6 +131,28 @@ def _is_glossary_correction(original: str, corrected: str) -> bool:
     return (original, corrected) in {(wrong, right) for wrong, right in corrections}
 
 
+_PROTECTED_WINDOW_CHARS = 24
+
+
+def _would_destroy_protected_term(original: str, i1: int, i2: int, new_piece: str) -> bool:
+    """保護詞表護欄：替換若使局部視窗內的保護詞消失，即退回該替換。
+
+    語意：保護詞（詞彙表登錄的正確詞面，如「內稽」「戶數」「差勤」）不得被
+    LLM 的自由替換消滅；已知誤辨白名單不受此限（它只會把錯形換成正形）。
+    視窗取替換點前後各 24 字，避免跨句誤判。
+    """
+    from backend.core.glossary import protected_terms
+
+    terms = protected_terms()
+    if not terms:
+        return False
+    start = max(0, i1 - _PROTECTED_WINDOW_CHARS)
+    end = min(len(original), i2 + _PROTECTED_WINDOW_CHARS)
+    before = original[start:end]
+    after = original[start:i1] + new_piece + original[i2:end]
+    return any(before.count(term) > after.count(term) for term in terms)
+
+
 def gate_correction(original: str, corrected: str, max_change_ratio: float) -> tuple[str, list[CorrectionChange]]:
     """第四層閘門：對 LLM 輸出逐一比對替換，非同音近音一律退回原文。
 
@@ -160,7 +186,20 @@ def gate_correction(original: str, corrected: str, max_change_ratio: float) -> t
             result_parts.append(old_piece)
             continue
         if tag == "replace":
-            if is_homophone_swap(old_piece, new_piece) or _is_glossary_correction(old_piece, new_piece):
+            glossary_pair = _is_glossary_correction(old_piece, new_piece)
+            allowed = glossary_pair or is_homophone_swap(old_piece, new_piece)
+            if allowed and not glossary_pair and _would_destroy_protected_term(original, i1, i2, new_piece):
+                result_parts.append(old_piece)
+                changes.append(
+                    CorrectionChange(
+                        original=old_piece,
+                        corrected=new_piece,
+                        accepted=False,
+                        reason="替換會消滅保護詞（詞彙表護欄），退回",
+                    )
+                )
+                continue
+            if allowed:
                 result_parts.append(new_piece)
                 changes.append(CorrectionChange(original=old_piece, corrected=new_piece, accepted=True))
             else:
@@ -293,7 +332,25 @@ class TranscriptCorrectionService:
         context_chars = settings.CORRECTION_CONTEXT_CHARS
 
         for index, segment in enumerate(segments):
-            if not self._segment_needs_correction(segment):
+            original_segment = segment
+            # 確定性誤辨修正（詞彙表 `錯=>對`）：模型無關、零 LLM 成本。
+            # 先修掉資料檔登錄的固定誤辨，再交給 LLM 校正層——被測模型的校正
+            # 能力不足（實測 27B 漏修 `內機→內稽`）時，這一層仍保證修好。
+            segment, known_fixes = apply_known_corrections(segment)
+            if known_fixes:
+                report.known_fixes_applied += sum(count for _wrong, _right, count in known_fixes)
+                report.deterministic_changes.extend(
+                    CorrectionChange(
+                        original=wrong,
+                        corrected=right,
+                        accepted=True,
+                        reason=f"known_misrecognition×{count}",
+                    )
+                    for wrong, right, count in known_fixes
+                )
+
+            # 觸發判定沿用「修正前」文字：確定性修正不得讓原本該校正的段落被跳過。
+            if not self._segment_needs_correction(original_segment):
                 corrected_segments.append(segment)
                 continue
 
@@ -343,11 +400,13 @@ class TranscriptCorrectionService:
 
         accepted_count = len(report.accepted_changes)
         log.info(
-            "語意校正完成：{} 段中 {} 段有修正、{} 段放棄、採納 {} 處替換",
+            "語意校正完成：{} 段中 {} 段有修正、{} 段放棄、採納 {} 處替換、"
+            "確定性誤辨修正 {} 處（詞彙表）",
             report.segments_total,
             report.segments_corrected,
             report.segments_discarded,
             accepted_count,
+            report.known_fixes_applied,
         )
         return "".join(corrected_segments), report
 

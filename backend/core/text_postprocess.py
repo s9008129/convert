@@ -199,7 +199,13 @@ _OFFICIAL_TERM_FIXES = [
 
 
 def apply_official_term_fixes(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """套用公務用字白名單，回傳（修正後文字, 修正對照清單）。"""
+    """套用公務用字白名單＋詞彙表已知誤辨，回傳（修正後文字, 修正對照清單）。
+
+    兩層來源：
+    1. `_OFFICIAL_TERM_FIXES`：內建公務用字（regex，可含 lookahead）。
+    2. 詞彙表 `data/glossary/*.txt` 的 `錯誤寫法=>正確寫法`：資料驅動、確定性、
+       與模型無關——被測模型能力再弱，資料檔登錄的固定誤辨仍一定被修好。
+    """
     if not text:
         return text, []
     changes: list[tuple[str, str]] = []
@@ -208,6 +214,12 @@ def apply_official_term_fixes(text: str) -> tuple[str, list[tuple[str, str]]]:
         if pattern.search(fixed):
             changes.append((pattern.pattern, replacement))
             fixed = pattern.sub(replacement, fixed)
+
+    from backend.core.glossary import apply_known_corrections
+
+    fixed, applied = apply_known_corrections(fixed)
+    for wrong, right, _count in applied:
+        changes.append((wrong, right))
     return fixed, changes
 
 
