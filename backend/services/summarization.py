@@ -201,6 +201,14 @@ class SummarizationService:
         r"(\d{1,3}(?:,\d{3})+|\d{2,6})\s*(?:元|塊|萬元|個人|人|％|%|個|孔|樓)"
     )
     _RECORD_COVERAGE_ANY_NUMBER_PATTERN = re.compile(r"\d{1,3}(?:,\d{3})+|\d{2,6}")
+    # P4-A 收尾修補（E3 實證）：行首「清單編號」（`15. `／`15、`／`15)`／`15）`，
+    # 容項目符號前綴）是**版面標記**、不承載內容——逐字稿真數字 `15`（原文
+    # 「少了 15%」）只因紀錄有一條 `15. 辦公室搬遷…` 就被子字串比對判成
+    # 「已涵蓋」，補強輪因此不去補（真缺口＝漏檢）。`[.)](?!\d)` 是防護：
+    # 行首 `15.5` 這種小數不是編號，不得被剝掉。
+    _RECORD_COVERAGE_ORDINAL_MARKER_PATTERN = re.compile(
+        r"(?m)^[ \t]*(?:[-*+][ \t]+)?\d{1,3}[ \t]*(?:[、）)]|[.)](?!\d))[ \t]*"
+    )
     _RECORD_COVERAGE_DATE_MD_PATTERN = re.compile(r"(\d{1,2})\s*月\s*(\d{1,2})(?:\s*[日號号])?")
     _RECORD_COVERAGE_DATE_END_PATTERN = re.compile(r"(\d{1,2})\s*月\s*底")
     _RECORD_COVERAGE_DATE_SLASH_PATTERN = re.compile(r"(?<![\d/])(\d{1,2})\s*/\s*(\d{1,2})(?![\d/])")
@@ -1568,6 +1576,60 @@ class SummarizationService:
         return re.sub(r"\s+", "", folded)
 
     @classmethod
+    def _fold_record_for_number_coverage(cls, record_markdown: str) -> str:
+        """「數字」類別覆蓋判定用的紀錄折疊（＝既有折疊 ＋ 先移除行首清單編號）。
+
+        P4-A 收尾修補（E3 實證）：`15. 辦公室搬遷與漏水處理` 這類**條列序號**不是
+        內容，卻讓逐字稿真數字 `15`（原文「少了 15%」）被子字串比對判「已涵蓋」。
+        流程與 `_fold_record_for_number_matching` 同源（剝來源標註→NFKC→去千分位
+        逗號），只多了 `_RECORD_COVERAGE_ORDINAL_MARKER_PATTERN` 這一步，且空白
+        折為**單一空格**而非全刪——邊界判定（`_number_literal_is_covered`）要求
+        命中片段兩側是真正的非數字界線，換行／空白本來就是界線的一種；若把空白
+        全刪，跨行的兩組數字會被黏成一個更長的數字串而互相掩蓋。
+
+        只服務「數字」類別；日期仍走 `_fold_record_for_number_matching`（不動）。
+        """
+        stripped = cls._SOURCE_TAG_PATTERN.sub("", record_markdown or "")
+        stripped = cls._RECORD_COVERAGE_ORDINAL_MARKER_PATTERN.sub(" ", stripped)
+        folded = unicodedata.normalize("NFKC", stripped)
+        folded = folded.replace(",", "")
+        return re.sub(r"\s+", " ", folded)
+
+    @classmethod
+    def _number_literal_is_covered(cls, literal: str, folded_record: str) -> bool:
+        """數字 literal 的覆蓋判定：折疊後必須以**整串數字**命中（數字邊界）。
+
+        P4-A 收尾修補（E3 實證）：子字串比對把逐字稿真數字洗白成「已涵蓋」——
+        `600`（原文「發 600塊」）命中在紀錄的 `13,600` 內；`15`（原文「少了
+        15%）命中在紀錄自己的清單編號 `15.` 上。兩者都是真缺口卻不進補強清單。
+        規則（與 `_date_token_present` 同思路，只是對象是裸數字）：
+        - `(?<!\\d)`／`(?!\\d)`：命中片段不得是更長數字串的一部分
+          （`600` 不得命中 `13,600`／`13600`／`6000`；`15` 不得命中 `150`）；
+        - `(?<!\\d\\.)`／`(?!\\.\\d)`：小數點相連者不算同一件事
+          （`15` 不得命中 `12.15`；`50` 不得命中 `12.50`）；
+        - 千分位等價不變：literal 與紀錄都以同一條折疊去逗號，`13,600 ≡ 13600`。
+        只加嚴、不放寬：原本判缺的一律仍判缺；正常命中（`600元`／`15%`／
+        `13600元`／`17個人`／`600`）一律不受影響。
+
+        `folded_record` 契約上是 `_fold_record_for_number_coverage` 的輸出；這裡
+        仍對它再做一次同規則折疊（NFKC＋去千分位逗號＋空白折為單一空格）——
+        千分位逗號是**等價符號、不是數字邊界**，漏折一次就會讓 `13,600` 反過來
+        洗白 `600`（防禦性收斂，只加嚴）。
+        """
+        folded_literal = unicodedata.normalize("NFKC", literal or "").replace(",", "").replace(" ", "")
+        if not folded_literal:
+            return False
+        haystack = unicodedata.normalize("NFKC", folded_record or "").replace(",", "")
+        haystack = re.sub(r"\s+", " ", haystack)
+        return (
+            re.search(
+                rf"(?<!\d)(?<!\d\.){re.escape(folded_literal)}(?!\d)(?!\.\d)",
+                haystack,
+            )
+            is not None
+        )
+
+    @classmethod
     def _iter_transcript_segment_bodies(cls, transcript: str):
         """逐字稿段落列（`[start-end] 發言者：`）正文迭代（已切掉行首時間戳）。
 
@@ -1731,6 +1793,7 @@ class SummarizationService:
         normalized_summary = self._normalize_action_key(cleaned)
         local_sentences = self._split_record_sentences(cleaned)
         folded_record = self._fold_record_for_number_matching(cleaned)
+        folded_number_record = self._fold_record_for_number_coverage(cleaned)
         try:
             item_limit = int(
                 getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_ITEM_LIMIT", None)
@@ -1816,14 +1879,15 @@ class SummarizationService:
                 )
                 issues.append(_assemble_issue(label, missing_labels, tail))
 
-        # 類別三：數字（取逐字稿；比對前先剝來源標註＋NFKC＋去千分位逗號）
+        # 類別三：數字（取逐字稿；比對前先剝來源標註＋NFKC＋去千分位逗號＋去行首編號）
         if "number" in categories:
             expected_numbers = self._scan_transcript_number_items(transcript)
             stats["expected_number"] = len(expected_numbers)
             missing_numbers = []
             for literal, snippet in expected_numbers:
-                folded_literal = unicodedata.normalize("NFKC", literal).replace(",", "").replace(" ", "")
-                if folded_literal and folded_literal in folded_record:
+                # P4-A 收尾修補（E3）：整串數字命中（數字邊界）＋行首清單編號不算
+                # 覆蓋證據；子字串比對會把 `600` 洗白成 `13,600` 的一部分。
+                if self._number_literal_is_covered(literal, folded_number_record):
                     continue
                 missing_numbers.append((literal, snippet))
             stats["missing_number"] = len(missing_numbers)
