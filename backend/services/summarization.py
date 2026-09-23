@@ -1469,11 +1469,14 @@ class SummarizationService:
         r"^(\s*)(?:[-*+]|\d{1,2}\s*[.)、]|（\d{1,2}）)\s+"
     )
     _NOTES_HEADING_PATTERN = re.compile(r"^\s*#{1,6}\s")
-    # 「角色標記行」＝新角色的開始（議題／討論重點／決議…）。兩個用途：
+    # 「角色標記行」＝新角色的開始（議題／討論重點／決議…）。三個用途：
     # ①蒐集巢狀內容時必須跳過（連同其子樹），否則下一個角色的條目會被算成
     #   上一個空殼標記的內容（例：空殼議題把 `*討論重點*` 條目收成議題）；
     # ②整行粗體剛好是「別的角色」標頭時不算本類別內容（例：議題類抽取遇到
-    #   `- **決議**` 不得把「決議」當成一條議題）。
+    #   `- **決議**` 不得把「決議」當成一條議題）；
+    # ③**同角色**的巢狀重述（`- 決議：通過`）＝內容，不因它是標頭就被丟掉。
+    # 分隔詞可為「冒號」或「空白」（真實模型兩種都寫）；`- 討論重點清單：…`
+    # 這種把角色詞當內容開頭的列不會被誤判成標頭（詞後既非冒號也非空白）。
     _NOTES_ITEM_ROLE_KEYWORDS = (
         "議題",
         "討論重點",
@@ -1486,8 +1489,8 @@ class SummarizationService:
     )
     _NOTES_ITEM_ROLE_LINE_PATTERN = re.compile(
         r"^\s*(?:[-*+]|\d{1,2}\s*[.)、]|（\d{1,2}）)?\s*(?:\*{1,2})?"
-        r"(?:" + "|".join(sorted(_NOTES_ITEM_ROLE_KEYWORDS, key=len, reverse=True)) + r")"
-        r"(?:\*{1,2})?\s*[:：]"
+        r"(?P<role>" + "|".join(sorted(_NOTES_ITEM_ROLE_KEYWORDS, key=len, reverse=True)) + r")"
+        r"(?:\*{1,2})?(?:\s*[:：]\s*|\s+|$)(?P<rest>.*)$"
     )
 
     @classmethod
@@ -1531,7 +1534,7 @@ class SummarizationService:
         return indent
 
     @classmethod
-    def _collect_nested_notes_items(cls, lines: list, marker_index: int) -> list:
+    def _collect_nested_notes_items(cls, lines: list, marker_index: int, marker_keywords) -> list:
         """空殼標記行的巢狀內容（P6-A；`qwen3.8-27b-splash` 真實筆記實證）。
 
         實測形狀（同一 prompt／temperature 0.6，0903 場）：
@@ -1552,10 +1555,15 @@ class SummarizationService:
         - 區塊內若出現其他**角色標記行**（議題／討論重點／決議／裁示／結論…），
           整列**連同其子樹**跳過——不得把下一個角色的條目算成本標記的內容
           （例：空殼議題底下的 `*討論重點*` 條列不是議題）。
+        - 例外：**同角色**的巢狀重述（`- 決議：通過`）本身是內容、不是別人家的
+          標頭，取它的行內文字當條目（子樹仍跳過）。角色標頭即使省略冒號
+          （`- *討論重點*`）也照樣是標頭——獨立稽核實測：漏掉這一條會把
+          「討論重點」與其子樹收成決議，產生假的「決議遺漏」補強問題。
         """
         if marker_index < 0 or marker_index >= len(lines):
             return []
         shell_indent = cls._notes_line_indent(lines[marker_index])
+        marker_set = set(marker_keywords)
         collected: list = []
         role_block_indent = None
         for raw_line in lines[marker_index + 1 :]:
@@ -1570,7 +1578,11 @@ class SummarizationService:
                 if indent > role_block_indent:
                     continue
                 role_block_indent = None
-            if cls._NOTES_ITEM_ROLE_LINE_PATTERN.match(raw_line):
+            role_match = cls._NOTES_ITEM_ROLE_LINE_PATTERN.match(raw_line)
+            if role_match:
+                inline = (role_match.group("rest") or "").strip()
+                if inline and role_match.group("role") in marker_set:
+                    collected.append(inline)
                 role_block_indent = indent
                 continue
             text = cls._NOTES_ITEM_BULLET_PATTERN.sub("", raw_line).strip()
@@ -1679,7 +1691,7 @@ class SummarizationService:
                 else:
                     continue
             if is_shell:
-                for nested_item in cls._collect_nested_notes_items(lines, index):
+                for nested_item in cls._collect_nested_notes_items(lines, index, marker_keywords):
                     cls._append_notes_item(nested_item, items, seen_keys)
                 continue
             if not item:
