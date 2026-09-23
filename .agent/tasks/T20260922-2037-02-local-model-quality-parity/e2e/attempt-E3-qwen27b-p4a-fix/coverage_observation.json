@@ -1,0 +1,31 @@
+{
+  "captured": true,
+  "observation_only": true,
+  "gate_effect": "none",
+  "label": "runner-coverage-d48ce298",
+  "checklist_path": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json",
+  "checklist_sha256": "cf012d1f6983f67ecb47cc7a6486e48c110a6b2782ad94cccf0332a4ec6ec001",
+  "metric_version": "coverage-1.0.0",
+  "coverage_all": 0.7761,
+  "coverage_core": 0.8571,
+  "fact_core_total": 28,
+  "covered_core": 24,
+  "missing_core_ids": [
+    "F021",
+    "F054",
+    "F055",
+    "F056"
+  ],
+  "warnings_count": 0,
+  "instrument": {
+    "script": "measure_coverage.py",
+    "exit_code": 0,
+    "timed_out": false,
+    "error": null
+  },
+  "errors": [],
+  "notes": [
+    "coverage 永遠只做觀測，不列入 verdict／required 清單"
+  ],
+  "generated_at": "2026-09-23T10:37:15.482484+08:00"
+}
