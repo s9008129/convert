@@ -1187,8 +1187,15 @@ class SummarizationService:
                 )
         return missing, ratios
 
-    # P4-A 修補：議題標題「詞級覆蓋」的可略過字元（停用詞）與最小詞長。
+    # P4-A 修補：議題標題「詞級覆蓋」的可略過字元（停用詞／分隔符）與最小詞長。
     _TOPIC_TERM_STOP_CHARS = "的與和之及或等"
+    # P4-A 收尾修補（E3 實證）：標題內的分隔符（頓號）語意與停用詞相同——只分隔
+    # 詞組、不承載內容，卻不在 `_normalize_action_key` 的剝除字元集內，於是
+    # `廉政宣導（拆勤、採購、公務車使用）` 會卡在 `、`：詞級覆蓋 DP 過不去、
+    # 整條判缺（紀錄其實已寫「廉政宣導」「拆勤」「採購」「公務車」）。
+    # 跳過分隔符後，括號內的複合詞組自然被拆成自身子詞（`公務車使用` →
+    # `公務車`＋`使用`，順序不限、可跨段落），子詞仍須**全數**命中才接受。
+    _TOPIC_TERM_SEPARATOR_CHARS = "、"
     _TOPIC_TERM_MIN_CHARS = 2
 
     @classmethod
@@ -1217,10 +1224,14 @@ class SummarizationService:
         P4-A 實測（E2）：標題被改寫／重排時整串 LCS 永遠到不了 0.6——例：
         「土地稅卡重新列印」vs 紀錄「整理並重新列印損毀之土地稅卡」（兩個詞都在，
         順序被調換）、「資安宣導（社交工程）」（兩詞分落不同句子）。規則：
-        停用詞字元（`的/與/和/之/及/或/等`）可直接略過；其餘字元必須能被切成一串
-        「詞」（每個詞 ≥2 字、原樣出現在紀錄任一處；不限順序、不限同一段落，
-        以可達性 DP 判定存在性切分）。切不出任何詞時回 False——呼叫端一律走原
-        LCS 規則，不得因此變成「必涵蓋」。
+        停用詞字元（`的/與/和/之/及/或/等`）與分隔符（`、`）可直接略過；其餘字元
+        必須能被切成一串「詞」（每個詞 ≥2 字、原樣出現在紀錄任一處；不限順序、
+        不限同一段落，以可達性 DP 判定存在性切分）。切不出任何詞時回 False——
+        呼叫端一律走原 LCS 規則，不得因此變成「必涵蓋」。
+
+        P4-A 收尾修補（E3）：括號複合標題的內層詞組（例：`公務車使用`）由 DP
+        拆成自身子詞（`公務車`＋`使用`）**全數**命中才算涵蓋；此規則不得被
+        理解成「任一子詞命中就放行」，也不動否定詞／數字兩道守衛。
 
         守衛照常：標題內的否定詞（`ACTION_NEGATION_TERMS`）與 ≥2 位數字串仍必須
         出現在紀錄中（方向不變：真的缺仍判缺）。
@@ -1238,7 +1249,10 @@ class SummarizationService:
         for start in range(length):
             if not reachable[start]:
                 continue
-            if key[start] in cls._TOPIC_TERM_STOP_CHARS:
+            if (
+                key[start] in cls._TOPIC_TERM_STOP_CHARS
+                or key[start] in cls._TOPIC_TERM_SEPARATOR_CHARS
+            ):
                 reachable[start + 1] = True
                 used_term[start + 1] = used_term[start + 1] or used_term[start]
                 continue
