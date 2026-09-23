@@ -1306,8 +1306,46 @@ class SummarizationService:
     # 議題／決議（取萃取筆記）＋數字／日期（取逐字稿）＋既有待辦（不動）
     # ------------------------------------------------------------------
 
+    # E1 實測（0903 場 gemma-4-31B-it-MLX-4bit 真實筆記）新增的兩種形式：
+    # ①議題＝整行粗體標題（頂層條列，`- **組織規程與編制變動（11月1日生效）**`）；
+    # ②決議條目＝逐字稿引用標頭（`[00:04:35] 發言者 1（主席）裁示：…`）＋正文。
+    # 兩者都是「筆記格式知識」，不是模型名分支（任何模型寫出同格式即生效）。
+    _NOTES_ITEM_BOLD_TITLE_PATTERN = re.compile(r"^[-*+]\s+\*\*([^*]+?)\*\*\s*$")
+    _NOTES_ITEM_TIME_PREFIX_PATTERN = re.compile(
+        r"^\[\s*\d{1,2}:\d{2}(?::\d{2})?(?:\s*[-–~]\s*\d{1,2}:\d{2}(?::\d{2})?)?\s*\]\s*"
+    )
+    _NOTES_ITEM_SPEAKER_PREFIX_PATTERN = re.compile(
+        r"^(?:發言者|與會者|發言人)\s*\d+(?:[（(][^）)]{0,12}[）)])?\s*[：:，,]?\s*"
+    )
+    _NOTES_ITEM_ROLE_PREFIX_PATTERN = re.compile(
+        r"^(?:(?:主席|科長|主持人|主席裁示)\s*)?"
+        r"(?:裁示|指示|決議|結論|說明|表示|補充|報告|提醒)\s*[：:，,]\s*"
+    )
+
     @classmethod
-    def _parse_notes_items(cls, notes: str, heading_keywords, marker_keywords) -> list:
+    def _strip_notes_item_quote_prefix(cls, item: str) -> str:
+        """剝掉萃取筆記條目開頭的「逐字稿引用標頭」（E1 實測修補）。
+
+        真實實例：`[00:04:35] 發言者 1（主席）裁示：資管股及系統相關人員需…`
+        → `資管股及系統相關人員需…`；`[00:21:01] 發言者 1（主席裁示）：`
+        → ``（空，該條決議的內容寫在下一層條列，必須整條丟棄）。
+
+        只剝「時間戳／發言者標籤／角色動詞（各自最多一次）」三種前綴，其餘
+        原樣；沒有標頭時輸出＝輸入。純函式、無 I/O、無模型名分支。
+        """
+        text = (item or "").strip()
+        for pattern in (
+            cls._NOTES_ITEM_TIME_PREFIX_PATTERN,
+            cls._NOTES_ITEM_SPEAKER_PREFIX_PATTERN,
+            cls._NOTES_ITEM_ROLE_PREFIX_PATTERN,
+        ):
+            text = pattern.sub("", text, count=1).strip()
+        return text
+
+    @classmethod
+    def _parse_notes_items(
+        cls, notes: str, heading_keywords, marker_keywords, include_bold_titles: bool = False
+    ) -> list:
         """從萃取筆記抽取指定標記（議題／決議）的條目文字（P4-A）。
 
         來源格式＝`LOCAL_EXTRACTION_PROMPT`「## 2. 議題與決議」區塊的
@@ -1316,6 +1354,13 @@ class SummarizationService:
         未於本段確認／未明確）與過短條目一律濾除——`_empty_extraction_notes`
         骨架就是「逐字稿未提及／（待確認）」，不濾會產生假期望集合。最後以
         `_normalize_action_key` 去重（保留首現）。
+
+        E1 實測修補（`include_bold_titles`，真實 gemma-4-31B-it-MLX-4bit 筆記）：
+        真實輸出的議題不是 `- **議題**：X`，而是把議題寫成**整行粗體標題**
+        （`- **組織規程與編制變動（11月1日生效）**`），於是議題期望集合恆為 0
+        → 該類別永遠 no-op（E1 log：`cov_expected_topic=0`）。開啟本參數後，
+        區塊內「整行只有粗體標題」的頂層條列也算議題；決議維持只認 `*決議*`
+        標記（同一行的粗體標題是議題、不是決議）。
         """
         heading_keywords = tuple(heading_keywords)
         marker_pattern = re.compile(
@@ -1339,24 +1384,48 @@ class SummarizationService:
             if not in_scope:
                 continue
             match = marker_pattern.match(line)
-            if not match:
+            if match:
+                item = match.group(1).strip()
+            elif include_bold_titles:
+                title_match = cls._NOTES_ITEM_BOLD_TITLE_PATTERN.match(line)
+                if not title_match:
+                    continue
+                item = title_match.group(1).strip()
+            else:
                 continue
-            item = match.group(1).strip()
             if not item or len(item) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
                 continue
-            if any(term in item for term in cls._RECORD_COVERAGE_PLACEHOLDER_TERMS):
+            # E1 實測修補：條目常以逐字稿引用開頭（`[00:04:35] 發言者 1（主席）裁示：…`）。
+            # 引用標頭不是事實本身，卻在 LCS 比對裡吃掉一半長度，讓「紀錄早就寫進去」
+            # 被誤判成遺漏（E1 離線重播：11 項決議全被判遺漏，其中 7 項其實已在紀錄中）
+            # → 補強迴圈註定不收斂（實測白燒 2 輪 ≈ 970 s）。比對 key 與顯示文字一律用
+            # 剝除標頭後的正文；剝完只剩空殼者（`…裁示：` 後面沒內容，決議寫在下一層
+            # 條列）整條丟棄——空條目無法被滿足，只會讓補強永遠不收斂、白燒每一輪。
+            body = cls._strip_notes_item_quote_prefix(item)
+            if len(body) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
                 continue
-            key = cls._normalize_action_key(item)
+            if any(term in body for term in cls._RECORD_COVERAGE_PLACEHOLDER_TERMS):
+                continue
+            key = cls._normalize_action_key(body)
             if not key or key in seen_keys:
                 continue
             seen_keys.add(key)
-            items.append(item)
+            items.append(body)
         return items
 
     @classmethod
     def _extract_notes_topic_items(cls, notes: str) -> list:
-        """議題期望集合（來源：萃取筆記「議題與決議」區塊）。"""
-        return cls._parse_notes_items(notes, heading_keywords=("議題", "決議"), marker_keywords=("議題",))
+        """議題期望集合（來源：萃取筆記「議題與決議」區塊）。
+
+        `include_bold_titles=True`：真實地端筆記把議題寫成整行粗體標題
+        （E1 實證），不放寬這個形式＝議題類別永遠 no-op。
+        """
+        return cls._parse_notes_items(
+            notes,
+            heading_keywords=("議題", "決議"),
+            marker_keywords=("議題",),
+            include_bold_titles=True,
+        )
 
     @classmethod
     def _extract_notes_decision_items(cls, notes: str) -> list:
