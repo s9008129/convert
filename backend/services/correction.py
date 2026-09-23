@@ -332,7 +332,6 @@ class TranscriptCorrectionService:
         context_chars = settings.CORRECTION_CONTEXT_CHARS
 
         for index, segment in enumerate(segments):
-            original_segment = segment
             # 確定性誤辨修正（詞彙表 `錯=>對`）：模型無關、零 LLM 成本。
             # 先修掉資料檔登錄的固定誤辨，再交給 LLM 校正層——被測模型的校正
             # 能力不足（實測 27B 漏修 `內機→內稽`）時，這一層仍保證修好。
@@ -349,8 +348,11 @@ class TranscriptCorrectionService:
                     for wrong, right, count in known_fixes
                 )
 
-            # 觸發判定沿用「修正前」文字：確定性修正不得讓原本該校正的段落被跳過。
-            if not self._segment_needs_correction(original_segment):
+            # 觸發判定用「確定性修正後」文字：已登錄錯形既已修掉，就不該再為它們付
+            # 一次 LLM 校正。實測（0903 逐字稿、121 詞詞表）判定用修正前文字＝
+            # 35/45 段觸發，用修正後＝12/45——多出來的 23 段全部只因「已登錄錯形」
+            # 而觸發；真正需要 LLM 的模糊近音段落仍會觸發。
+            if not self._segment_needs_correction(segment):
                 corrected_segments.append(segment)
                 continue
 
