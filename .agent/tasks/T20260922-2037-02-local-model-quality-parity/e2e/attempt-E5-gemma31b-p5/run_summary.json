@@ -1,0 +1,33 @@
+{
+  "plan": {
+    "mode": "full",
+    "dry_run": false,
+    "upload_mode": "api",
+    "inject_revision": true,
+    "host": "127.0.0.1",
+    "port": 59823,
+    "expected_build_revision": "ce995023dcbc1943beb9142b53cef6851c994262",
+    "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-E5-gemma31b-p5",
+    "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p4-gemma31b-e5",
+    "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p4-gemma31b-e5/backend_data",
+    "audio": "/Users/hsiaojohnny/Downloads/0903-科務會議.m4a",
+    "processing_mode": "local",
+    "health_timeout_seconds": 120.0,
+    "task_timeout_seconds": 7200.0,
+    "poll_interval_seconds": 5.0,
+    "browser_upload_timeout_seconds": 7200.0,
+    "quality_mode": "observe",
+    "coverage_checklist": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json"
+  },
+  "started_at": "2026-09-23T12:40:10.454826+08:00",
+  "finished_at": "2026-09-23T12:40:10.499207+08:00",
+  "child_pid": null,
+  "checks": {
+    "backend_started": false
+  },
+  "failure_reasons": [
+    "repo worktree 不是 clean（E2E decision-validity gate）：5 個未提交變更——請先形成 clean HEAD 再驗收"
+  ],
+  "verdict": "FAIL",
+  "note": "preflight fail closed：backend 未啟動、無任何 upload"
+}
