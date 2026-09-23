@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-09-23T16:40:29.571542+08:00",
+  "base_url": "http://127.0.0.1:51156",
+  "reachable": true,
+  "local_llm_provider": "auto",
+  "effective_local_llm_provider": "lmstudio",
+  "lmstudio_inventory_gate": true,
+  "error": null
+}
