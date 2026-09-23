@@ -1,0 +1,43 @@
+{
+  "model": "gemma-4-31b-it-mlx",
+  "slice_start": "00:33:00",
+  "segments": 31,
+  "slice_chars": 3796,
+  "notes_chars": 1022,
+  "usage": {
+    "prompt_tokens": 3741,
+    "completion_tokens": 789,
+    "total_tokens": 4530,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "finish_reason": "stop",
+  "probe_hits": {
+    "F044 選舉政治敏感": [],
+    "F054 搬遷時程拖很久": [
+      "兩階段",
+      "搬遷"
+    ],
+    "F055 三樓淹水溢流禮堂": [
+      "禮堂",
+      "淹水"
+    ],
+    "F056 防水刨除／排水管": [
+      "排水管",
+      "防水"
+    ],
+    "F060 空辦公室霉味": [
+      "黴味"
+    ],
+    "F065 分兩階段／工產科財管科": [
+      "工產科",
+      "財管科"
+    ],
+    "F066 移交新聞行銷處": [
+      "新聞行銷處"
+    ]
+  },
+  "probe_hit_count": 6,
+  "probe_total": 7
+}
