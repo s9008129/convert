@@ -643,6 +643,63 @@ class Settings(BaseSettings):
                     "仍受本守衛影響——observe 的『零變化』僅指問題清單。"
                     "false＝一行回本波前（交付最後一版、無任何守衛 log）"
     )
+
+    # ========================================
+    # P7-B 波（T20260923-1810-01）：尾段覆蓋（萃取階段結構性分塊）＋觀測落檔
+    # 根因背景：v4.8.0 把萃取分塊上限改為「依 context 推導」後，大 context 的
+    # LM Studio（實測 71,936 tokens）對 11,711 est tokens 的逐字稿只用 1 次呼叫，
+    # 尾段被稀釋——gemma 4 31B 連續兩場缺同一組尾段核心事實（00:25–00:44）。
+    # ========================================
+    LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS: int = Field(
+        default=6000,
+        ge=0,
+        description="地端萃取分塊的每塊輸入上限（tokens；P7-B CORE-1b）。"
+                    "實際分塊上限＝min(既有 context 推導值, 本上限)——只要 context 推導值大於本上限"
+                    "即生效（不限『整份只跑一次』的極端情境；例：16K context 下的 8K 逐字稿"
+                    "也會由 1 塊變 2 塊）；context 推導值低於本上限時行為完全不變。"
+                    "目的：讓長逐字稿恢復「每個區段都有自己的萃取呼叫」的結構保證"
+                    "（不需要偵測器、不需要模型名分支）。"
+                    "0＝停用＝back-to-before（分塊上限完全依 context 推導）"
+    )
+    LOCAL_LLM_DUMP_EXTRACTION_NOTES: bool = Field(
+        default=False,
+        description="把每次萃取筆記（原始各塊＋零損串接後）落檔到 <DATA_DIR>/debug/extraction-notes/"
+                    "（P7-B CORE-1a；觀測用）。**不改任何產品輸出**；"
+                    "用途是讓「尾段缺漏是萃取漏還是生成漏」可事後歸因與重播。預設關閉"
+    )
+
+    # ========================================
+    # P7-B 波（T20260923-1810-01）：生成紀律（CORE-2a）
+    # 只作用於地端路徑（mode="local"）；三條各自可關，全關＝地端提示詞 byte 級回本波前。
+    # 契約：雲端（mode="cloud"）的萃取／生成／補強三支提示詞在三開關任何組合下 byte 不變
+    # （共用常數 LOCAL_EXTRACTION_PROMPT 一字不改；紀律以地端專屬區塊追加）。
+    # ========================================
+    LOCAL_LLM_ONEPERITEM_RULE: bool = Field(
+        default=True,
+        description="地端生成紀律：正文一案一條（同一段發言、同一件工作不得拆成多條；"
+                    "『拆細』只適用於待辦事項表格）。false＝關閉此條"
+    )
+    LOCAL_LLM_SPEAKER_DISCIPLINE_RULE: bool = Field(
+        default=True,
+        description="地端生成紀律：正文主詞不得為『（待確認）』（講者不明時改寫為逐字稿可證的稱謂）；"
+                    "推測語與 ASR 亂碼不得寫成事實。false＝關閉此條"
+    )
+    LOCAL_LLM_ANTI_DUPLICATE_RULE: bool = Field(
+        default=True,
+        description="地端生成紀律：同一件事不得跨節重複（已寫過的內容，後續章節只補新資訊）。"
+                    "false＝關閉此條"
+    )
+
+    # P7-B SUPPORTING-1：地端佔位符正規化（確定性、作用域釘死；預設開）。
+    # 只收斂「相鄰重複（待確認）」與「決議事項辦理情形彙整表」第 2 欄的樣式；
+    # 不動其他表格／正文、不新增事實；雲端路徑不呼叫（byte 不變）。
+    LOCAL_LLM_PLACEHOLDER_NORMALIZE_EXT: bool = Field(
+        default=True,
+        description="地端紀錄的佔位符正規化（僅 mode='local' 的收尾階段）："
+                    "①標題／開頭欄位內相鄰重複的「（待確認）」收斂為一個（半形視為同一符號）；"
+                    "②「決議事項辦理情形彙整表」第 2 欄儲存格的「（（待確認））」→「（待確認）」"
+                    "與半形冒號→全形。false＝關閉＝byte 級回本波前"
+    )
     
     # ---- 雲端 LLM provider 解析（單一來源；呼叫端不得直接讀 GEMINI_*）----
     @property
@@ -694,6 +751,11 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> str:
         return os.path.join(self.DATA_DIR, "cache")
+
+    @property
+    def debug_dir(self) -> str:
+        """觀測／診斷用落檔目錄（P7-B CORE-1a：萃取筆記落檔；預設不寫）。"""
+        return os.path.join(self.DATA_DIR, "debug")
 
     @property
     def asr_safe_allow_patterns_list(self) -> List[str]:

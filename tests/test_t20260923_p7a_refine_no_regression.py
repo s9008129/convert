@@ -245,7 +245,14 @@ async def test_T05_逐條對帳未執行_守衛不作用(monkeypatch):
 
     assert service._core_coverage_snapshot() is None
     assert "版本三" in result
-    assert not [line for line in messages if "不回退守衛" in line]
+    # P7-B §8（T20260923-1810-01）：這裡過去是本專案唯一「靜默停用」的守衛路徑——
+    # 開關開著、卻因取不到快照而完全不作用，實機（Windows／Ollama）無法分辨
+    # 「評估後放行」與「根本沒跑」。本波改為留下 skip-reason 觀測（observation-only，
+    # 不改交付結果、不改 metrics），因此斷言由「不得有 log」改為「必須有 skip-reason」。
+    assert [line for line in messages if "skipped_reason=coverage_mode_off" in line], (
+        "P7-B §8：守衛未評估必須留下 skip-reason 觀測"
+    )
+    assert not [line for line in messages if REVERT_WARNING in line]
     assert service._record_coverage_metrics_fields() == "", "off 模式的 metrics 必須維持空字串"
 
 

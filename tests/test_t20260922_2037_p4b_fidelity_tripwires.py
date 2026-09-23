@@ -345,17 +345,31 @@ def test_off開關_關閉時產品完全不呼叫檢查器(monkeypatch):
 
 
 def test_量尺既有欄位byte級golden不變():
-    """off 等價：P4-B 只新增鍵；把新鍵與新 notes 條目移除後必須等於改動前 payload。"""
+    """off 等價：P4-B 與 P7-B 都只新增鍵；把新鍵與新 notes 條目移除後必須等於改動前 payload。
+
+    P7-B（T20260923-1810-01，`ac181be`）在量尺上另加了模板無關的觀測欄位
+    （`full_document_item_count`／`full_document_avg_item_chars`／`near_duplicate_items`）
+    與兩條 `notes.definitions` 說明。它們同樣是 **additive、observation-only**，
+    故一併列入本測試的「新鍵」清單——既有欄位與舊 notes 條目仍必須 byte 級不變
+    （把新增項全部剝除後，digest 必須回到 P4-B 之前的 golden）。
+    """
+    p7b_top_level = ("full_document_item_count", "full_document_avg_item_chars", "near_duplicate_items")
+    p7b_notes = ("full_document_item_stats", "near_duplicate_items")
     payload = metrics.measure_record_quality(
         GOLDEN_RECORD, transcript_text=GOLDEN_TRANSCRIPT, template_id="section_meeting"
     )
     stripped = dict(payload)
-    stripped.pop("unsupported_entities_registry_aware")
-    stripped.pop("fidelity")
+    for key in ("unsupported_entities_registry_aware", "fidelity", *p7b_top_level):
+        stripped.pop(key)
     stripped["notes"] = {
         key: value
         for key, value in payload["notes"].items()
-        if key not in ("unsupported_entities_registry_aware", "fidelity")
+        if key not in ("unsupported_entities_registry_aware", "fidelity", *p7b_notes)
+    }
+    stripped["notes"]["definitions"] = {
+        key: value
+        for key, value in payload["notes"]["definitions"].items()
+        if key not in p7b_notes
     }
     canonical = json.dumps(stripped, ensure_ascii=False, sort_keys=True, indent=2)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()

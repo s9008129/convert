@@ -1,13 +1,14 @@
-# P7-B 優化規劃：地端會議紀錄品質對齊雲端（模型無關）— rev2
+# P7-B 優化規劃：地端會議紀錄品質對齊雲端（模型無關）— rev4
 
 - `TASK_ID`: T20260923-1810-01-local-record-fidelity-density
-- `PLAN_REVISION`: 3
+- `PLAN_REVISION`: 4
 - `TASK_CLASS`: STANDARD（有語意變更，`REVIEW_REQUIRED: YES`）
 - `REVIEW_REQUIRED`: YES
 - `INDEPENDENT_ACCEPTANCE_REQUIRED`: YES
 - `E2E_REQUIRED`: YES
 - 分支：`fix/qwen-local-quality-parity`（rev1 `0254c7a` → rev2 依 attempt-01 審查修正
-  → rev3 依 run-02 成本實測修正 CORE-1 設計，見 §0 最後兩列）
+  → rev3 依 run-02 成本實測修正 CORE-1 設計 → rev4 依 attempt-02 審查修正 I9／I10／I13，
+  見 §0 與 §0c）
 - 素材（固定）：`/Users/hsiaojohnny/Downloads/0903-科務會議.m4a`（sha256 `982151f4…2828`）、
   模板 `section_meeting`、`--quality-mode observe`
 - 禁測：`qwen3.6-35b-a3b-splash`（僅可引用歷史數字）
@@ -42,6 +43,20 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
 「在大呼叫之上再加一次尾段呼叫」既貴又不保證；**改為「取代」：讓每個區段都有自己的萃取呼叫**。
 此即 v4.8.0 之前由 `LOCAL_LLM_CHUNK_INPUT_TOKENS_CEILING` 提供的結構保證（R1 的原始機制）。
 
+### 0c. rev3 → rev4（來源：`review/attempt-02/review.md`，gate `PLAN_REVISION_REQUIRED`）
+
+受審快照 rev3 sha256 `9d8e3e27…d809`（審查者獨立複核一致）。三項阻斷逐條修正：
+
+| 審查項 | rev3 的問題 | rev4 修正 |
+|---|---|---|
+| **I9 停損時鐘混用** | §7 把 `gemma 1,570 s`（pipeline `duration_seconds.total`）與 `qwen 1,023 s`（runner 牆鐘）當同一把尺；qwen 該場 pipeline 實為 769.6 s、gemma 牆鐘實為 2,125.5 s | §7 釘死**牆鐘**為唯一停損時鐘；更正對照場標示為 P7-A E7C（gemma）／P6-A E6b（qwen）；pipeline total 僅作交叉核對；備援① 的 +150.5 s 影響如實登錄 |
+| **I10 會 byte 級改到雲端提示詞** | 「修 `summarization.py:291` 措辭」——`:291` 位於共用常數 `LOCAL_EXTRACTION_PROMPT`（`:262-298`），而 `CLOUD_EXTRACTION_PROMPT`（`:300`）直接串接它；`:2484` 亦為雲端共用 builder | §4 明文改為**地端專屬常數**：紀律掛在 `_local_extraction_prompt()`（`:565-567`），共用常數一字不改；`:2484` 以 `mode=="local"` 條件追加（比照 `_local_tag_placement_rule`）；新增「雲端 prompt byte 不變」單元測試 |
+| **I13 qwen 驗收不可證偽** | §5「全文條目數與平均字數**朝目標移動**」無數值，Stage 05 各說各話 | §5 給**可證偽數值目標**（leaf item ≤ 62 且平均條目字元 ≥ 48，對 E6b 基線 78／42.5），並明定非阻斷語意 |
+
+非阻斷註記同日一併修正：①標題 rev 標示；②§3 CORE-1a 落檔路徑對齊實作；
+③§9.1 契約文字改為分塊契約（原「尾段切片」為 rev2 殘留）；④CORE-1b 生效條件描述精確化；
+⑤「2 塊 ≈ 301 s」改列**值域**並新增**預註冊可證偽預測**（§3）。
+
 ## 1. Goal Contract（白話）
 
 **主目標**：讓「地端模型」（LM Studio 或 Ollama，任意開源模型）產出的會議紀錄品質，
@@ -55,7 +70,7 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
 
 **主要風險**：改流程 → 執行時間變長（使用者已抱怨 35 分鐘）。
 因此本波**不得新增無條件的大量呼叫**；CORE-1b 採「**取代**單次大呼叫」的結構性分塊
-（推估 −12%，見 §0b／§3），其成本仍必須以 E2E 實測登錄（§5 耗時列）。
+（值域 −12%～+5%，見 §0b／§3），其成本仍必須以 E2E 實測登錄（§5 耗時列）。
 
 ## 2. 根因（皆有證據；全部模型無關）
 
@@ -76,7 +91,7 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
 
 - **CORE-1a｜萃取筆記落檔（零呼叫、additive、預設關）**
   `LOCAL_LLM_DUMP_EXTRACTION_NOTES`（bool，預設 `False`）：開啟時把每份萃取筆記與零損串接後的
-  合併筆記寫入 `<DATA_DIR>/debug/<task>/notes-*.md`。**不改任何產品輸出**；E2E 開啟，
+  合併筆記寫入 `<DATA_DIR>/debug/extraction-notes/notes-*.md`（與實作一致）。**不改任何產品輸出**；E2E 開啟，
   讓「尾段缺漏是萃取漏還是生成漏」以後可證、可重播（審查 I1 要求）。
 
 - **CORE-1b｜結構性分塊萃取（取代單次大呼叫；不新增呼叫「次數」以外的成本）**
@@ -93,6 +108,14 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
     （`evidence/region-coverage-calibration/run-01.json`）＝**否證**。
   - **契約**：觀測字串釘死 `結構性分塊萃取：上限 … tokens（來源 …）、實際分塊上限 …`；
     既有 `chunk_count=` 已在 pipeline metrics，維持不變。
+  - **生效條件（精確化）**：只要「依 context 推導值」> 6,000 即生效（不限「整份只跑一次」的極端情境；
+    例：16K context 下的 8K 逐字稿也會由 1 塊變 2 塊）。
+  - **預註冊可證偽預測（E2E 開場先核對）**：以產品分塊器離線重播固定素材（est 11,711 tokens、ceiling 6,000）
+    ⇒ **恰 2 塊，估 5,960／5,918 tokens**；chunk 2 起點 `[00:22:09]`，涵蓋 F044／F054／F066。
+    本上限是**刀鋒邊界**（5,500／5,860 ⇒ 3 塊）⇒ 實測以 `chunk_count=` 為準並如實登錄。
+  - **成本值域（非單點）**：整份 1 次＝340.6 s（E7C 實測）、半份 1 次＝150.5 s（run-02 實測）
+    ⇒ 2 塊推估 **−12%～+5%（萃取階段）**，對 gemma 全場約 **−2.5%**；qwen 的單次萃取僅 166.8 s（E6b），
+    分塊相對成本方向 `[UNKNOWN]`，一律以 E2E 實測登錄。
   - **關閉＝byte 級回本波前**（`LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS=0` 且 CORE-1a 不開）。
 
 - **CORE-1c｜預註冊備援（依 E2E 結果二選一；兩者成本皆已實測或已界定）**
@@ -107,11 +130,20 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
 ### CORE-2a｜提示詞紀律（零呼叫；三條各自開關，預設 True）
 只作用於**地端路徑**（`mode="local"`），雲端輸出 byte 級不變：
 1. `LOCAL_LLM_ONEPERITEM_RULE`：正文**一案一條**——同一段發言、同一件工作不得拆成多條；
-   「拆細」明文**只適用於待辦事項表格**（同時修 `summarization.py:291` 與 `:2484` 兩處措辭，
-   並覆蓋**補強輪** builder `_build_record_refinement_message`，避免補強把紀律重置）。
+   「拆細」明文**只適用於待辦事項表格**。
 2. `LOCAL_LLM_SPEAKER_DISCIPLINE_RULE`：正文主詞不得為「（待確認）」；講者不明時改寫為
    逐字稿可證的稱謂或整句改寫；推測語（可能是／應該是／建議）與 ASR 亂碼不得寫成事實。
 3. `LOCAL_LLM_ANTI_DUPLICATE_RULE`：同一件事不得跨節重複（CORE-2b 的提示詞側）。
+
+**實作機制（依審查 I10 釘死；「雲端 byte 不變」是契約而非期望）**：
+- 共用常數 `LOCAL_EXTRACTION_PROMPT`（`:262-298`）**一字不改**——`CLOUD_EXTRACTION_PROMPT`（`:300`）
+  直接串接它，就地改字即 byte 級改動雲端提示詞（凍結介面）。
+- 三條紀律以**地端專屬區塊**追加於 `_local_extraction_prompt()`（`:565-567`），僅地端萃取掛載。
+- 生成訊息側（`_build_record_generation_message`）與**補強輪** builder
+  （`_build_record_refinement_message`，`:2484` 附近的雲端共用 builder）以 `mode=="local"`
+  條件追加（既有模式比照 `_local_tag_placement_rule`，`:2431-2447`），避免補強把紀律重置。
+- 三開關全關 ⇒ 地端提示詞 byte 級回本波前；單元測試斷言「`mode="cloud"` 的兩支 prompt
+  在三開關開／關下 **byte 完全相同**」。
 
 ### CORE-2b｜重複：提示詞＋新觀測儀器（確定性改寫**延後**）
 - 撤銷 rev1 的「`dedupe_cross_section_items` 作用域擴充」：該函式需要「決議」＋「主席裁示事項」
@@ -136,8 +168,11 @@ run-01 命中 F066 但缺 F044，run-02 命中 F044 但缺 F066）⇒
 | DOCX | 交付檔存在且可開 | `ls *.docx`、`unzip -t` |
 
 **E2E 場次**：gemma 4 31B 1 場（必）、qwen 3.8 27B 1 場（必，驗不回退）；資源允許再各 +1 場取中位數。
-**主要驗收（結構式，不依單場覆蓋率）**：gemma 的 7 條尾段事實**命中 ≥6**且 **F044 命中**；
-qwen `coverage_core` 不回退（≥27/28）且全文條目數與平均字數朝目標移動。
+**主要驗收（結構式，不依單場覆蓋率）**：gemma 的 7 條尾段事實**命中 ≥6**且 **F044 命中**＝**阻斷**。
+qwen 分兩層：①`coverage_core` 不回退（≥27/28）＝**阻斷**；②**密度目標（可證偽、非阻斷）**：
+全文 leaf item 數 **≤ 62**（自 E6b 基線 78 下降 ≥20%）且平均條目字元 **≥ 48**（自 42.5 上升 ≥12%），
+朝雲端密度（28 條／65.1 字）移動；未達 ⇒ 如實登錄為「未達」，列為下一波槓桿（確定性去重等）的
+決策輸入，**不阻斷**本波收尾。
 **反 gaming 禁令**：不得把 checklist／探針關鍵詞寫進任何提示詞；Stage 05 抽驗 2–3 條新命中事實的原文對照。
 
 ## 6. SUPPORTING／BEST_EFFORT
@@ -155,9 +190,14 @@ qwen `coverage_core` 不回退（≥27/28）且全文條目數與平均字數朝
 
 ## 7. 停損與回退
 
-- 單場總時若比 P7-A 同模型場（gemma 1,570 s／qwen 1,023 s）**增加 ≥15%** 且 §5 主驗收未達
+- **停損時鐘釘死＝runner 牆鐘**（審查 I9）。對照場：gemma＝P7-A **E7C 2,125.5 s**、
+  qwen＝P6-A **E6b 1,023.2 s**。pipeline `duration_seconds.total`（1,570.2／769.6 s）**僅作交叉核對**，
+  不與牆鐘混算（混鐘會讓「+15%」在不同模型上等於不同嚴格度）。
+- 單場牆鐘若比**同模型對照場**增加 ≥15% 且 §5 主驗收未達
   ⇒ 停用 CORE-1b（`LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS=0`）並改走 CORE-1c 備援。
-  註：CORE-1b 的成本預期為 **−12%（推估，未實測）**；若 E2E 實測為增加，仍以 15% 為界。
+  註：CORE-1b 成本為**值域 −12%～+5%（萃取階段推估；全場約 −2.5%）**，非單點保證。
+- 備援①（尾段補萃取）成本 **+150.5 s** ⇒ 對 qwen 牆鐘 **+14.7%**、對 gemma **+7.1%**；
+  若與 CORE-1b 同時開啟使牆鐘增幅 ≥15%，須回 Planner 決策（執行者不得自行放行）。
 - 每一槓桿可獨立關閉（1a／1b／2a.1／2a.2／2a.3／SUPPORTING-1／SUPPORTING-2）；
   全關＝byte 級回本波前。
 - 任何語意變更若在 E2E 造成回退，走 Planner 重規劃，不由執行者就地改語意。
@@ -173,9 +213,9 @@ qwen `coverage_core` 不回退（≥27/28）且全文條目數與平均字數朝
 
 ## 9. 驗證計畫（Stage 04 → Stage 05）
 
-1. 單元測試：CORE-1a（落檔／關閉＝無檔）、CORE-1b（觸發條件、關閉＝byte 級、尾段切片正確、
-   零損併入）、CORE-2a（三開關各自生效、雲端不變、補強 builder 覆蓋）、SUPPORTING-1（作用域＋雲端不變）、
-   engine 參數化、skip-reason 觀測。
+1. 單元測試：CORE-1a（落檔／關閉＝無檔）、CORE-1b（**分塊契約**：6000 ⇒ 2 塊、`min()` 舊鈕語意不變、
+   0＝停用、關閉＝byte 級）、CORE-2a（三開關各自生效、**雲端 prompt byte 不變**、補強 builder 覆蓋）、
+   SUPPORTING-1（作用域＋雲端不變）、engine 參數化、skip-reason 觀測。
 2. 離線重播：以既有 artifact 驗證「關閉＝本波前」與「開啟＝預期差異」。
 3. E2E（§5）：gemma 1 場＋qwen 1 場（同素材／同模板／`--quality-mode observe`）。
 4. Stage 05 獨立複驗：結構式 7 條逐條證據＋DOCX 存在＋耗時對帳＋抽驗 2–3 條原文對照。

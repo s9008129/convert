@@ -121,25 +121,42 @@ def _notes_with_two_actions() -> str:
 # 契約 1：分塊輸入上限改由 context 推導（不再固定 3200）
 # ---------------------------------------------------------------------------
 
-def test_large_context_transcript_is_no_longer_forced_into_3200_token_chunks():
+def test_large_context_transcript_is_no_longer_forced_into_3200_token_chunks(monkeypatch):
     """128K instance 下 11,712 est 的逐字稿必須單次萃取，而不是被切成 4 塊。
 
     修復前：``chunk_input_budget = min(max(1200, ctx-3072-overhead), 3200)``，
     實測把 11,712 est 的逐字稿切成 3,185/3,127/3,068/2,599 四塊——單次呼叫只看得到
     全會約 18% 的上下文，「前段提議、後段定案」在萃取階段就不可能被一起推理。
+
+    P7-B（T20260923-1810-01）補充：本測試守住的是「不得被**固定 3200** 夾住」。
+    停用新旋鈕（`LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS=0`）時即為 v4.8.0 行為；
+    預設（6000）下長逐字稿改為結構性分塊——這是本波刻意的語意變更（根因 R1：
+    大 context 只跑一次萃取、尾段事實被稀釋），分塊上限仍遠大於 3200。
     """
     service = SummarizationService()
     transcript = "字" * 11712
 
-    plan = service._build_local_context_plan(
+    monkeypatch.setattr(settings, "LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS", 0)
+    legacy = service._build_local_context_plan(
         transcript, settings.DEFAULT_SYSTEM_PROMPT, context_window_tokens=128000
     )
 
-    assert plan.chunk_input_budget_tokens > 3200, (
+    assert legacy.chunk_input_budget_tokens > 3200, (
         "128K window 下分塊預算不得仍被固定 3200 夾住（那只用掉可承載量的 2.6%）"
     )
-    assert plan.needs_chunking is False
-    assert plan.estimated_chunk_count == 1
+    assert legacy.needs_chunking is False
+    assert legacy.estimated_chunk_count == 1
+
+    monkeypatch.setattr(settings, "LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS", 6000)
+    default = service._build_local_context_plan(
+        transcript, settings.DEFAULT_SYSTEM_PROMPT, context_window_tokens=128000
+    )
+    assert default.chunk_input_budget_tokens == 6000, (
+        "預設上限＝6000；仍比修復前的固定 3200 寬鬆近一倍"
+    )
+    assert default.needs_chunking is True, (
+        "P7-B CORE-1b：長逐字稿恢復「每個區段都有自己的萃取呼叫」的結構保證"
+    )
 
 
 def test_chunk_input_ceiling_still_configurable_and_small_context_unchanged(monkeypatch):
@@ -519,13 +536,24 @@ def test_local_mode_dedupes_cross_section_items_after_placeholder_normalisation(
     )
 
 
-def test_record_prompt_tag_placement_guidance_is_local_only():
+def test_record_prompt_tag_placement_guidance_is_local_only(monkeypatch):
     """W2 導引只進地端訊息；雲端訊息與地端訊息的其餘內容必須逐字元相同。"""
     service = SummarizationService()
     template = get_template("section_meeting")
     notes = _notes_with_two_actions()
     transcript = TRANSCRIPT_LINE
     marker = SummarizationService.LOCAL_SOURCE_TAG_PLACEMENT_RULE
+
+    # P7-B（T20260923-1810-01）CORE-2a 另有三條地端生成紀律（各自開關、預設開）。
+    # 本測試只鎖 W2 導引的契約，故先把三條紀律關掉，讓「地端＝雲端＋導引列」的
+    # 逐字元比較維持單一自變數；CORE-2a 的逐字元契約由
+    # `tests/test_t20260923_p7b_generation_discipline.py` 獨立守住。
+    for switch in (
+        "LOCAL_LLM_ONEPERITEM_RULE",
+        "LOCAL_LLM_SPEAKER_DISCIPLINE_RULE",
+        "LOCAL_LLM_ANTI_DUPLICATE_RULE",
+    ):
+        monkeypatch.setattr(settings, switch, False)
 
     cloud_gen = service._build_record_generation_message(notes, transcript, template=template)
     cloud_ref = service._build_record_refinement_message(

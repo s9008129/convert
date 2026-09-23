@@ -1,0 +1,57 @@
+{
+  "purpose": "P7-B SUPPORTING-1 在既有交付紀錄上的離線重播（純函式；0 次模型呼叫）",
+  "measurement": "同一行內相鄰（可夾空白，不含換行）的兩個『（待確認）』（半形視為同一符號）",
+  "cases": {
+    "qwen E6b": {
+      "record_path": "data/cache/e2e/p6a-qwen27b-e6b/backend_data/outputs/0903-科務會議_c605df1a.md",
+      "record_sha256": "5db6859f4dcefa70ab556d86afd4a8f68e5981e8985cf90c5c5d8c61e7330326",
+      "adjacent_before": 2,
+      "adjacent_after": 0,
+      "before_lines": [
+        {
+          "line": 3,
+          "text": "（待確認）（待確認）年（待確認）月份第（待確認）次科務會議紀錄"
+        },
+        {
+          "line": 4,
+          "text": "時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）（待確認）"
+        }
+      ],
+      "changed_lines": [
+        {
+          "line": 3,
+          "before": "（待確認）（待確認）年（待確認）月份第（待確認）次科務會議紀錄",
+          "after": "（待確認）年（待確認）月份第（待確認）次科務會議紀錄"
+        },
+        {
+          "line": 4,
+          "before": "時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）（待確認）",
+          "after": "時間：中華民國（待確認）年（待確認）月（待確認）日（待確認）"
+        }
+      ],
+      "byte_delta": -10,
+      "idempotent": true
+    },
+    "gemma E7C": {
+      "record_path": "data/cache/e2e/p7a-gemma31b-e7c/backend_data/outputs/0903-科務會議_bb492356.md",
+      "record_sha256": "866671601beaf63940063cbd3d04ff10bf9a052f9fcf92c7cf78263da6233801",
+      "adjacent_before": 1,
+      "adjacent_after": 0,
+      "before_lines": [
+        {
+          "line": 3,
+          "text": "（待確認）（待確認）年（待確認）月份第（待確認）次科務會議紀錄"
+        }
+      ],
+      "changed_lines": [
+        {
+          "line": 3,
+          "before": "（待確認）（待確認）年（待確認）月份第（待確認）次科務會議紀錄",
+          "after": "（待確認）年（待確認）月份第（待確認）次科務會議紀錄"
+        }
+      ],
+      "byte_delta": -5,
+      "idempotent": true
+    }
+  }
+}

@@ -1317,3 +1317,174 @@ def measure_tag_traceability(text: str, transcript: str) -> dict:
         "distinct_tag_time_count": len(tag_times),
         "distinct_tag_time_ratio": (len(tag_times) / total) if total else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# P7-B SUPPORTING-1：地端佔位符正規化（2026-09-23；作用域釘死、純函式）
+# ---------------------------------------------------------------------------
+# 背景：地端模型輸出會出現相鄰重複的「（待確認）（待確認）」（紀錄開頭欄位與標題
+# 行）與表格內的多層括號「（（待確認））」。以確定性規則收斂，不用模型、不新增
+# 事實；作用域見下方常數與函式 docstring，不得擴大。
+#
+# 呼叫端契約：僅地端收尾（mode="local"）且 `LOCAL_LLM_PLACEHOLDER_NORMALIZE_EXT`
+# 為 True 時由呼叫端呼叫；本函式不讀設定（保持純函式、可單測），雲端路徑不呼叫。
+
+# 開頭欄位／標題行的掃描上限（行數）：本專案最長模板（section_meeting）的開頭
+# 骨架（標題→時間／地點／主持人→列管案件→彙整表標題）含空行不超過十餘行，
+# 15 行是安全上界；明文禁止全文掃描，正文段落一律不動。
+_PLACEHOLDER_HEAD_LINE_LIMIT = 15
+
+# 目標表格標題（行內比對；與 section_meeting._SUMMARY_TABLE_TITLE_PATTERN 同字串，
+# 不依賴模板物件）。找不到該表時原樣回傳、不報錯。
+_PLACEHOLDER_TARGET_TABLE_TITLE = "決議事項辦理情形彙整表"
+# 表格標題與表格之間允許出現的標籤行（模板骨架「決議事項：」；對應
+# section_meeting._RESOLUTION_LABEL_PATTERN，不逐字掃其他內容行）。
+_PLACEHOLDER_TABLE_LABEL_PATTERN = re.compile(r"^決議事項\s*[:：]\s*$")
+
+# 佔位符核心字串（與 _MISSING_TEXT 同源，不得各自漂移）。
+_PLACEHOLDER_INNER_TEXT = _MISSING_TEXT[1:-1]
+# 單一佔位符樣式：半形與全形括號視為同一符號。
+_PLACEHOLDER_TOKEN_PATTERN = r"[（(]" + re.escape(_PLACEHOLDER_INNER_TEXT) + r"[）)]"
+# 相鄰重複的佔位符（≥2 個緊鄰）：收斂成一個，保留第一個出現的原樣（半全形混用亦同）。
+_ADJACENT_PLACEHOLDERS_PATTERN = re.compile(
+    r"(" + _PLACEHOLDER_TOKEN_PATTERN + r")(?:" + _PLACEHOLDER_TOKEN_PATTERN + r")+"
+)
+# 多層括號的佔位符（「（（待確認））」／「((待確認))」）：收斂成一層，保留最外層樣式。
+_NESTED_PLACEHOLDER_PATTERN = re.compile(
+    r"([（(])[（(]+" + re.escape(_PLACEHOLDER_INNER_TEXT) + r"[）)]+"
+)
+
+# 標題行：Markdown 標題（#～######），或以「紀錄／彙整表」收尾的全文標題行
+# （後者沿用 _UNFILLED_PLACEHOLDER_TITLE_LINE_PATTERN 的判定，不另立標準）。
+_PLACEHOLDER_HEAD_TITLE_PATTERN = re.compile(
+    r"^\s*#{1,6}\s|" + _UNFILLED_PLACEHOLDER_TITLE_LINE_PATTERN.pattern
+)
+# 欄位行：可選項目符號＋可選粗體，短標籤（≤20 字、不含冒號與表格直線）後接全／半形
+# 冒號。20 字＝本專案最長欄位標籤（「歷次科務會議決議事項繼續列管案件」16 字）的
+# 安全上界；這是「欄位行」與「清單條目正文」的分界，沒有此形狀的條目正文一律不動。
+_PLACEHOLDER_HEAD_FIELD_PATTERN = re.compile(
+    r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?[^：:\n|]{1,20}(?:\*\*|__)?\s*[:：]"
+)
+
+# 表格列切分：group(1)＝「| 第 1 欄 |」、group(2)＝第 2 欄內容、group(3)＝其餘欄位與
+# 收尾直線（皆原樣保留）；跳脫直線（\|）不支援，與本檔既有表格處理一致。
+_PLACEHOLDER_TABLE_ROW_PATTERN = re.compile(
+    r"^([ \t]*\|[^|\n]*\|)([^|\n]*)((?:\|[^|\n]*)*)$"
+)
+# 分隔列單一儲存格樣式（---／:---:）；用於排除表頭下的分隔列（不是資料列）。
+_TABLE_SEPARATOR_CELL_PATTERN = re.compile(r":?-+:?")
+
+
+def _collapse_nested_placeholder(match: re.Match) -> str:
+    """多層括號佔位符收斂成一層（沿用最外層括號的全／半形樣式）。"""
+    opener = match.group(1)
+    closer = "）" if opener == "（" else ")"
+    return f"{opener}{_PLACEHOLDER_INNER_TEXT}{closer}"
+
+
+def _is_placeholder_head_line(stripped: str) -> bool:
+    """是否屬「開頭欄位／標題行」（表格列與清單條目正文一律排除）。"""
+    if not stripped or TABLE_ROW_PATTERN.match(stripped):
+        return False
+    if _PLACEHOLDER_HEAD_TITLE_PATTERN.search(stripped):
+        return True
+    return bool(_PLACEHOLDER_HEAD_FIELD_PATTERN.match(stripped))
+
+
+def _is_table_separator_row(row: str) -> bool:
+    """Markdown 表格分隔列（全儲存格皆為 ---／:---: 樣式）。"""
+    stripped = row.strip()
+    inner = stripped[1:] if stripped.startswith("|") else stripped
+    inner = inner[:-1] if inner.endswith("|") else inner
+    cells = [cell.strip() for cell in inner.split("|")]
+    return bool(cells) and all(
+        _TABLE_SEPARATOR_CELL_PATTERN.fullmatch(cell) for cell in cells
+    )
+
+
+def _placeholder_summary_table_rows(lines: list[str]) -> list[int]:
+    """回傳「決議事項辦理情形彙整表」資料列的行號（不含表頭與分隔列）。
+
+    標題後僅允許空行與「決議事項：」標籤行，首個內容行必須是表格列，否則換下
+    一個標題候選；完全找不到時回傳空清單（呼叫端原樣回傳、不報錯）。只處理
+    第一個可解析的該表。
+    """
+    for title_index, line in enumerate(lines):
+        if _PLACEHOLDER_TARGET_TABLE_TITLE not in line or TABLE_ROW_PATTERN.match(line):
+            continue
+        index = title_index + 1
+        while index < len(lines) and (
+            not lines[index].strip()
+            or _PLACEHOLDER_TABLE_LABEL_PATTERN.match(lines[index].strip())
+        ):
+            index += 1
+        if index >= len(lines) or not TABLE_ROW_PATTERN.match(lines[index]):
+            continue
+        rows: list[int] = []
+        is_header = True
+        while index < len(lines) and TABLE_ROW_PATTERN.match(lines[index]):
+            if is_header:
+                is_header = False  # 首列＝表頭（非資料列）
+            elif not _is_table_separator_row(lines[index]):
+                rows.append(index)
+            index += 1
+        return rows
+    return []
+
+
+def _normalize_placeholder_table_row(row: str) -> str:
+    """只改表格列第 2 欄儲存格：多層括號收斂、半形冒號改全形；其餘 byte 不動。"""
+    match = _PLACEHOLDER_TABLE_ROW_PATTERN.match(row)
+    if not match:
+        return row
+    cell = match.group(2)
+    fixed = _NESTED_PLACEHOLDER_PATTERN.sub(_collapse_nested_placeholder, cell)
+    fixed = fixed.replace(":", "：")
+    if fixed == cell:
+        return row
+    return f"{match.group(1)}{fixed}{match.group(3)}"
+
+
+def normalize_unfilled_placeholders_ext(text: str) -> str:
+    """P7-B SUPPORTING-1：地端佔位符正規化（作用域釘死；純函式）。
+
+    確定性規則（不用模型、不新增事實、不改語意；作用域不得擴大）：
+
+    ① 文件開頭的欄位／標題行：只掃描前 `_PLACEHOLDER_HEAD_LINE_LIMIT`（15）行，
+       把同一行內**相鄰重複**的「（待確認）」收斂成一個；半形 `(待確認)` 與全形
+       「（待確認）」視為同一符號（保留第一個出現的樣式）。表格列與清單條目
+       正文一律排除；單一個不動、不相鄰的重複不動。
+    ② 僅「決議事項辦理情形彙整表」**資料列的第 2 欄**儲存格：
+       a) 「（（待確認））」／「((待確認))」等多層括號收斂成一層（保留最外層樣式）；
+       b) 半形冒號 `:` 改全形 `：`。
+       其他欄位、其他表格與正文一律不動；找不到該表時原樣回傳（不報錯）。
+
+    呼叫端契約（本函式不讀設定、不自行判斷路徑）：僅在地端收尾（`mode="local"`）
+    且 `settings.LOCAL_LLM_PLACEHOLDER_NORMALIZE_EXT` 為 True 時由呼叫端呼叫；
+    雲端路徑不呼叫（輸出 byte 不變）。
+
+    純字串函式：無 I/O、無網路、無模型、無時間依賴；輸入 `""` 回 `""`；非字串
+    輸入原樣回傳（不丟例外）；冪等：`f(f(x)) == f(x)`。
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    lines = text.split("\n")
+
+    # ① 文件開頭欄位／標題行（僅前 _PLACEHOLDER_HEAD_LINE_LIMIT 行）：相鄰重複的
+    # 佔位符收斂成一個（regex 只匹配緊鄰者，不相鄰的重複不動）。
+    for index in range(min(len(lines), _PLACEHOLDER_HEAD_LINE_LIMIT)):
+        line = lines[index]
+        if not _is_placeholder_head_line(line.strip()):
+            continue
+        fixed = _ADJACENT_PLACEHOLDERS_PATTERN.sub(r"\1", line)
+        if fixed != line:
+            lines[index] = fixed
+
+    # ② 該表資料列第 2 欄（只作用於「決議事項辦理情形彙整表」；其他表格不受影響）。
+    for row_index in _placeholder_summary_table_rows(lines):
+        fixed = _normalize_placeholder_table_row(lines[row_index])
+        if fixed != lines[row_index]:
+            lines[row_index] = fixed
+
+    return "\n".join(lines)

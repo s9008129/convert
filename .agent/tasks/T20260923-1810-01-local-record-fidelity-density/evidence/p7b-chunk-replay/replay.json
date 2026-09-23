@@ -1,0 +1,100 @@
+{
+  "purpose": "P7-B CORE-1b 預註冊可證偽預測的離線重播（產品分塊器；0 次模型呼叫）",
+  "transcript_path": "data/cache/e2e/p7a-gemma31b-e7c/transcript.txt",
+  "transcript_sha256": "fd40a2018def853580bda83db26f9939b7a053cf1f0049ff80b08829e75b72bf",
+  "transcript_est_tokens": 11711,
+  "context_window_tokens": 71936,
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "cases": {
+    "0": {
+      "chunk_input_budget_tokens": 66346,
+      "needs_chunking": false,
+      "estimated_chunk_count": 1,
+      "n_chunks": 1,
+      "chunk_est_tokens": [
+        11711
+      ],
+      "first_line_of_each_chunk": [
+        "【發言者標註說明】本逐字稿由系統"
+      ]
+    },
+    "5500": {
+      "chunk_input_budget_tokens": 5500,
+      "needs_chunking": true,
+      "estimated_chunk_count": 3,
+      "n_chunks": 3,
+      "chunk_est_tokens": [
+        5459,
+        5379,
+        1397
+      ],
+      "first_line_of_each_chunk": [
+        "【發言者標註說明】本逐字稿由系統",
+        "[00:19:49-00:21:",
+        "但是沒有經歷過上一次那一個禮拜那"
+      ]
+    },
+    "5860": {
+      "chunk_input_budget_tokens": 5860,
+      "needs_chunking": true,
+      "estimated_chunk_count": 3,
+      "n_chunks": 3,
+      "chunk_est_tokens": [
+        5801,
+        5541,
+        682
+      ],
+      "first_line_of_each_chunk": [
+        "【發言者標註說明】本逐字稿由系統",
+        "[00:21:46-00:21:",
+        "因為我覺得搞不好迴去看到一時我也"
+      ]
+    },
+    "6000": {
+      "chunk_input_budget_tokens": 6000,
+      "needs_chunking": true,
+      "estimated_chunk_count": 3,
+      "n_chunks": 2,
+      "chunk_est_tokens": [
+        5960,
+        5918
+      ],
+      "first_line_of_each_chunk": [
+        "【發言者標註說明】本逐字稿由系統",
+        "[00:22:09-00:22:"
+      ],
+      "tail_fact_probes_in_last_chunk": {
+        "F044": true,
+        "F054": true,
+        "F055": true,
+        "F056": true,
+        "F060": false,
+        "F065": true,
+        "F066": true
+      },
+      "tail_fact_probe_keywords": {
+        "F044": "選舉",
+        "F054": "搬遷",
+        "F055": "淹水",
+        "F056": "防水",
+        "F060": "霉味",
+        "F065": "財政四科",
+        "F066": "新聞行銷處"
+      }
+    },
+    "6500": {
+      "chunk_input_budget_tokens": 6500,
+      "needs_chunking": true,
+      "estimated_chunk_count": 2,
+      "n_chunks": 2,
+      "chunk_est_tokens": [
+        6255,
+        5488
+      ],
+      "first_line_of_each_chunk": [
+        "【發言者標註說明】本逐字稿由系統",
+        "[00:24:07-00:24:"
+      ]
+    }
+  }
+}

@@ -9,6 +9,7 @@ v3.5.0 改進：
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import time
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -148,6 +150,31 @@ class SummarizationService:
         "如「各股配合辦理（發言者1，00:05:12）。」\n"
         "- 四欄的「決議事項辦理情形彙整表」內不得出現任何來源標註；表格列只寫案由、"
         "承辦單位與辦理情形（列內出現「發言者1」或時間戳即為格式錯誤）"
+    )
+
+    # 地端專用的生成紀律三條（P7-B CORE-2a；T20260923-1810-01）。
+    # 背景（實測根因 R2／R3）：qwen 3.8 27B 的紀錄被拆成 78 條破碎短句（平均 42.5 字，
+    # 雲端密度為 28 條／65.1 字），且同一件事跨節重複；正文主詞出現「（待確認）」。
+    # 契約（審查 I10）：共用常數 LOCAL_EXTRACTION_PROMPT 一字不改（雲端萃取於 :300 直接
+    # 串接它）；紀律一律以「地端專屬區塊」追加，且只在 mode="local" 注入 ⇒
+    # 雲端三支提示詞（萃取／生成／補強）在任何開關組合下 byte 不變。
+    LOCAL_RECORD_ONEPERITEM_RULE = (
+        "- 一案一條（地端生成紀律）：同一段發言、同一件工作只寫一條議題或決議；"
+        "「拆細」只適用於待辦事項表格，正文不得把一件事拆成多條充數"
+    )
+    LOCAL_RECORD_SPEAKER_DISCIPLINE_RULE = (
+        "- 主詞紀律（地端生成紀律）：正文主詞不得寫成「（待確認）」；講者不明時改寫為"
+        "逐字稿可證的稱謂（例如「與會人員」、「該單位」）或整句改寫；"
+        "推測語（可能是／應該是／建議）與語音辨識亂碼不得寫成已確定的事實"
+    )
+    LOCAL_RECORD_ANTI_DUPLICATE_RULE = (
+        "- 反重複（地端生成紀律）：同一件事不得在不同章節重複敘述；"
+        "前面章節已寫過的內容，後續章節只能補充新資訊或直接省略"
+    )
+    # 地端萃取側的同一條紀律（只釘「拆細」的適用範圍；不觸及共用常數）。
+    LOCAL_EXTRACTION_ONEPERITEM_RULE = (
+        "- 「拆細」只適用於上方「待辦清單」表格；「議題與決議」請一案一條，"
+        "同一段發言或同一件工作不要拆成多個議題"
     )
 
     # 來源標註偵測樣式：句末「（…HH:MM(:SS)…）」形式，供確定性檢查使用；
@@ -560,9 +587,20 @@ class SummarizationService:
         return max(1, cjk_chars + int(latin_words * 1.2) + other_chars // 4)
 
     def _local_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
-        """本地萃取提示詞（共用基底＋模板增補；v4.4.0）。"""
+        """本地萃取提示詞（共用基底＋模板增補＋地端紀律；v4.4.0／P7-B CORE-2a）。
+
+        契約（審查 I10）：共用常數 LOCAL_EXTRACTION_PROMPT（雲端於 :300 串接）
+        一字不改；地端紀律以「地端專屬區塊」追加於此處。
+        """
         extra = template.extraction_prompt_extra if template else ""
-        return self.LOCAL_EXTRACTION_PROMPT + extra
+        return self.LOCAL_EXTRACTION_PROMPT + extra + self._local_extraction_discipline_rule()
+
+    @classmethod
+    def _local_extraction_discipline_rule(cls) -> str:
+        """地端萃取側紀律（CORE-2a.1 的萃取半）；關閉時回空字串。"""
+        if not settings.LOCAL_LLM_ONEPERITEM_RULE:
+            return ""
+        return "\n" + cls.LOCAL_EXTRACTION_ONEPERITEM_RULE
 
     def _cloud_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
         """雲端萃取提示詞（共用基底＋模板增補；v4.4.0）。"""
@@ -598,6 +636,37 @@ class SummarizationService:
         chunk_ceiling = int(settings.LOCAL_LLM_CHUNK_INPUT_TOKENS_CEILING or 0)
         if chunk_ceiling > 0:
             chunk_input_budget = min(chunk_input_budget, chunk_ceiling)
+        # P7-B CORE-1b（T20260923-1810-01）：長逐字稿的**結構性分塊**。
+        # 實測根因：v4.8.0 把上限改為依 context 推導後，大 context（LM Studio 71,936）
+        # 對 11,711 est tokens 的逐字稿只跑 1 次萃取呼叫，尾段被稀釋——gemma 4 31B
+        # 連續兩場（E6／E7C）缺同一組尾段核心事實（00:25–00:44）。尾段單獨萃取實測可命中
+        # 6/7，但「在大呼叫之上再加一次」實測 +44% 時間且不保證命中；因此改為**取代**：
+        # 讓每個區段都有自己的呼叫（＝v4.8.0 之前的結構保證）。0＝停用＝回本波前。
+        extraction_ceiling = int(
+            getattr(settings, "LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS", 0) or 0
+        )
+        if extraction_ceiling > 0 and chunk_input_budget > extraction_ceiling:
+            log.info(
+                "結構性分塊萃取：上限 {} tokens（來源 LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS）、"
+                "實際分塊上限 {} tokens（依 context 推導值 {} tokens）",
+                extraction_ceiling,
+                extraction_ceiling,
+                chunk_input_budget,
+            )
+            chunk_input_budget = extraction_ceiling
+        elif extraction_ceiling <= 0:
+            # P7-B §8（審查 I7）：守衛的跳過路徑必須可觀測，不得靜默停用。
+            log.info(
+                "結構性分塊萃取：未評估（skipped_reason=ceiling_disabled；"
+                "LOCAL_LLM_EXTRACTION_CHUNK_CEILING_TOKENS=0）"
+            )
+        else:
+            log.info(
+                "結構性分塊萃取：未觸發（skipped_reason=context_budget_below_ceiling；"
+                "依 context 推導 {} tokens ≤ 上限 {} tokens）",
+                chunk_input_budget,
+                extraction_ceiling,
+            )
         # P0-6：合併後筆記會進入「最終生成」步驟；merge 可見目標（約 900 tokens）
         # 保證最終步驟輸入（完整公務紀錄 System Prompt 約 1,200 tokens＋補強輪
         # 附帶的當前摘要）遠低於 context window，不會被 num_ctx 靜默截斷。
@@ -710,10 +779,16 @@ class SummarizationService:
         # LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED fail loudly（等於把剛打開的成功出口
         # 又關上）。只取「相對最終生成提示詞的邊際開銷」，避免與上方已計入的
         # generation_message_extra 重複計算。
+        # P7-B（T20260923-1810-01，Stage 02 attempt-03 審查 I18）：補強輪的 prompt
+        # 開銷估算必須用**地端**訊息（`mode="local"`）——地端補強會多帶來源標註導引
+        # 與 CORE-2a 三條生成紀律；用預設 `mode="cloud"` 估會低估地端補強 prompt，
+        # 讓「單一 note 剛好貼齊硬性上限」的邊界更早 fail loudly（保守方向，但失真）。
         refinement_overhead = max(
             0,
             self._estimate_tokens(
-                self._build_refinement_message("", "", [], template=template)
+                self._build_record_refinement_message(
+                    "", "", [], None, template=template, mode="local"
+                )
             )
             - self._estimate_tokens(self._template_generation_extra(template)),
         )
@@ -2446,6 +2521,27 @@ class SummarizationService:
             return ""
         return "\n" + cls.LOCAL_SOURCE_TAG_PLACEMENT_RULE + "\n"
 
+    @classmethod
+    def _local_record_discipline_rule(cls, mode: str) -> str:
+        """地端專用的生成紀律區塊（P7-B CORE-2a）；雲端（mode 非 local）回空字串。
+
+        三條各自可關（`LOCAL_LLM_ONEPERITEM_RULE`／`LOCAL_LLM_SPEAKER_DISCIPLINE_RULE`／
+        `LOCAL_LLM_ANTI_DUPLICATE_RULE`）；全關時回空字串 ⇒ 地端提示詞 byte 級回本波前。
+        回傳值自帶前導換行，讓紀律自成一組條列，不黏在既有要求行上。
+        """
+        if mode != "local":
+            return ""
+        rules = []
+        if settings.LOCAL_LLM_ONEPERITEM_RULE:
+            rules.append(cls.LOCAL_RECORD_ONEPERITEM_RULE)
+        if settings.LOCAL_LLM_SPEAKER_DISCIPLINE_RULE:
+            rules.append(cls.LOCAL_RECORD_SPEAKER_DISCIPLINE_RULE)
+        if settings.LOCAL_LLM_ANTI_DUPLICATE_RULE:
+            rules.append(cls.LOCAL_RECORD_ANTI_DUPLICATE_RULE)
+        if not rules:
+            return ""
+        return "\n" + "\n".join(rules)
+
     def _build_record_generation_message(
         self,
         extracted_notes: str,
@@ -2469,6 +2565,7 @@ class SummarizationService:
         has_transcript = bool(transcript and transcript.strip())
         speaker_rule = self._speaker_traceability_rule(template)
         tag_placement_rule = self._local_tag_placement_rule(mode, speaker_rule)
+        discipline_rule = self._local_record_discipline_rule(mode)
         detail_rule = (
             "- 原始逐字稿是細節來源：各單位意見、決議與裁示須保留具體理由、數據、"
             "案例、統一口徑與執行方式，嚴禁把多句實質討論壓縮成一句籠統敘述\n"
@@ -2484,7 +2581,7 @@ class SummarizationService:
 {detail_rule}- 所有明確待辦都必須出現在待辦事項中；不要把多個不同待辦合併成單一籠統項目，可分列追蹤者請拆成多列
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
 - 只輸出最終 Markdown，不要附加說明
-- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何  thinking / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
+- 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何  thinking / <thought> / <details> / XML / HTML 標籤{discipline_rule}{self._template_generation_extra(template)}
 {self.RECORD_DATE_GROUNDING_RULE}
 {speaker_rule}{tag_placement_rule}萃取筆記：
 {extracted_notes}{transcript_block}"""
@@ -2518,6 +2615,7 @@ class SummarizationService:
         has_transcript = bool(transcript and transcript.strip())
         speaker_rule = self._speaker_traceability_rule(template)
         tag_placement_rule = self._local_tag_placement_rule(mode, speaker_rule)
+        discipline_rule = self._local_record_discipline_rule(mode)
         transcript_block = (
             f"\n原始逐字稿（補充細節時以此為準）：\n{transcript}" if has_transcript else ""
         )
@@ -2537,7 +2635,7 @@ class SummarizationService:
 - 全文必須使用繁體中文（台灣用語）
 - 只能輸出最終 Markdown
 - 不要輸出  thinking、<thought>、<details>、XML/HTML 標籤或 code fence
-- 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{self._template_generation_extra(template)}
+- 條列編號須依系統提示詞規定之階層（一、→（一）→1、……）由上而下使用，不得用「-」「•」或跳層{discipline_rule}{self._template_generation_extra(template)}
 {self.RECORD_DATE_GROUNDING_RULE}
 {speaker_rule}{tag_placement_rule}{transcript_block}"""
 
@@ -2793,6 +2891,46 @@ class SummarizationService:
             merge_provider_output_tokens=plan.merge_provider_output_tokens,
             merge_feasible_input_tokens=plan.merge_feasible_input_tokens,
         )
+
+    def _dump_extraction_notes(
+        self,
+        raw_notes: list,
+        merged_notes: str,
+        *,
+        chunk_count: int,
+        transcript: str,
+    ) -> None:
+        """P7-B CORE-1a：把萃取筆記落檔（**觀測用**，預設關閉）。
+
+        為什麼需要：尾段缺漏的**階段歸因**（「萃取階段就沒抓到」vs「生成階段寫不進去」）
+        在沒有筆記落檔時不可證明——E7C 只能從 log 看到筆記總量（1,669 tokens），看不到內容。
+        本方法不改任何產品輸出（不影響回傳值、不影響 prompt），只寫檔供事後歸因與重播；
+        關閉（預設）時逐字等同本波前。
+        """
+        if not getattr(settings, "LOCAL_LLM_DUMP_EXTRACTION_NOTES", False):
+            return
+        try:
+            digest = hashlib.sha1(transcript.encode("utf-8")).hexdigest()[:8]
+            target_dir = Path(settings.debug_dir) / "extraction-notes"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            path = target_dir / f"notes-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{digest}.md"
+            sections = [
+                f"## 原始萃取筆記 {index}（chunk {index}/{chunk_count}）\n{note}"
+                for index, note in enumerate(raw_notes, start=1)
+            ]
+            header = (
+                "<!-- P7-B CORE-1a 萃取筆記落檔（觀測用；不影響產品輸出）\n"
+                f"chunk_count={chunk_count} raw_notes={len(raw_notes)} "
+                f"merged_tokens={self._estimate_tokens(merged_notes)} transcript_sha1={digest}\n"
+                "-->\n"
+            )
+            body = header + "\n\n---\n\n".join(sections)
+            body += "\n\n---\n\n## 零損串接後（實際進下游生成）\n" + merged_notes + "\n"
+            path.write_text(body, encoding="utf-8")
+            log.info("萃取筆記已落檔（觀測用）：{}", path)
+        except (OSError, ValueError) as exc:
+            # 觀測失敗不得影響流程（與其他地端後處理的容錯原則一致）。
+            log.warning("萃取筆記落檔失敗（不影響流程）：{}", exc)
 
     def _final_message_fits(
         self,
@@ -3350,6 +3488,10 @@ class SummarizationService:
             context_window_tokens=context_tokens,
             lmstudio_selection=lmstudio_selection,
         )
+        # P7-B CORE-1a：觀測落檔（預設關）。**不改輸出**，只讓階段歸因可事後證明。
+        self._dump_extraction_notes(
+            extracted_notes, merged_notes, chunk_count=total_chunks, transcript=transcript
+        )
 
         merge_duration = time.monotonic() - extraction_duration - extraction_started
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
@@ -3405,6 +3547,20 @@ class SummarizationService:
         best_summary = summary
         best_snapshot = self._core_coverage_snapshot() if no_regression else None
         guard_comparable = best_snapshot is not None
+        # P7-B §8（審查 I7）：守衛的跳過路徑必須可觀測。原本守衛在「開關開著但取不到
+        # 快照」時靜默停用，實機（含 Windows／Ollama）無法分辨「守衛評估後放行」與
+        # 「根本沒跑」。**注意**：`LOCAL_LLM_REFINEMENT_NO_REGRESSION=false`（明示關閉）
+        # 仍維持 P7-A 契約「無任何守衛 log」——明示關閉本身已可見，不需再記。
+        if no_regression and best_snapshot is None:
+            coverage_mode = (
+                getattr(settings, "LOCAL_LLM_RECORD_COVERAGE_MODE", "enforce") or "enforce"
+            ).strip().lower()
+            log.info(
+                "地端補強不回退守衛：未評估（skipped_reason={}）",
+                "coverage_mode_off"
+                if coverage_mode == "off"
+                else "empty_or_unavailable_expectation_set",
+            )
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             issue_signature = tuple(sorted(issues))
             if issue_signature == previous_issue_signature:
@@ -3571,6 +3727,7 @@ class SummarizationService:
         from backend.core.text_postprocess import (
             apply_record_term_fixes,
             dedupe_cross_section_items,
+            normalize_unfilled_placeholders_ext,
             snap_source_tags_to_transcript,
             strip_source_tags_from_table_rows,
         )
@@ -3580,13 +3737,29 @@ class SummarizationService:
         text, tag_snap_stats = snap_source_tags_to_transcript(text, transcript or "", template)
         text, stripped_tags = strip_source_tags_from_table_rows(text, template)
         text = normalize_unfilled_placeholders(text, template=template)
+        # P7-B SUPPORTING-1（T20260923-1810-01）：佔位符正規化（作用域釘死；預設開）。
+        # 只收斂「開頭欄位／標題行的相鄰重複（待確認）」與「決議事項辦理情形彙整表」
+        # 第 2 欄的多層括號與半形冒號；確定性、不新增事實、不動正文與其他表格。
+        # 位置刻意排在 `dedupe_cross_section_items`（嚴格最後一步）之前——去重需要
+        # 「切除尾端括號後完全相等」的判重前提，不能被本步驟之後的改寫破壞。
+        placeholder_fixed = False
+        if getattr(settings, "LOCAL_LLM_PLACEHOLDER_NORMALIZE_EXT", True):
+            before_placeholder = text
+            text = normalize_unfilled_placeholders_ext(text)
+            placeholder_fixed = text != before_placeholder
         text, deduped_items = dedupe_cross_section_items(text, template)
-        if applied_fixes or stripped_tags or deduped_items or tag_snap_stats["snapped"]:
+        if (
+            applied_fixes
+            or stripped_tags
+            or deduped_items
+            or tag_snap_stats["snapped"]
+            or placeholder_fixed
+        ):
             log.info(
                 "[品質] 地端紀錄後處理：術語修正 {} 處、出處標註吸附 {} 處"
                 "（段落內 {}／最近段落 {}／跨發言者 {}；全域段首保護 {} 筆不動；"
                 "精度保護 {} 筆不動；往前收 {} 筆／最大 {} s；不可回溯保留 {}）、"
-                "表格出處標註移除 {} 處、跨節重複移除 {} 條",
+                "表格出處標註移除 {} 處、佔位符正規化 {}、跨節重複移除 {} 條",
                 len(applied_fixes),
                 tag_snap_stats["snapped"],
                 tag_snap_stats["snapped_exact"],
@@ -3598,6 +3771,7 @@ class SummarizationService:
                 tag_snap_stats["max_backward_seconds"],
                 tag_snap_stats["untraceable"],
                 stripped_tags,
+                "有" if placeholder_fixed else "無",
                 deduped_items,
             )
         return text
