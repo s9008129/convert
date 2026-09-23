@@ -197,6 +197,54 @@ def test_gate_still_accepts_homophone_elsewhere(glossary_dir):
 
 
 # ---------------------------------------------------------------------------
+# Windows 硬健化：BOM／CRLF／壞檔（詞表是跨 OS 共用的資料檔）
+# ---------------------------------------------------------------------------
+
+def test_bom_prefixed_glossary_file_still_applies_first_line_pair(tmp_path, monkeypatch):
+    """Windows 記事本存檔會加 BOM：第一行配對不得因此靜默失效。"""
+    from backend.core import glossary as glossary_module
+    from backend.core.glossary import apply_known_corrections
+
+    directory = tmp_path / "bom_glossary"
+    directory.mkdir()
+    # 第一行即為配對，且檔首帶 UTF-8 BOM、換行用 CRLF（Windows 預設）
+    payload = "內機=>內稽\r\n!境內機器\r\n煙酒文神股=>煙酒及稅務管理股\r\n"
+    (directory / "詞表.txt").write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+    monkeypatch.setattr(settings, "GLOSSARY_DIR", str(directory), raising=False)
+    glossary_module.load_glossary(force=True)
+    try:
+        fixed, applied = apply_known_corrections("下週一內機檢查，境內機器不動")
+        assert fixed == "下週一內稽檢查，境內機器不動"
+        assert applied == [("內機", "內稽", 1)]
+    finally:
+        monkeypatch.undo()
+        glossary_module.load_glossary(force=True)
+
+
+def test_undecodable_glossary_file_is_skipped_without_breaking_pipeline(
+    tmp_path, monkeypatch
+):
+    """詞表若被誤存成 Big5／ANSI，不得讓整條管線失敗（fail-soft 跳過並告警）。"""
+    from backend.core import glossary as glossary_module
+    from backend.core.glossary import apply_known_corrections
+
+    directory = tmp_path / "bad_encoding_glossary"
+    directory.mkdir()
+    (directory / "壞檔.txt").write_bytes("內機=>內稽\n".encode("big5"))
+    (directory / "好檔.txt").write_text("護數=>戶數\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "GLOSSARY_DIR", str(directory), raising=False)
+    glossary_module.load_glossary(force=True)
+    try:
+        # 好檔（護數=>戶數）生效；壞檔的（內機=>內稽）不得生效
+        fixed, applied = apply_known_corrections("護數與內機")
+        assert fixed == "戶數與內機"
+        assert applied == [("護數", "戶數", 1)]
+    finally:
+        monkeypatch.undo()
+        glossary_module.load_glossary(force=True)
+
+
+# ---------------------------------------------------------------------------
 # 服務層整合：LLM 不提修正也要修好
 # ---------------------------------------------------------------------------
 

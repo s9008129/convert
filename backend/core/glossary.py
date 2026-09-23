@@ -61,7 +61,10 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
             if not name.endswith(".txt"):
                 continue
             try:
-                with open(os.path.join(directory, name), "r", encoding="utf-8") as handle:
+                # `utf-8-sig`：對「無 BOM 的 UTF-8」byte 級等價，但能正確吃掉 Windows
+                # 記事本等編輯器存檔時加上的 BOM；用 `utf-8` 讀會讓**第一行配對靜默失效**
+                # （`\ufeff內機=>內稽` 的錯誤形永遠比對不到），是 Windows 端最難察覺的品質破口。
+                with open(os.path.join(directory, name), "r", encoding="utf-8-sig") as handle:
                     for raw_line in handle:
                         line = raw_line.strip()
                         # 行尾註解（` # …`）不算內容：避免 `錯誤形=>正確形  # 說明`
@@ -88,7 +91,9 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
                         if line not in seen:
                             seen.add(line)
                             terms.append(line)
-            except OSError as exc:
+            except (OSError, UnicodeDecodeError) as exc:
+                # 詞表壞檔不得讓整條管線失敗（fail-soft）：Windows 使用者若用 ANSI／Big5
+                # 誤存詞表，`UnicodeDecodeError` 原本會直接往上拋；這裡改成跳過該檔並告警。
                 log.warning("讀取詞彙表 {} 失敗: {}", name, exc)
 
     _GLOSSARY_CACHE.update(
