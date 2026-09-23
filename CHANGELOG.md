@@ -67,6 +67,16 @@
 - 離線重播（修補前後對照，0 模型成本）：同一份真實筆記 × E5b 真實紀錄，
   `expected_decision` **0 → 25**、`missing_decision=22`，長出「決議遺漏 22 項」＋「議題遺漏 3 項」。
 
+**原始症狀溯源（使用者手動場，2026-09-22）**：任務 `3ae2d9ec`、模型 `qwen3.8-27b-splash`、同一支
+0903 素材，13:49:04 → 14:12:47 ＝ **1,422.8 s（23 分 43 秒）**，結果是**失敗**：
+`LOCAL_LLM_MERGE_NOT_CONVERGED`（萃取筆記整併 3 輪內未收斂，1 份筆記 1,754 tokens > 目標 900 tokens）
+→ 產品按設計回退成「# 逐字稿（會議紀錄生成失敗）」fallback
+（`data/logs/error_2026-09-22.log:1`、`data/logs/app_2026-09-22.log:268`）。
+時間組成：ASR 17 s、diarization 158.4 s，其餘 ≈1,246 s 全在地端 LLM（萃取＋整併迴圈）；
+同場 13:55:06 另有校正層 `LMSTUDIO_NO_FINAL_CONTENT` 熔斷（模型回空）→ 該場的「生成失敗（merge）」
+與「品質不足（決議對帳 no-op）」是**兩個獨立症狀**。本波**未改** merge 行為（屬 context 預算／
+`LOCAL_LLM_MAX_MERGE_ROUNDS` 參數面，處置見手冊 §7）。
+
 ### 🧪 驗證
 
 - `pytest tests/ -q --ignore=tests/test_end_to_end.py` → **1088 passed, 2 skipped**（基線 1080＋本波 8 項）。
