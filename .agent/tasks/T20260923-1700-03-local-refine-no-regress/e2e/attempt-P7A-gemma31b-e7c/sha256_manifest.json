@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-09-23T17:17:39.441441+08:00",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "stored_upload_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "transcript_sha256": "fd40a2018def853580bda83db26f9939b7a053cf1f0049ff80b08829e75b72bf",
+  "meeting_record_docx_sha256": "df00ae0b357331ea118b402a39b9bd64d6e86368534e0b0061b9ceb40cb726cc",
+  "note": "tracked 證據僅存 hash/redacted metadata；raw payload 於 gitignored runtime dir"
+}

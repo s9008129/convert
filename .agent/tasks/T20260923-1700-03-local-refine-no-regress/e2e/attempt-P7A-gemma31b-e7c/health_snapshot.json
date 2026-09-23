@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-09-23T16:42:19.480038+08:00",
+  "url": "http://127.0.0.1:51265/api/health",
+  "expected_build_revision": "b2f11cafae2bb5ba0a0ff3713f78c579a7ac2199",
+  "actual_build_revision": "b2f11cafae2bb5ba0a0ff3713f78c579a7ac2199",
+  "revision_match": true,
+  "raw_response": {
+    "status": "healthy",
+    "version": "4.9.0",
+    "gpu_available": true,
+    "gpu_name": "Apple Silicon",
+    "ollama_available": false,
+    "lmstudio_available": true,
+    "gemini_available": true,
+    "cloud_llm_available": true,
+    "cloud_llm_provider": "gemini",
+    "cloud_llm_model": "gemini-3.5-flash-lite",
+    "queue_status": {
+      "total_queued": 0,
+      "processing_count": 0,
+      "estimated_wait_seconds": 0,
+      "max_concurrent": 1,
+      "queue_max_size": 50
+    },
+    "device_info": {
+      "current_device": "apple-neural",
+      "compute_type": "float16",
+      "fallback_count": 0,
+      "gpu_name": "Apple Silicon",
+      "gpu_memory_mb": null,
+      "gpu_available": true,
+      "gpu_busy": false,
+      "mps_available": false,
+      "accelerator": "apple-neural",
+      "asr_backend": "apple",
+      "asr_model": {
+        "identifier": "",
+        "revision": null
+      },
+      "cuda_runtime_available": false,
+      "cuda_runtime_error": null,
+      "torch_cuda_version": null,
+      "apple_helper": {
+        "supported": true,
+        "available": false,
+        "path": null,
+        "probe": null,
+        "reason": "quick 模式：未執行 helper probe"
+      },
+      "llm": {
+        "provider": "lmstudio",
+        "server_reachable": true,
+        "selection_status": "ready",
+        "loaded_llm_count": 1,
+        "selected_model": "gemma-4-31b-it-mlx",
+        "context_length": 71936
+      }
+    },
+    "build_revision": "b2f11cafae2bb5ba0a0ff3713f78c579a7ac2199"
+  }
+}
