@@ -120,6 +120,57 @@ def test_exclusion_compound_is_not_rewritten(tmp_path, monkeypatch):
         glossary_module.load_glossary(force=True)
 
 
+def test_single_char_pair_requires_exclusion_to_activate(tmp_path, monkeypatch):
+    from backend.core import glossary as glossary_module
+    from backend.core.glossary import apply_known_corrections
+
+    directory = tmp_path / "single_char"
+    directory.mkdir()
+    (directory / "詞表.txt").write_text(
+        "麵=>面\n!麵條\n!泡麵\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(settings, "GLOSSARY_DIR", str(directory), raising=False)
+    glossary_module.load_glossary(force=True)
+    try:
+        fixed, applied = apply_known_corrections("後麵的麵條好吃，泡麵也不錯。")
+        assert fixed == "後面的麵條好吃，泡麵也不錯。"
+        assert applied == [("麵", "面", 1)]
+    finally:
+        monkeypatch.undo()
+        glossary_module.load_glossary(force=True)
+
+
+def test_inline_comment_is_not_part_of_replacement(tmp_path, monkeypatch):
+    from backend.core import glossary as glossary_module
+    from backend.core.glossary import apply_known_corrections
+
+    directory = tmp_path / "inline_comment"
+    directory.mkdir()
+    (directory / "詞表.txt").write_text(
+        "內機=>內稽  # 註解不應寫進替換字\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(settings, "GLOSSARY_DIR", str(directory), raising=False)
+    glossary_module.load_glossary(force=True)
+    try:
+        fixed, applied = apply_known_corrections("下週一內機檢查")
+        assert fixed == "下週一內稽檢查"
+        assert applied == [("內機", "內稽", 1)]
+    finally:
+        monkeypatch.undo()
+        glossary_module.load_glossary(force=True)
+
+
+def test_record_term_fixes_also_apply_glossary_pairs(glossary_dir):
+    from backend.core.text_postprocess import apply_record_term_fixes
+
+    fixed, applied = apply_record_term_fixes(
+        "下週一要做內機檢查，差勤費用要照時報。", ()
+    )
+
+    assert "內稽" in fixed and "內機" not in fixed
+    assert ("內機", "內稽") in applied
+
+
 # ---------------------------------------------------------------------------
 # 保護詞表護欄（LLM 不得消滅保護詞）
 # ---------------------------------------------------------------------------

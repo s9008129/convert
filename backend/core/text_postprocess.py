@@ -553,16 +553,27 @@ def apply_record_term_fixes(
     W3：形狀同 `apply_official_term_fixes`；`fixes` 由模板宣告
     （`MeetingTemplate.record_term_fixes`），只回報「實際命中」的規則，
     未命中的規則不影響文字、也不出現在回傳清單。
+
+    P5：同一層再套用詞彙表的確定性誤辨（`data/glossary/*.txt` 的 `錯=>對`），
+    讓紀錄層與逐字稿層吃同一份模型無關的詞表（紀錄若又把 `內稽` 寫成 `內機`、
+    `差勤` 寫成 `拆勤`，這裡仍修得回來）。此層只在地端路徑執行，雲端輸出不受
+    影響（`summarization.py` 於 `mode != "local"` 直接返回）。
     """
-    if not text or not fixes:
+    if not text:
         return text, []
     changes: list[tuple[str, str]] = []
     fixed = text
-    for pattern, replacement in fixes:
+    for pattern, replacement in fixes or ():
         compiled = re.compile(pattern)
         if compiled.search(fixed):
             changes.append((pattern, replacement))
             fixed = compiled.sub(replacement, fixed)
+
+    from backend.core.glossary import apply_known_corrections
+
+    fixed, applied = apply_known_corrections(fixed)
+    for wrong, right, _count in applied:
+        changes.append((wrong, right))
     return fixed, changes
 
 

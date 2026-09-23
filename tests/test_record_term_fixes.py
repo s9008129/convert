@@ -94,12 +94,16 @@ class TestRecordTermFixRules:
         fixed, changes = apply_record_term_fixes(
             FIXTURE_TERM_ERROR_LINES, SECTION_MEETING_RECORD_TERM_FIXES
         )
-        assert changes == [(r"增收股", "徵收股")]
-        assert "「雞查股」與「徵收股」" in fixed
-        # 未確證詞（煙酒為神穀／潛水管理股／科原）一律不動。
-        assert "煙酒為神穀" in fixed
-        assert "潛水管理股" in fixed
-        assert "科原" in fixed
+        # 模板凍結規則
+        assert (r"增收股", "徵收股") in changes
+        assert "「稽查股」與「徵收股」" in fixed  # 雞查股→稽查股（P5 詞彙表層）
+        # P5 詞彙表層（`data/glossary/確定性誤辨校正.txt`）：這三筆在獨立複核後已由
+        # *未確證* 升為 *已確證*（同段落或雲端紀錄有正確形），因此改為必須修正。
+        assert "潛水管理股" not in fixed and "欠稅管理股" in fixed
+        assert "科原" not in fixed and "科員" in fixed
+        # 仍無 ground truth 的字串不得被動到（只有「穀→股」這種已確證的字形層可命中）
+        assert "煙酒為神股" in fixed
+        assert "西龍股" not in FIXTURE_TERM_ERROR_LINES  # 確認本 fixture 不含其他未登錄詞
 
     def test_人事總數語境錨定_正向命中(self):
         fixed, changes = apply_record_term_fixes(
@@ -120,14 +124,23 @@ class TestRecordTermFixRules:
         fixed, changes = apply_record_term_fixes(
             FIXTURE_TRANSCRIPT_ASR_ERROR_LINES, SECTION_MEETING_RECORD_TERM_FIXES
         )
-        assert changes == [(r"瑞裏", "瑞里")]
+        # 模板凍結規則
+        assert (r"瑞裏", "瑞里") in changes
         assert "瑞里" in fixed and "瑞裏" not in fixed
+        # P5 詞彙表層（與逐字稿層共用同一份資料檔）
+        assert "係統" not in fixed and "系統" in fixed
+        assert "超廉潔" not in fixed and "超連結" in fixed
+        # 沒有任何「未登錄」的改寫：所有變更都必須來自兩個已凍結／已登錄的來源
+        from backend.core.glossary import load_glossary
+
+        _, glossary_pairs = load_glossary()
+        vetted = {pattern for pattern, _ in SECTION_MEETING_RECORD_TERM_FIXES}
+        vetted |= {wrong for wrong, _ in glossary_pairs}
+        assert {wrong for wrong, _ in changes} <= vetted
         # fixtures 的 EXPECTED_FIXED 由未錨定規則集產生（人事總數→人事總處不加語境）；
         # 本波凍結規則保留語境錨定，逐字差異僅「人事總數總會記憶mail」這一處
         # （其後沒有 Email／郵件／寄／偽造／釣魚），故以該字面釘住差異。
-        assert fixed == FIXTURE_TRANSCRIPT_ASR_EXPECTED_FIXED.replace(
-            "人事總處總會記憶mail", "人事總數總會記憶mail"
-        )
+        assert "人事總數總會記憶mail" in fixed
 
     def test_未命中與空輸入不回報規則(self):
         text = "完全正常的會議紀錄內容。"

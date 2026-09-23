@@ -64,6 +64,9 @@ def load_glossary(force: bool = False) -> tuple[list[str], list[tuple[str, str]]
                 with open(os.path.join(directory, name), "r", encoding="utf-8") as handle:
                     for raw_line in handle:
                         line = raw_line.strip()
+                        # 行尾註解（` # …`）不算內容：避免 `錯誤形=>正確形  # 說明`
+                        # 把說明文字一起寫進正確形（會污染逐字稿）。
+                        line = re.sub(r"\s+#.*$", "", line).strip()
                         if not line or line.startswith("#"):
                             continue
                         # `!複合詞`：排除複合詞——含登錄錯形但屬正常用語的詞，
@@ -137,12 +140,20 @@ def protected_terms(min_len: int = 2) -> tuple[str, ...]:
     )
 
 
+def _pair_is_admissible(wrong: str, exclusions: tuple[str, ...]) -> bool:
+    """配對是否可套用：錯誤形 ≥2 字；單字配對須已登錄排除複合詞才放行。"""
+    if len(wrong) >= _MIN_MISRECOGNITION_LEN:
+        return True
+    return any(wrong in compound for compound in exclusions)
+
+
 def apply_known_corrections(text: str) -> tuple[str, list[tuple[str, str, int]]]:
     """確定性套用詞彙表「錯誤寫法=>正確寫法」清單（模型無關、零 LLM 成本）。
 
     這一層刻意不吃 LLM 的自由生成：資料檔登錄的固定誤辨一定被修好，不受被測
     模型能力影響（實測 27B 校正層漏修 `內機→內稽`，直接吃掉一條 core 事實）。
-    只接受錯誤形長度 ≥2 的配對（單字替換誤傷風險過高，仍交由同音閘門處理）。
+    錯誤形長度 ≥2 才收；單字配對（如 `麵→面`）另須在資料檔登錄至少一個
+    `!排除複合詞` 才放行——沒登錄排除詞就代表還沒想清楚誤傷面，一律不套用。
     `!複合詞` 排除清單內的錯形不替換（例：`保護數…` 不是 `戶數` 的誤辨）。
     """
     if not text:
@@ -156,7 +167,7 @@ def apply_known_corrections(text: str) -> tuple[str, list[tuple[str, str, int]]]
     fixed = text
     # 長形優先：避免短形先命中而讓長形配對失效（例如「內機房」與「內機」）
     for wrong, right in sorted(corrections, key=lambda pair: -len(pair[0])):
-        if len(wrong) < _MIN_MISRECOGNITION_LEN:
+        if not _pair_is_admissible(wrong, exclusions):
             continue
         fixed, count = _replace_pair(fixed, wrong, right, exclusions)
         if not count:
