@@ -1448,6 +1448,47 @@ class SummarizationService:
         r"^(?:(?:主席|科長|主持人|主席裁示)\s*)?"
         r"(?:裁示|指示|決議|結論|說明|表示|補充|報告|提醒)\s*[：:，,]\s*"
     )
+    # P6-A 實測（0903 場 `qwen3.8-27b-splash` 真實筆記，同一 prompt／temperature 0.6）：
+    # ①條目引用標頭把「時間＋發言者」寫進**同一個方括號**（`[00:12:05 發言者1（主席）]：內容`），
+    #   與既有「只有時間」的樣式不同 → 整段標頭留在正文，LCS 比對被吃掉一半
+    #   （同 E1 的成因，只是換了一種真實寫法）。
+    # ②決議寫成**空殼標記**（`- *決議*：` 後面沒有內容），內容在下一層條列 →
+    #   只看標記行本身＝決議期望集合恆為 0（E4／E5／E5b 連續三場 log：
+    #   `cov_expected_decision=0`、`cov_expected_topic` 卻有 9／12／15），
+    #   決議對帳整類靜默 no-op。
+    # ③條列符號不限 `-`／`*`／`+`（模型常自行編號 `1.`／`1)`／`（1）`），
+    #   舊樣式只認前三種 → 整份筆記換一種編號就全數抽取不到。
+    # 三者都是「筆記格式知識」，不是模型名分支（任何模型寫出同格式即生效）。
+    _NOTES_ITEM_BRACKET_CITATION_PATTERN = re.compile(
+        r"^\[\s*\d{1,2}:\d{2}(?::\d{2})?"
+        r"(?:\s*[-–~]\s*\d{1,2}:\d{2}(?::\d{2})?)?"
+        r"(?:\s*[，,]?\s*(?:發言者|與會者|發言人)\s*\d+(?:[（(][^）)]{0,12}[）)])?)?"
+        r"\s*\]\s*[：:，,]?\s*"
+    )
+    _NOTES_ITEM_BULLET_PATTERN = re.compile(
+        r"^(\s*)(?:[-*+]|\d{1,2}\s*[.)、]|（\d{1,2}）)\s+"
+    )
+    _NOTES_HEADING_PATTERN = re.compile(r"^\s*#{1,6}\s")
+    # 「角色標記行」＝新角色的開始（議題／討論重點／決議…）。兩個用途：
+    # ①蒐集巢狀內容時必須跳過（連同其子樹），否則下一個角色的條目會被算成
+    #   上一個空殼標記的內容（例：空殼議題把 `*討論重點*` 條目收成議題）；
+    # ②整行粗體剛好是「別的角色」標頭時不算本類別內容（例：議題類抽取遇到
+    #   `- **決議**` 不得把「決議」當成一條議題）。
+    _NOTES_ITEM_ROLE_KEYWORDS = (
+        "議題",
+        "討論重點",
+        "決議事項",
+        "決議內容",
+        "決議",
+        "主席裁示",
+        "裁示",
+        "結論",
+    )
+    _NOTES_ITEM_ROLE_LINE_PATTERN = re.compile(
+        r"^\s*(?:[-*+]|\d{1,2}\s*[.)、]|（\d{1,2}）)?\s*(?:\*{1,2})?"
+        r"(?:" + "|".join(sorted(_NOTES_ITEM_ROLE_KEYWORDS, key=len, reverse=True)) + r")"
+        r"(?:\*{1,2})?\s*[:：]"
+    )
 
     @classmethod
     def _strip_notes_item_quote_prefix(cls, item: str) -> str:
@@ -1459,15 +1500,102 @@ class SummarizationService:
 
         只剝「時間戳／發言者標籤／角色動詞（各自最多一次）」三種前綴，其餘
         原樣；沒有標頭時輸出＝輸入。純函式、無 I/O、無模型名分支。
+
+        P6-A 擴充（`qwen3.8-27b-splash` 實測）：新增「時間＋發言者同框」樣式
+        （`[00:12:05 發言者1（主席）]：決議文康活動形式為…`）。它與既有樣式
+        語意相同、只是寫法不同，卻讓整段標頭（約 20 字）留在正文裡，LCS 比對
+        被吃掉一半 → 已涵蓋的決議被判遺漏、補強迴圈不收斂（與 E1 同一成因）。
+        新樣式是既有「只有時間」樣式的超集：`[00:04:35] …` 的剝除結果不變。
         """
         text = (item or "").strip()
         for pattern in (
+            cls._NOTES_ITEM_BRACKET_CITATION_PATTERN,
             cls._NOTES_ITEM_TIME_PREFIX_PATTERN,
             cls._NOTES_ITEM_SPEAKER_PREFIX_PATTERN,
             cls._NOTES_ITEM_ROLE_PREFIX_PATTERN,
         ):
             text = pattern.sub("", text, count=1).strip()
         return text
+
+    @staticmethod
+    def _notes_line_indent(line: str) -> int:
+        """行首縮排寬度（tab 視為 4 空格）；只用於判斷巢狀層級，與模型無關。"""
+        indent = 0
+        for char in line:
+            if char == " ":
+                indent += 1
+            elif char == "\t":
+                indent += 4
+            else:
+                break
+        return indent
+
+    @classmethod
+    def _collect_nested_notes_items(cls, lines: list, marker_index: int) -> list:
+        """空殼標記行的巢狀內容（P6-A；`qwen3.8-27b-splash` 真實筆記實證）。
+
+        實測形狀（同一 prompt／temperature 0.6，0903 場）：
+
+            - **議題**：組織規程與編制表修正（11月1日生效）
+              - *討論重點*：
+                - 土地稅科拆分為「地價稅科」與「土地增值稅科」。
+              - *決議*：
+                - [00:12:05 發言者1（主席）]：決議文康活動形式為…
+
+        決議內容寫在標記行的下一層條列，只看標記行本身＝決議期望集合恆為 0。
+        這裡改為「空殼標記 → 取巢狀區塊的每一列當條目」，讓同語意、不同寫法的
+        筆記都能進對帳（模型無關）。
+
+        邊界（只取真正屬於本標記的內容）：
+        - 只收「縮排比標記行更深」且非空白的列；縮排回到同層或更淺、或遇到
+          `#` 標題即結束。
+        - 區塊內若出現其他**角色標記行**（議題／討論重點／決議／裁示／結論…），
+          整列**連同其子樹**跳過——不得把下一個角色的條目算成本標記的內容
+          （例：空殼議題底下的 `*討論重點*` 條列不是議題）。
+        """
+        if marker_index < 0 or marker_index >= len(lines):
+            return []
+        shell_indent = cls._notes_line_indent(lines[marker_index])
+        collected: list = []
+        role_block_indent = None
+        for raw_line in lines[marker_index + 1 :]:
+            if not raw_line.strip():
+                continue
+            if cls._NOTES_HEADING_PATTERN.match(raw_line):
+                break
+            indent = cls._notes_line_indent(raw_line)
+            if indent <= shell_indent:
+                break
+            if role_block_indent is not None:
+                if indent > role_block_indent:
+                    continue
+                role_block_indent = None
+            if cls._NOTES_ITEM_ROLE_LINE_PATTERN.match(raw_line):
+                role_block_indent = indent
+                continue
+            text = cls._NOTES_ITEM_BULLET_PATTERN.sub("", raw_line).strip()
+            if not text:
+                continue
+            collected.append(text)
+        return collected
+
+    @classmethod
+    def _append_notes_item(cls, raw_item: str, items: list, seen_keys: set) -> None:
+        """既有條目過濾（P4-A）共用出口：剝引用標頭 → 長度下限 → 佔位詞 → 同鍵去重。
+
+        直接路徑與巢狀路徑（`_collect_nested_notes_items`）必須走同一套規則，
+        否則兩條路徑會對「什麼算一條」給出不同答案。
+        """
+        body = cls._strip_notes_item_quote_prefix(raw_item)
+        if len(body) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
+            return
+        if any(term in body for term in cls._RECORD_COVERAGE_PLACEHOLDER_TERMS):
+            return
+        key = cls._normalize_action_key(body)
+        if not key or key in seen_keys:
+            return
+        seen_keys.add(key)
+        items.append(body)
 
     @classmethod
     def _parse_notes_items(
@@ -1488,14 +1616,30 @@ class SummarizationService:
         → 該類別永遠 no-op（E1 log：`cov_expected_topic=0`）。開啟本參數後，
         區塊內「整行只有粗體標題」的頂層條列也算議題；決議維持只認 `*決議*`
         標記（同一行的粗體標題是議題、不是決議）。
+
+        P6-A 實測修補（真實 `qwen3.8-27b-splash` 筆記）：決議寫成空殼標記
+        （`- *決議*：` 後面沒內容）＋內容在下一層條列 → 舊版只看標記行本身，
+        決議期望集合恆為 0、決議對帳整類靜默 no-op（E4／E5／E5b 連續三場
+        `cov_expected_decision=0`，同一份筆記的議題卻抽得到）。現在空殼標記
+        改走巢狀蒐集，與直接條目共用同一套過濾（`_append_notes_item`）。「空殼」
+        判定＝**標記行本身在剝掉引用標頭後沒有內容**（同時涵蓋 `- *決議*：` 與
+        `- *決議*：[00:06:14] 發言者 1（主席裁示）：` 兩種真實寫法），也涵蓋
+        「整行粗體剛好是標記詞」的 `- **決議**`。
+
+        刻意**不放寬**的部分（避免產生假期望集合）：`*討論重點*` 一律不算決議；
+        決議只認 `決議`／`決議事項`／`決議內容` 標記或「標記詞＝整行粗體」，
+        不把任意粗體標題當決議（粗體標題在議題類別是議題）；別的角色標頭
+        （例：議題類抽取遇到 `- **決議**`）不是本類別內容，直接跳過。
         """
         heading_keywords = tuple(heading_keywords)
+        heading_pattern = cls._NOTES_HEADING_PATTERN
+        ordered_markers = sorted(marker_keywords, key=len, reverse=True)
+        bullet_prefix = r"(?:[-*+]|\d{1,2}\s*[.)、]|（\d{1,2}）)"
         marker_pattern = re.compile(
-            r"^\s*(?:[-*+]\s*)?(?:\*{1,2})?(?:"
-            + "|".join(re.escape(marker) for marker in marker_keywords)
-            + r")(?:\*{1,2})?\s*[:：]\s*(.+?)\s*$"
+            r"^\s*(?:" + bullet_prefix + r"\s*)?(?:\*{1,2})?(?:"
+            + "|".join(re.escape(marker) for marker in ordered_markers)
+            + r")(?:\*{1,2})?\s*[:：]\s*(.*)$"
         )
-        heading_pattern = re.compile(r"^\s*#{1,6}\s")
         lines = (notes or "").splitlines()
         scoped = any(
             heading_pattern.match(line) and any(keyword in line for keyword in heading_keywords)
@@ -1504,40 +1648,50 @@ class SummarizationService:
         in_scope = not scoped
         items: list = []
         seen_keys: set = set()
-        for line in lines:
+        for index, line in enumerate(lines):
             if heading_pattern.match(line):
                 in_scope = any(keyword in line for keyword in heading_keywords)
                 continue
             if not in_scope:
                 continue
             match = marker_pattern.match(line)
+            item = ""
+            is_shell = False
             if match:
-                item = match.group(1).strip()
-            elif include_bold_titles:
-                title_match = cls._NOTES_ITEM_BOLD_TITLE_PATTERN.match(line)
-                if not title_match:
-                    continue
-                item = title_match.group(1).strip()
+                item = (match.group(1) or "").strip()
+                # 空殼標記（`- *決議*：`）＝內容寫在下一層條列（P6-A 實測）；
+                # 「剝掉引用標頭後才空」的標記行語意相同（`- *決議*：[00:06:14]
+                # 發言者 1（主席裁示）：`＋下一層條列），走同一個判定出口，
+                # 兩種寫法都不會再靜默漏掉整類決議。
+                is_shell = not cls._strip_notes_item_quote_prefix(item)
             else:
+                title_match = cls._NOTES_ITEM_BOLD_TITLE_PATTERN.match(line)
+                title = title_match.group(1).strip() if title_match else ""
+                if title and title in marker_keywords:
+                    # `- **決議**`：整行粗體剛好是標記詞（無冒號）＝空殼標頭（P6-A）。
+                    is_shell = True
+                elif title and title in cls._NOTES_ITEM_ROLE_KEYWORDS:
+                    # 別的角色標頭（例：議題類抽取遇到 `- **決議**`）＝不是本類別內容，
+                    # 不收集（也不把「決議」兩字當成一條議題）。
+                    continue
+                elif title and include_bold_titles:
+                    item = title
+                else:
+                    continue
+            if is_shell:
+                for nested_item in cls._collect_nested_notes_items(lines, index):
+                    cls._append_notes_item(nested_item, items, seen_keys)
                 continue
-            if not item or len(item) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
+            if not item:
                 continue
             # E1 實測修補：條目常以逐字稿引用開頭（`[00:04:35] 發言者 1（主席）裁示：…`）。
             # 引用標頭不是事實本身，卻在 LCS 比對裡吃掉一半長度，讓「紀錄早就寫進去」
             # 被誤判成遺漏（E1 離線重播：11 項決議全被判遺漏，其中 7 項其實已在紀錄中）
             # → 補強迴圈註定不收斂（實測白燒 2 輪 ≈ 970 s）。比對 key 與顯示文字一律用
-            # 剝除標頭後的正文；剝完只剩空殼者（`…裁示：` 後面沒內容，決議寫在下一層
-            # 條列）整條丟棄——空條目無法被滿足，只會讓補強永遠不收斂、白燒每一輪。
-            body = cls._strip_notes_item_quote_prefix(item)
-            if len(body) < cls.RECORD_COVERAGE_MIN_ITEM_CHARS:
-                continue
-            if any(term in body for term in cls._RECORD_COVERAGE_PLACEHOLDER_TERMS):
-                continue
-            key = cls._normalize_action_key(body)
-            if not key or key in seen_keys:
-                continue
-            seen_keys.add(key)
-            items.append(body)
+            # 剝除標頭後的正文；剝完只剩空殼者（`…裁示：` 後面沒內容）已在上面走巢狀
+            # 蒐集（P6-A），這裡再被剝成空則整條丟棄——空條目無法被滿足，只會讓
+            # 補強永遠不收斂、白燒每一輪。
+            cls._append_notes_item(item, items, seen_keys)
         return items
 
     @classmethod
@@ -1556,8 +1710,18 @@ class SummarizationService:
 
     @classmethod
     def _extract_notes_decision_items(cls, notes: str) -> list:
-        """決議期望集合（來源同上）；`*討論重點*` 刻意不列入。"""
-        return cls._parse_notes_items(notes, heading_keywords=("議題", "決議"), marker_keywords=("決議",))
+        """決議期望集合（來源同上）；`*討論重點*` 刻意不列入。
+
+        P6-A：標記詞加入同義的 `決議事項`／`決議內容`（實測 `決議事項：` 會被舊樣式
+        漏掉，整份筆記換一種寫法就靜默 no-op）。`討論重點`、`裁示`、`結論` 仍然
+        **不算**決議——它們不是同一種語意（裁示／結論常與決議重述，放進來會產生
+        重複期望集合與假遺漏）。長標記先比對（`sorted` 於 `_parse_notes_items`）。
+        """
+        return cls._parse_notes_items(
+            notes,
+            heading_keywords=("議題", "決議"),
+            marker_keywords=("決議", "決議事項", "決議內容"),
+        )
 
     @classmethod
     def _fold_record_for_number_matching(cls, record_markdown: str) -> str:

@@ -205,8 +205,9 @@ def test_T20_議題抽取_整行粗體標題形式_E1實測回歸():
     assert topics == ["組織規程與編制變動（11月1日生效）", "瑞理發放活動（10月14日）"]
     assert all("討論重點" not in item for item in topics), "巢狀討論重點不得當成議題"
     assert DECISION_1 not in topics
-    assert decisions == ["資管股需預先準備設備。"], (
-        "整行粗體標題是議題（不得混入決議）；空殼決議條目整條丟棄"
+    assert decisions == ["資管股需預先準備設備。", "確認發放日期為 10/14。"], (
+        "整行粗體標題是議題（不得混入決議）；P6-A 起「剝掉引用標頭後為空」的"
+        "空殼決議不再整條丟棄，改收其下一層條列（舊版＝同一句決議換個寫法就靜默漏掉）"
     )
 
 
@@ -676,3 +677,154 @@ async def _run_pipeline_metrics_probe(monkeypatch, *, notes: str, summary: str, 
     finally:
         loguru_logger.remove(sink_id)
     return messages
+
+
+# ---------------------------------------------------------------------------
+# T-30 ~ T-35：P6-A 實測修補（真實 `qwen3.8-27b-splash` 筆記格式，0903 場）
+#
+# 證據：正式程式路徑重跑（`section_meeting` 模板、temperature 0.6、139.9 s、
+# 4865 字筆記）＋ E4／E5／E5b 三場 log `cov_expected_decision=0`（同場
+# `cov_expected_topic` 卻有 9／12／15）＝決議類別逐條對帳整類靜默 no-op。
+# 修補後離線重播（同一份真實筆記 × E5b 真實紀錄）：`expected_decision=25`、
+# 長出「決議遺漏 22 項」＋「議題遺漏 3 項」兩條補強問題（原本完全沒有）。
+# ---------------------------------------------------------------------------
+
+
+QWEN_REAL_NOTES_EXCERPT = (
+    "## 2. 議題與決議\n"
+    "- **議題**：組織規程與編制表修正（11月1日生效）\n"
+    "  - *討論重點*：\n"
+    "    - 土地稅科拆分為「地價稅科」與「土地增值稅科」。\n"
+    "  - *決議*：\n"
+    "    - [00:00:00 發言者1（主席）]：指示各股針對系統權限、設備、人員配合事項先行準備。\n"
+    "    - [00:00:00 發言者1（主席）]：指示先開預備缺公告，避免11月1日再找人來得太晚。\n"
+    "    - [00:00:00 發言者1（主席）]：（待確認）\n"
+    "- **議題**：文康活動規劃\n"
+    "  - *決議*：\n"
+    "    - [00:12:05 發言者1（主席）]：決議文康活動形式為「辦公室點心+分發禮券」，不外出吃飯。\n"
+)
+
+
+def test_T30_決議抽取_空殼標記加巢狀條列_qwen27b實測回歸():
+    """P6-A 實測：qwen3.8-27b-splash 把決議寫成空殼標記＋下一層巢狀條列。
+
+    舊行為：`  - *決議*：` 本身沒有內容 → 決議期望集合恆為 0（E4／E5／E5b
+    `cov_expected_decision=0`），整類決議對帳 no-op；佔位列仍須濾除。
+    """
+    decisions = SummarizationService._extract_notes_decision_items(QWEN_REAL_NOTES_EXCERPT)
+    topics = SummarizationService._extract_notes_topic_items(QWEN_REAL_NOTES_EXCERPT)
+
+    assert decisions == [
+        "指示各股針對系統權限、設備、人員配合事項先行準備。",
+        "指示先開預備缺公告，避免11月1日再找人來得太晚。",
+        "決議文康活動形式為「辦公室點心+分發禮券」，不外出吃飯。",
+    ], "巢狀條目數＝決議期望數；引用標頭（時間＋發言者同框）必須剝除；佔位列濾除"
+    assert topics == ["組織規程與編制表修正（11月1日生效）", "文康活動規劃"]
+    assert all("待確認" not in item for item in decisions + topics)
+
+
+def test_T31_決議抽取_整行粗體決議標頭走巢狀_議題類不得誤收():
+    """`- **決議**`（整行粗體剛好是標記詞、無冒號）＝空殼標頭，內容在下一層。
+
+    同時守住反面：議題類抽取遇到這個標頭不得把「決議」兩字當成一條議題。
+    """
+    notes = (
+        "## 2. 議題與決議\n"
+        "- **議題**：辦公室搬遷經費分攤方式需再確認。\n"
+        "- **決議**\n"
+        "  - [00:05:00] 發言者 1（主席）：搬遷案照案通過，10月31日前完成點交。\n"
+    )
+
+    assert SummarizationService._extract_notes_decision_items(notes) == [
+        "搬遷案照案通過，10月31日前完成點交。"
+    ]
+    topics = SummarizationService._extract_notes_topic_items(notes)
+    assert topics == ["辦公室搬遷經費分攤方式需再確認。"]
+    assert "決議" not in topics
+
+
+def test_T32_決議標記同義詞命中_討論重點與裁示結論不得混入():
+    """`決議事項`／`決議內容` 與 `決議` 同義（換寫法不得靜默 no-op）；
+    `*討論重點*`／`裁示`／`結論` 仍**不算**決議（語意不同，混入會產生假遺漏）。"""
+    notes = (
+        "## 2. 議題與決議\n"
+        "- **決議事項**：文康活動改發禮券，每人 800 元。\n"
+        "- 決議內容：主辦人由抽籤決定。\n"
+        "- *討論重點*：主席提醒廉政風險。\n"
+        "- 裁示：請各股於期限前回報。\n"
+        "- 結論：本案照案通過。\n"
+    )
+
+    assert SummarizationService._extract_notes_decision_items(notes) == [
+        "文康活動改發禮券，每人 800 元。",
+        "主辦人由抽籤決定。",
+    ]
+
+
+def test_T33_條列符號容忍度_編號型條列也要抽得到():
+    """模型常自行編號（`1.`／`1)`／`（1）`）；舊樣式只認 `-`／`*`／`+`，
+    整份筆記換一種編號就全數抽取不到（同一個靜默 no-op 家族）。"""
+    notes = (
+        "## 2. 議題與決議\n"
+        "1. **議題**：電梯施工期間的動線與安全維護安排需再確認。\n"
+        "1) *決議*：施工期間每日派員巡查動線並回報。\n"
+        "（2）**議題**：影印機租賃合約到期後的續約方式需再確認。\n"
+        "2) *討論重點*：主席提醒要留下巡查紀錄。\n"
+    )
+
+    assert SummarizationService._extract_notes_topic_items(notes) == [
+        "電梯施工期間的動線與安全維護安排需再確認。",
+        "影印機租賃合約到期後的續約方式需再確認。",
+    ]
+    assert SummarizationService._extract_notes_decision_items(notes) == [
+        "施工期間每日派員巡查動線並回報。"
+    ]
+
+
+def test_T34_巢狀蒐集邊界_回同層即停_標題即停_角色子樹跳過():
+    """巢狀蒐集只取真正屬於本標記的內容：
+
+    - 縮排回到同層／更淺即結束（下一個議題的決議不得算進前一個）。
+    - 巢狀區塊內出現其他角色標頭（`*討論重點*`）時，連同其子樹跳過。
+    - 空殼標記後面沒有巢狀內容 → 不產生任何期望（不得假造）。
+    """
+    notes = (
+        "## 2. 議題與決議\n"
+        "- **決議**：\n"
+        "  - [00:01:00] 發言者1：第一項決議內容。\n"
+        "    - 這是第一項的補充細節。\n"
+        "  - *討論重點*：\n"
+        "    - 這段是討論，不是決議。\n"
+        "  - [00:02:00] 發言者1：第二項決議內容。\n"
+        "- **議題**：下一個議題的標題。\n"
+        "  - *決議*：\n"
+        "    - [00:03:00] 發言者1：第三項決議內容。\n"
+    )
+
+    assert SummarizationService._extract_notes_decision_items(notes) == [
+        "第一項決議內容。",
+        "這是第一項的補充細節。",
+        "第二項決議內容。",
+        "第三項決議內容。",
+    ], "討論重點的子樹不得進決議；下一個議題的決議仍須抽得到"
+    assert SummarizationService._extract_notes_topic_items(notes) == ["下一個議題的標題。"]
+
+    empty_shell = "## 2. 議題與決議\n- **決議**：\n- **議題**：下一個議題。\n"
+    assert SummarizationService._extract_notes_decision_items(empty_shell) == [], (
+        "空殼標記後面沒有巢狀內容＝沒有期望（不得假造空條目，否則補強永遠不收斂）"
+    )
+    assert SummarizationService._extract_notes_topic_items(empty_shell) == ["下一個議題。"]
+
+
+def test_T35_引用標頭剝除_時間與發言者同框樣式與舊樣式等價():
+    """P6-A：`[00:12:05 發言者1（主席）]：內容`（時間＋發言者同框）是既有樣式的超集。
+
+    舊樣式結果不變、新樣式剝到空（空殼）；純函式、冪等、無模型名分支。
+    """
+    strip = SummarizationService._strip_notes_item_quote_prefix
+
+    assert strip("[00:12:05 發言者1（主席）]：決議文康活動形式為發禮券。") == "決議文康活動形式為發禮券。"
+    assert strip("[00:12:05 發言者3] 討論重點：土地稅科整理名單。") == "討論重點：土地稅科整理名單。"
+    assert strip("[00:12:05 發言者1（主席）]：") == "", "同框樣式的空殼必須被剝成空字串"
+    assert strip("[00:04:35] 發言者 1（主席）裁示：確定日期。") == "確定日期。", "舊樣式行為不得改變"
+    assert strip(strip("[00:12:05 發言者1（主席）]：土地稅科整理名單。")) == "土地稅科整理名單。"
