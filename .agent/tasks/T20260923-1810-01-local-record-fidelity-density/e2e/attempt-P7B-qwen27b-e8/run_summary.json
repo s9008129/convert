@@ -1,0 +1,156 @@
+{
+  "mode": "full",
+  "upload_mode": "api",
+  "meeting_template": "section_meeting",
+  "started_at": "2026-09-23T20:02:42.885919+08:00",
+  "finished_at": "2026-09-23T20:32:57.823777+08:00",
+  "port": 52991,
+  "child_pid": 30874,
+  "expected_build_revision": "66add7366aeb841832246be11da141d2872929b2",
+  "actual_build_revision": "66add7366aeb841832246be11da141d2872929b2",
+  "artifacts_dir": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260923-1810-01-local-record-fidelity-density/e2e/attempt-P7B-qwen27b-e8",
+  "runtime_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p7b-qwen27b-e8",
+  "backend_log_path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p7b-qwen27b-e8/backend.log",
+  "data_dir": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p7b-qwen27b-e8/backend_data",
+  "source_audio_sha256": "982151f4629ade0c38f164b57a2f105c1e305677e7e10e4dc0e252f1ac012828",
+  "checks": {
+    "backend_started": true,
+    "health_ok": true,
+    "build_revision_match": true,
+    "model_snapshot_captured": true,
+    "model_inventory_unique": true,
+    "upload_ok": true,
+    "stored_upload_sha_match": true,
+    "template_applied": true,
+    "task_completed": true,
+    "task_summary_failed_false": true,
+    "transcript_downloaded": true,
+    "docx_downloaded": true,
+    "formal_docx_valid": true,
+    "metrics_valid": true,
+    "model_snapshot_consistent": true,
+    "child_terminated": true
+  },
+  "failure_reasons": [],
+  "verdict": "PASS",
+  "quality": {
+    "mode": "observe",
+    "captured": true,
+    "template": "section_meeting",
+    "applicability": {
+      "source_tag_contract_template": true,
+      "source_tag_contract_templates": [
+        "section_meeting"
+      ]
+    },
+    "record_markdown": {
+      "path": "/Users/hsiaojohnny/dev/convert/data/cache/e2e/p7b-qwen27b-e8/backend_data/outputs/0903-科務會議_65024fb8.md",
+      "resolution": "outputs glob 唯一命中",
+      "sha256": "79411737784f9faeafa0836388a2710be3b49ba0104ea43bcca36fde66a6e626",
+      "char_count": 3445
+    },
+    "instrument": {
+      "record_quality": {
+        "script": "measure_record_quality.py",
+        "exit_code": 0,
+        "timed_out": false,
+        "error": null,
+        "template": "section_meeting",
+        "transcript_provided": true
+      }
+    },
+    "instrument_versions": {
+      "expected_tag_traceability_metric_version": "tag_traceability-1.1.0",
+      "observed_tag_traceability_metric_version": "tag_traceability-1.1.0",
+      "coverage_metric_version": "coverage-1.0.0"
+    },
+    "metrics": {
+      "char_count": 3445,
+      "body_source_tag_count": 37,
+      "table_source_tag_count": 0,
+      "non_prefixed_tableish_source_tag_count": 0,
+      "instruction_item_count": 18,
+      "tagged_item_ratio": 1.0,
+      "cross_section_duplicate_pairs": 0,
+      "known_term_fix_hits": {
+        "left_hits": 0,
+        "right_hits": 7
+      },
+      "tag_traceability": {
+        "metric_version": "tag_traceability-1.1.0",
+        "segments": 183,
+        "tags_total": 37,
+        "tags_inside_any_segment": 37,
+        "traceable_tag_ratio": 1.0,
+        "tags_exact_segment_start": 26,
+        "exact_tag_ratio": 0.7027027027027027,
+        "tags_on_real_segment_start": 37,
+        "on_start_tag_ratio": 1.0,
+        "tags_on_real_segment_start_excluding_zero": 33,
+        "on_start_tag_ratio_excluding_zero": 1.0,
+        "tags_inside_same_speaker_segment": 36,
+        "zero_time_tag_count": 4,
+        "zero_time_tag_ratio": 0.10810810810810811,
+        "distinct_tag_time_count": 26,
+        "distinct_tag_time_ratio": 0.7027027027027027
+      },
+      "unsupported_entities_count": 0,
+      "unsupported_entities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "checks": {
+      "quality_table_tag_count_zero": true,
+      "quality_body_tag_count_ok": true,
+      "quality_traceable_tag_ratio_ok": true,
+      "quality_on_start_tag_ratio_ok": true,
+      "quality_on_start_excluding_zero_ok": true
+    },
+    "check_failures": [],
+    "observations": {
+      "coverage": {
+        "captured": true,
+        "observation_only": true,
+        "gate_effect": "none",
+        "label": "runner-coverage-65024fb8",
+        "checklist_path": "/Users/hsiaojohnny/dev/convert/.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json",
+        "checklist_sha256": "cf012d1f6983f67ecb47cc7a6486e48c110a6b2782ad94cccf0332a4ec6ec001",
+        "metric_version": "coverage-1.0.0",
+        "coverage_all": 0.7612,
+        "coverage_core": 0.8929,
+        "fact_core_total": 28,
+        "covered_core": 25,
+        "missing_core_ids": [
+          "F019",
+          "F054",
+          "F056"
+        ],
+        "warnings_count": 0,
+        "instrument": {
+          "script": "measure_coverage.py",
+          "exit_code": 0,
+          "timed_out": false,
+          "error": null
+        },
+        "errors": [],
+        "notes": [
+          "coverage 永遠只做觀測，不列入 verdict／required 清單"
+        ]
+      }
+    },
+    "notes": [
+      "tag_traceability 取得=True；transcript 提供=True"
+    ],
+    "warnings": [],
+    "errors": []
+  },
+  "engine": {
+    "requested_processing_mode": "local",
+    "mode_used": "local",
+    "mode_used_match": true,
+    "task_terminal_observed": true,
+    "configured_local_llm_provider": "auto",
+    "effective_local_llm_provider": "lmstudio",
+    "provider_probe_reachable": true,
+    "provider_probe_error": null,
+    "lmstudio_inventory_gate_enforced": true
+  }
+}
