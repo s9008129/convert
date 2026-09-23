@@ -98,6 +98,21 @@ class _LoadedLMStudioInstance:
     context_length: Optional[int]
 
 
+# P4-A 假陽性修補（E2 離線重播實證）：斜線日期 `10/14` 進入標點折疊後會被串成
+# `1014`（`11/1`→`111`），LCS 還原不了、數字守衛則要求字面 `1014` 命中，而紀錄寫的
+# 是「10月14日」→「已寫進紀錄」被誤判遺漏（補強白燒、不收斂）。修法＝折疊前先對
+# **雙方**套同一條日期正規化：合法 `M/D`（月 1–12、日 1–31）展開為 `M月D日`；
+# 守衛因此改看數字群組（`10`／`14` 各自都必須出現），真缺數字照樣判缺。
+_SLASH_DATE_PATTERN = re.compile(r"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})(?!\d)")
+
+
+def _fold_slash_date(match: "re.Match") -> str:
+    month, day = int(match.group(1)), int(match.group(2))
+    if 1 <= month <= 12 and 1 <= day <= 31:
+        return f"{month}月{day}日"
+    return match.group(0)
+
+
 class SummarizationService:
     """
     LLM 摘要生成服務
@@ -160,6 +175,11 @@ class SummarizationService:
     #   LCS 0.9333 會被洗白成「已涵蓋」。方向一律往更嚴（寧可多一輪補強）。
     ACTION_NEGATION_TERMS = ("嚴禁", "禁止", "不得", "勿", "避免", "不可")
     _ACTION_NUMBER_PATTERN = re.compile(r"\d{2,}")
+    # P4-A 假陽性修補（E2）：日期折疊把 `10/14`／`11/1` 正規化成 `10月14日`／`11月1日`
+    # 後，`≥2 位數字串` 守衛只看到 `10`／`14`／`11`——單日位移（`11/1`→`11月2日`）
+    # 會因 LCS 0.95 被洗白。因此「整個日期」另立 token：必須原樣命中（數字邊界、
+    # 容 日/號/号 寫法），把守衛本意補回來（`11月2日` 不得被 `11月20日` 命中）。
+    _ACTION_DATE_TOKEN_PATTERN = re.compile(r"(?<!\d)\d{1,2}月\d{1,2}日")
 
     _SOURCE_TAG_PATTERN = re.compile(r"（[^）]{0,24}?\d{1,2}:\d{2}(?::\d{2})?[^）]{0,12}?）")
     _RECORD_HEADER_FIELD_PATTERN = re.compile(r"^(?:時間|地點|主持人|出席人員|紀錄)[:：]")
@@ -989,6 +1009,9 @@ class SummarizationService:
         if not text:
             return ""
         normalized = unicodedata.normalize("NFKC", text)
+        # P4-A 假陽性修補：折疊標點前先套共用的日期正規化（`10/14`→`10月14日`），
+        # 兩側同規則、純日期語意；理由與界線見模組層 `_SLASH_DATE_PATTERN` 註解。
+        normalized = _SLASH_DATE_PATTERN.sub(_fold_slash_date, normalized)
         try:  # 與紀錄側同一條簡繁折疊；缺 OpenCC 時原樣（仍對稱）
             from backend.core.text_postprocess import to_taiwan_traditional
 
@@ -1075,6 +1098,22 @@ class SummarizationService:
         return tuple(sentences)
 
     @classmethod
+    def _date_token_present(cls, token: str, text: str) -> bool:
+        """折疊後日期 token（`M月D日`）的字面命中判定（數字邊界；容 日/號/号）。
+
+        為什麼需要它：日期折疊後，`≥2 位數字串` 守衛只看到 `10`／`14`／`11`，
+        單日位移（`11/1` → `11月2日`）會被 LCS 0.95 洗白成「已涵蓋」——
+        日期是最不容失真的一類數字，整串日期必須各自命中：
+        `11月2日` 不得被 `11月20日` 命中（`(?!\\d)` 數字邊界）；`號`／`号`
+        寫法在折疊前後為同一件事（等價寫法）。非 `M月D日` token 回退字面子串。
+        """
+        match = re.fullmatch(r"(\d{1,2})月(\d{1,2})日", token)
+        if not match:
+            return token in text
+        month, day = match.group(1), match.group(2)
+        return re.search(rf"(?<!\d){month}月{day}\s*[日號号]?(?!\d)", text) is not None
+
+    @classmethod
     def _find_missing_action_keys(
         cls, expected_actions, normalized_summary: str, local_sentences=None
     ) -> tuple[set, dict]:
@@ -1131,7 +1170,12 @@ class SummarizationService:
                 for token in cls._ACTION_NUMBER_PATTERN.findall(key)
                 if any(token not in text for text in local_texts)
             ]
-            if missing_negations or missing_numbers:
+            missing_dates = [
+                token
+                for token in cls._ACTION_DATE_TOKEN_PATTERN.findall(key)
+                if any(not cls._date_token_present(token, text) for text in local_texts)
+            ]
+            if missing_negations or missing_numbers or missing_dates:
                 missing.add(key)
                 log.info(
                     "待辦召回守衛攔下（LCS {:.2f} 已達門檻，但語意資訊缺失）："
@@ -1139,9 +1183,70 @@ class SummarizationService:
                     ratio,
                     key[:24],
                     missing_negations or "無",
-                    missing_numbers or "無",
+                    missing_numbers + missing_dates or "無",
                 )
         return missing, ratios
+
+    # P4-A 修補：議題標題「詞級覆蓋」的可略過字元（停用詞）與最小詞長。
+    _TOPIC_TERM_STOP_CHARS = "的與和之及或等"
+    _TOPIC_TERM_MIN_CHARS = 2
+
+    @classmethod
+    def _split_match_clauses(cls, item: str) -> list:
+        """複合條目的子句切分（決議 AND 判定用；純確定性、無 I/O）。
+
+        P4-A 實測（E2）：決議「費用報支應照實報，不可浮報；小額採購需避免與廠商
+        利益交換。」在紀錄中被寫成**兩個句子**（分屬不同段落），整串 LCS 只看得到
+        其中一句（實測 0.48–0.64）→ 判遺漏；實際上兩句都已寫進紀錄。
+        切點＝`；`／`;`、`。`／`！`／`？`：條目含 ≥2 個子句時，改以「每一子句各自
+        過既有比對規則（AND）」判定——比現行**更嚴**，不是放寬；切不出 ≥2 個子句時
+        由呼叫端走原規則。
+        """
+        clauses: list = []
+        for piece in re.split(r"[；;]+", item or ""):
+            for sentence in re.split(r"[。！？!?]+", piece):
+                stripped = sentence.strip()
+                if stripped:
+                    clauses.append(stripped)
+        return clauses
+
+    @classmethod
+    def _topic_terms_cover(cls, key: str, haystack: str) -> bool:
+        """議題標題的「詞級覆蓋」（第二條接受規則；只加接受、不放寬既有門檻）。
+
+        P4-A 實測（E2）：標題被改寫／重排時整串 LCS 永遠到不了 0.6——例：
+        「土地稅卡重新列印」vs 紀錄「整理並重新列印損毀之土地稅卡」（兩個詞都在，
+        順序被調換）、「資安宣導（社交工程）」（兩詞分落不同句子）。規則：
+        停用詞字元（`的/與/和/之/及/或/等`）可直接略過；其餘字元必須能被切成一串
+        「詞」（每個詞 ≥2 字、原樣出現在紀錄任一處；不限順序、不限同一段落，
+        以可達性 DP 判定存在性切分）。切不出任何詞時回 False——呼叫端一律走原
+        LCS 規則，不得因此變成「必涵蓋」。
+
+        守衛照常：標題內的否定詞（`ACTION_NEGATION_TERMS`）與 ≥2 位數字串仍必須
+        出現在紀錄中（方向不變：真的缺仍判缺）。
+        """
+        if not key or not haystack:
+            return False
+        if any(term in key and term not in haystack for term in cls.ACTION_NEGATION_TERMS):
+            return False
+        if any(token not in haystack for token in cls._ACTION_NUMBER_PATTERN.findall(key)):
+            return False
+        length = len(key)
+        reachable = [False] * (length + 1)
+        used_term = [False] * (length + 1)
+        reachable[0] = True
+        for start in range(length):
+            if not reachable[start]:
+                continue
+            if key[start] in cls._TOPIC_TERM_STOP_CHARS:
+                reachable[start + 1] = True
+                used_term[start + 1] = used_term[start + 1] or used_term[start]
+                continue
+            for end in range(start + cls._TOPIC_TERM_MIN_CHARS, length + 1):
+                if key[start:end] in haystack:
+                    reachable[end] = True
+                    used_term[end] = True
+        return reachable[length] and used_term[length]
 
     def _extract_action_table_labels(self, markdown: str) -> list[str]:
         """只從萃取筆記的『待辦清單』Markdown 表格列抽取待辦「原始標籤」。
@@ -1647,18 +1752,40 @@ class SummarizationService:
                 continue
             expected_items = extractor(notes)
             stats[f"expected_{category}"] = len(expected_items)
-            label_by_key: dict = {}
+            ordered_items: list = []
             ordered_keys: list = []
             for item in expected_items:
                 key = self._normalize_action_key(item)
                 if not key:
                     continue
-                label_by_key.setdefault(key, item)
-                ordered_keys.append(key)
+                keys = [key]
+                if category == "decision":
+                    # P4-A 修補：複合決議（`；`／多句 `。`）改子句 AND——每一子句都
+                    # 必須各自過既有比對規則才算已涵蓋；比現行更嚴（見
+                    # `_split_match_clauses`）。切不出 ≥2 個子句時走原規則。
+                    clause_keys: list = []
+                    for clause in self._split_match_clauses(item):
+                        clause_key = self._normalize_action_key(clause)
+                        if clause_key and clause_key not in clause_keys:
+                            clause_keys.append(clause_key)
+                    if len(clause_keys) >= 2:
+                        keys = clause_keys
+                ordered_items.append((item, keys))
+                ordered_keys.extend(keys)
             missing_keys, _ratios = self._find_missing_action_keys(
                 set(ordered_keys), normalized_summary, local_sentences=local_sentences
             )
-            missing_labels = [label_by_key[key] for key in ordered_keys if key in missing_keys]
+            missing_labels: list = []
+            for item, keys in ordered_items:
+                if not any(key in missing_keys for key in keys):
+                    continue
+                if category == "topic" and all(
+                    self._topic_terms_cover(key, normalized_summary) for key in keys
+                ):
+                    # P4-A 修補：第二條接受規則（議題詞級覆蓋）。只加接受；
+                    # 既有 LCS 門檻與兩道守衛一字不動（見 `_topic_terms_cover`）。
+                    continue
+                missing_labels.append(item)
             stats[f"missing_{category}"] = len(missing_labels)
             if not expected_items:
                 log.warning(
