@@ -79,6 +79,11 @@ class FactClaim(BaseModel):
     status: ClaimStatus = ClaimStatus.ASSERTED
     uncertainty: str | None = None
     evidence_refs: tuple[str, ...] = Field(min_length=1)
+    evidence_quote: str | None = Field(default=None, min_length=1)
+    evidence_start_offset: int | None = Field(default=None, ge=0)
+    evidence_end_offset: int | None = Field(default=None, ge=0)
+    resolved_start_offset: int | None = Field(default=None, ge=0, exclude=True)
+    resolved_end_offset: int | None = Field(default=None, ge=0, exclude=True)
 
     @field_validator("evidence_refs")
     @classmethod
@@ -87,6 +92,16 @@ class FactClaim(BaseModel):
         if not refs:
             raise ValueError("every claim requires evidence_refs")
         return refs
+
+    @field_validator("evidence_end_offset")
+    @classmethod
+    def offsets_are_ordered(cls, end: int | None, info: Any) -> int | None:
+        start = info.data.get("evidence_start_offset")
+        if (start is None) != (end is None):
+            raise ValueError("evidence offsets must be supplied as a pair")
+        if start is not None and end <= start:
+            raise ValueError("evidence offsets must identify a non-empty occurrence")
+        return end
 
     @property
     def fingerprint(self) -> str:
@@ -124,6 +139,7 @@ class SectionPlan(BaseModel):
     template_order: int = 0
     parent_section_id: str | None = None
     required_terms: tuple[str, ...] = ()
+    coverage_issues: tuple[str, ...] = ()
 
 
 class RelationMetadata(BaseModel):
@@ -137,6 +153,27 @@ class RelationMetadata(BaseModel):
     polarity: str = "positive"
     condition: str | None = None
     relation_type: RelationType
+
+
+class SelectedClaimTarget(BaseModel):
+    """In-memory C1 acceptance target; never part of prompts or task data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    source_quote: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+    relation_type: RelationType
+    direction: str = "subject_to_object"
+    polarity: str = "positive"
+    condition: str | None = None
+
+    @field_validator("relation_type")
+    @classmethod
+    def target_must_be_causal_or_conditional(cls, value: RelationType) -> RelationType:
+        if value not in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
+            raise ValueError("selected acceptance target must be causal or conditional")
+        return value
 
 
 class SectionQualitySnapshot(BaseModel):
@@ -212,13 +249,14 @@ def fidelity_firewall(
         # alignment merely because an opaque ID is absent from ``rendered``.
         if claim is None or claim.status != ClaimStatus.ASSERTED:
             continue
-        source_spans = [evidence[ref] for ref in claim.evidence_refs if ref in evidence]
+        source_spans = claim_occurrence_spans(claim, evidence)
         source = "\n".join(span.raw_text for span in source_spans)
         if claim.subject and claim.subject not in source or claim.object and claim.object not in source:
             entity_issues.append(claim_id)
             unsupported.append(claim_id)
-        number_text = None if claim.number is None else str(int(claim.number)) if float(claim.number).is_integer() else str(claim.number)
-        if number_text and (number_text not in source or number_text not in rendered):
+        if claim.number is not None and not _number_value_supported(claim.number, claim.unit, source):
+            numeric_issues.append(claim_id)
+        if claim.number is not None and not _number_value_supported(claim.number, claim.unit, rendered):
             numeric_issues.append(claim_id)
         if claim.unit and (claim.unit not in source or claim.unit not in rendered):
             numeric_issues.append(claim_id)
@@ -226,7 +264,7 @@ def fidelity_firewall(
             date_issues.append(claim_id)
         if not any(f"〔{ref}〕" in rendered for ref in claim.evidence_refs):
             source_tag_issues.append(claim_id)
-        if claim_id in plan.required_claim_ids and claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
+        if (claim_id in plan.required_claim_ids or claim_id == selected_claim_id) and claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
             meta = (relation_metadata or {}).get(claim_id)
             expected = RelationMetadata(
                 subject=claim.subject, predicate=claim.predicate, object=claim.object,
@@ -313,23 +351,36 @@ def parse_fact_payload(payload: str | Mapping[str, Any], *, source_sha256: str) 
     return FactLedger.model_validate(value)
 
 
-def build_evidence_spans(raw_transcript: str, chunks: Sequence[str], *, source_sha256: str | None = None) -> tuple[EvidenceSpan, ...]:
+def build_evidence_spans(
+    raw_transcript: str, chunks: Sequence[str], *, source_sha256: str | None = None,
+    chunk_offsets: Sequence[tuple[int, int]] | None = None,
+) -> tuple[EvidenceSpan, ...]:
     """Create stable spans from existing chunks without replacing raw text."""
     digest = source_sha256 or _hash(raw_transcript)
     spans: list[EvidenceSpan] = []
     cursor = 0
     for index, chunk in enumerate(chunks, 1):
-        start = raw_transcript.find(chunk, cursor)
-        if start < 0:
-            start = cursor
-        end = min(len(raw_transcript), start + len(chunk))
+        if chunk_offsets is not None:
+            start, end = chunk_offsets[index - 1]
+            if raw_transcript[start:end] != chunk:
+                raise ValueError("chunk offset does not identify the exact raw-source slice")
+        else:
+            start = raw_transcript.find(chunk, cursor)
+            if start < 0:
+                start = raw_transcript.find(chunk)
+            if start < 0:
+                raise ValueError("chunk cannot be aligned to exact raw-source text")
+            end = start + len(chunk)
         spans.append(EvidenceSpan(span_id=f"span-{index}", raw_text=raw_transcript[start:end],
                                   start_offset=start, end_offset=end, source_sha256=digest))
-        cursor = end
+        cursor = start + 1
     return tuple(spans)
 
 
-def consolidate_claims(claims: Iterable[FactClaim], *, source_sha256: str) -> FactLedger:
+def consolidate_claims(
+    claims: Iterable[FactClaim], *, source_sha256: str,
+    evidence: Mapping[str, EvidenceSpan] | None = None,
+) -> FactLedger:
     """Dedupe deterministically; surface same-evidence conflicts without choosing."""
     unique: dict[str, FactClaim] = {}
     conflicts: list[ClaimConflict] = []
@@ -340,17 +391,22 @@ def consolidate_claims(claims: Iterable[FactClaim], *, source_sha256: str) -> Fa
             continue
         merged_refs = tuple(dict.fromkeys((*prior.evidence_refs, *claim.evidence_refs)))
         unique[claim.fingerprint] = prior.model_copy(update={"evidence_refs": merged_refs})
-    by_evidence: dict[tuple[str, ...], list[FactClaim]] = {}
-    for claim in unique.values():
-        by_evidence.setdefault(tuple(sorted(claim.evidence_refs)), []).append(claim)
-    for refs, group in by_evidence.items():
-        for i, left in enumerate(group):
-            for right in group[i + 1:]:
-                conflict_type = _same_evidence_conflict_type(left, right)
-                if conflict_type:
-                    ids = tuple(sorted((left.claim_id, right.claim_id)))
-                    conflicts.append(ClaimConflict(conflict_id=_hash("|".join(ids))[:16], claim_ids=ids,
-                                                   evidence_refs=refs, conflict_type=conflict_type))
+    valid_claims = [claim for claim in unique.values()
+                    if claim.status == ClaimStatus.ASSERTED
+                    and (claim.uncertainty or "").casefold() not in {"unknown", "ambiguous"}
+                    and claim.resolved_start_offset is not None
+                    and claim.resolved_end_offset is not None]
+    for index, left in enumerate(valid_claims):
+        for right in valid_claims[index + 1:]:
+            overlaps = (left.resolved_start_offset < right.resolved_end_offset
+                        and right.resolved_start_offset < left.resolved_end_offset)
+            conflict_type = _same_evidence_conflict_type(left, right) if overlaps else None
+            if conflict_type:
+                ids = tuple(sorted((left.claim_id, right.claim_id)))
+                refs = tuple(sorted(set(left.evidence_refs) & set(right.evidence_refs)))
+                conflicts.append(ClaimConflict(conflict_id=_hash("|".join((*ids, str(left.resolved_start_offset), str(right.resolved_start_offset))))[:16],
+                                               claim_ids=ids, evidence_refs=refs or tuple(sorted(set(left.evidence_refs) | set(right.evidence_refs))),
+                                               conflict_type=conflict_type))
     return FactLedger(source_sha256=source_sha256, claims=tuple(sorted(unique.values(), key=lambda c: c.claim_id)),
                       conflicts=tuple(sorted(conflicts, key=lambda c: c.conflict_id)))
 
@@ -449,7 +505,8 @@ def template_section_titles(template: Any | None = None) -> dict[str, str]:
 
 
 def template_section_plans(template: Any | None, ledger: FactLedger,
-                           evidence: Mapping[str, EvidenceSpan] | None = None) -> tuple[SectionPlan, ...]:
+                           evidence: Mapping[str, EvidenceSpan] | None = None,
+                           raw_source: str | None = None) -> tuple[SectionPlan, ...]:
     """Map claims once into the real ordered MeetingTemplate record topology.
 
     Headers receive claims only through the explicit template-id slot contract.
@@ -480,12 +537,14 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
                           "pattern": pattern, "parent": parent_id, "terms": (sub_title,)})
     evidence_by_id = evidence or {}
     assigned: dict[str, list[str]] = {spec["id"]: [] for spec in specs}
+    coverage_issues: dict[str, list[str]] = {spec["id"]: [] for spec in specs}
     body_specs = [spec for spec in specs if spec["kind"] in {"section", "subfield"}]
     first_body = next((spec for spec in body_specs if spec["kind"] == "section"), None)
+    policy = template_claim_policy(template.id)
     for claim in ledger.claims:
         if claim.status != ClaimStatus.ASSERTED:
             continue
-        source = "\n".join(evidence_by_id[ref].raw_text for ref in claim.evidence_refs if ref in evidence_by_id)
+        source = claim.evidence_quote or "\n".join(evidence_by_id[ref].raw_text for ref in claim.evidence_refs if ref in evidence_by_id)
         semantic_text = " ".join((claim.subject, claim.predicate, claim.object))
         header_match = next((spec for spec in specs if spec["kind"] == "header" and
                              any(term in semantic_text for term in spec["terms"])), None)
@@ -501,15 +560,100 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
         if match is not None:
             assigned[match["id"]].append(claim.claim_id)
     plans: list[SectionPlan] = []
+    if raw_source is not None:
+        for kind, start, end in inventory_source_candidates(template.id, raw_source):
+            covered = any(
+                claim.status == ClaimStatus.ASSERTED
+                and claim.resolved_start_offset is not None
+                and claim.resolved_end_offset is not None
+                and claim.resolved_start_offset <= start and end <= claim.resolved_end_offset
+                for claim in ledger.claims
+            )
+            if not covered:
+                target_spec = _candidate_section_for(template.id, kind, body_specs, first_body)
+                if target_spec is not None:
+                    coverage_issues[target_spec["id"]].append(f"{kind}@{start}:{end}")
     for order, spec in enumerate(specs):
         ids = tuple(assigned[spec["id"]])
+        required_ids = tuple(
+            claim_id for claim_id in ids
+            if policy.is_required(next(claim.evidence_quote or "" for claim in ledger.claims
+                                       if claim.claim_id == claim_id))
+        )
+        optional_ids = tuple(claim_id for claim_id in ids if claim_id not in set(required_ids))
         refs = tuple(dict.fromkeys(ref for claim in ledger.claims if claim.claim_id in ids for ref in claim.evidence_refs))
         plans.append(SectionPlan(section_id=spec["id"], title=spec["title"],
-                                 required_claim_ids=ids, evidence_span_ids=refs,
+                                 required_claim_ids=required_ids, optional_claim_ids=optional_ids,
+                                 evidence_span_ids=refs,
                                  template_kind=spec["kind"], template_path=spec["path"],
                                  template_order=order, parent_section_id=spec["parent"],
-                                 required_terms=spec["terms"]))
+                                 required_terms=spec["terms"],
+                                 coverage_issues=tuple(coverage_issues[spec["id"]])))
     return tuple(plans)
+
+
+class TemplateClaimPolicy(BaseModel):
+    """Trusted, bounded requiredness cues derived from current template prompts."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    template_id: str
+    source_present_cues: tuple[str, ...]
+
+    def is_required(self, evidence_quote: str) -> bool:
+        return any(cue in evidence_quote for cue in self.source_present_cues)
+
+
+_TEMPLATE_CUES: Mapping[str, tuple[str, ...]] = {
+    "general": ("決議", "通過", "交辦", "裁示", "主辦", "協辦", "辦理期程", "各單位意見", "不同意見"),
+    "procurement_evaluation": ("法定人數", "迴避", "評選方式", "簡報", "詢答", "廠商", "評選結果", "優勝", "序位", "總評分", "不同意見", "決議", "散會"),
+    "section_meeting": ("交辦", "裁示", "指示", "列管", "解除列管", "繼續列管", "承辦", "期限", "決議"),
+    "isms_monthly": ("風險", "接受", "降低", "移轉", "避免", "演練", "稽核", "驗證", "排程", "下次會議", "決議", "同意", "確認", "追蹤"),
+}
+_TEMPLATE_CANDIDATES: Mapping[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    template_id: tuple((cue, re.compile(re.escape(cue))) for cue in cues)
+    for template_id, cues in _TEMPLATE_CUES.items()
+}
+
+
+def template_claim_policy(template_id: str) -> TemplateClaimPolicy:
+    cues = _TEMPLATE_CUES.get(template_id)
+    if cues is None:
+        raise ValueError(f"no trusted template claim policy for {template_id}")
+    return TemplateClaimPolicy(template_id=template_id, source_present_cues=cues)
+
+
+def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tuple[str, int, int], ...]:
+    """Inventory enumerated template/high-risk cues using offsets, never raw values."""
+    if template_id not in _TEMPLATE_CANDIDATES:
+        raise ValueError(f"no candidate inventory for {template_id}")
+    candidates = [
+        (kind, match.start(), match.end())
+        for kind, pattern in _TEMPLATE_CANDIDATES[template_id]
+        for match in pattern.finditer(raw_source)
+    ]
+    for kind, pattern in (
+        ("numeric", re.compile(r"(?<!\d)\d+(?:\.\d+)?")),
+        ("numeric", re.compile(r"[零〇一二兩两三四五六七八九](?=[週周年月日天時时小時小时分鐘分钟秒件人個个位項项次份萬元元])")),
+        ("date", re.compile(r"(?:\d{2,4}年\d{1,2}月\d{1,2}日|\d{1,4}[./-]\d{1,2}[./-]\d{1,2})")),
+        ("relation", re.compile(r"因而|因此|導致|造成|使得|若|如果|除非|未|不|無|沒有")),
+        ("speaker", re.compile(r"(?:發言者\d+|Speaker\s*\d+)\s*[:：]")),
+    ):
+        candidates.extend((kind, match.start(), match.end()) for match in pattern.finditer(raw_source))
+    return tuple(sorted(set(candidates), key=lambda item: (item[1], item[2], item[0])))
+
+
+def _candidate_section_for(template_id: str, kind: str,
+                           body_specs: Sequence[Mapping[str, Any]],
+                           first_body: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    if not body_specs:
+        return None
+    desired = {
+        "general": "section-3" if kind in {"裁示", "交辦", "主辦", "協辦", "辦理期程"} else "section-2",
+        "procurement_evaluation": "section-14",
+        "section_meeting": "section-1" if "列管" in kind else "section-3",
+        "isms_monthly": "section-4" if kind in {"風險", "決議", "接受", "降低", "移轉", "演練"} else "section-3",
+    }.get(template_id)
+    return next((spec for spec in body_specs if spec["id"] == desired), first_body)
 
 
 def relation_is_supported_in_order(claim: FactClaim, spans: Sequence[EvidenceSpan]) -> bool:
@@ -538,6 +682,21 @@ def relation_is_supported_in_order(claim: FactClaim, spans: Sequence[EvidenceSpa
     if claim.direction == "object_to_subject":
         return positions[2] < positions[1] < positions[0]
     return False
+
+
+def claim_occurrence_spans(claim: FactClaim, evidence: Mapping[str, EvidenceSpan]) -> list[EvidenceSpan]:
+    """Return only the validated raw occurrence, never an entire coarse chunk."""
+    if (not claim.evidence_quote or claim.resolved_start_offset is None
+            or claim.resolved_end_offset is None):
+        return []
+    source = next((evidence[ref] for ref in claim.evidence_refs if ref in evidence), None)
+    if source is None:
+        return []
+    return [EvidenceSpan(
+        span_id=f"occurrence:{claim.claim_id}", raw_text=claim.evidence_quote,
+        start_offset=claim.resolved_start_offset, end_offset=claim.resolved_end_offset,
+        source_sha256=source.source_sha256,
+    )]
 
 
 def _relation_is_rendered(text: str, relation: RelationMetadata) -> bool:
@@ -576,7 +735,7 @@ def _relation_mentions_are_source_supported(
                 or claim.relation_type not in {RelationType.CAUSAL, RelationType.CONDITIONAL}):
             continue
         candidate_ends = {claim.subject.strip().casefold(), claim.object.strip().casefold()}
-        spans = [evidence[ref] for ref in claim.evidence_refs if ref in evidence]
+        spans = claim_occurrence_spans(claim, evidence)
         if (candidate_ends != target_ends or not relation_is_supported_in_order(claim, spans)):
             continue
         candidate_metadata = relation_metadata.get(claim_id)
@@ -638,28 +797,186 @@ def validate_runtime_profile(profile: ModelRuntimeProfile, capabilities: Mapping
 def validate_asserted_claims_against_source(
     claims: Iterable[FactClaim], evidence: Mapping[str, EvidenceSpan]
 ) -> tuple[FactClaim, ...]:
-    """Reject asserted high-risk values absent from their ordered raw spans."""
+    """Ground claims at occurrence scope; keep unsupported claims unresolved."""
     validated: list[FactClaim] = []
     for claim in claims:
         if claim.status != ClaimStatus.ASSERTED:
             validated.append(claim)
             continue
+        if (not claim.evidence_quote or claim.resolved_start_offset is None
+                or claim.resolved_end_offset is None):
+            raise ValueError(f"claim {claim.claim_id} is not source-grounded: no unique raw-source occurrence")
         source_parts = [evidence[ref].raw_text for ref in claim.evidence_refs if ref in evidence]
         if len(source_parts) != len(claim.evidence_refs):
             raise ValueError(f"claim {claim.claim_id} references missing evidence")
-        source = "\n".join(source_parts)
-        values = (claim.subject, claim.predicate, claim.object, claim.condition,
-                  None if claim.number is None else str(claim.number), claim.unit,
-                  claim.date, claim.attribution)
-        missing = tuple(value for value in values if value and value not in source)
-        if missing:
-            raise ValueError(f"claim {claim.claim_id} is not source-grounded")
-        if claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL} and not relation_is_supported_in_order(
-            claim, [evidence[ref] for ref in claim.evidence_refs]
-        ):
-            raise ValueError(f"claim {claim.claim_id} relation order is not source-grounded")
-        validated.append(claim)
+        source = claim.evidence_quote
+        core_values = (claim.subject, claim.predicate, claim.object, claim.condition)
+        unresolved_values = any(value and value not in source for value in core_values)
+        if claim.number is not None and not _number_value_supported(claim.number, claim.unit, source):
+            unresolved_values = True
+        if claim.unit and claim.unit not in source:
+            unresolved_values = True
+        if claim.date and claim.date not in source:
+            unresolved_values = True
+        if claim.attribution and claim.attribution not in source:
+            unresolved_values = True
+        occurrence = EvidenceSpan(
+            span_id=f"occurrence:{claim.claim_id}", raw_text=claim.evidence_quote,
+            start_offset=claim.resolved_start_offset, end_offset=claim.resolved_end_offset,
+            source_sha256=evidence[claim.evidence_refs[0]].source_sha256,
+        )
+        if (claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL}
+                and not relation_is_supported_in_order(claim, [occurrence])):
+            unresolved_values = True
+        validated.append(
+            claim.model_copy(update={"status": ClaimStatus.AMBIGUOUS,
+                                     "uncertainty": "source_value_mismatch"})
+            if unresolved_values else claim
+        )
     return tuple(validated)
+
+
+_CHINESE_SINGLE_DIGITS = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2,
+    "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+}
+
+
+def _number_value_supported(number: float, unit: str | None, text: str) -> bool:
+    """Accept a complete numeric token and, when supplied, its exact unit."""
+    number_text = str(int(number)) if float(number).is_integer() else str(number)
+    numeric_chars = r"0-9０-９.,+\-−eE"
+    arabic = re.escape(number_text)
+    if unit:
+        unit_pattern = re.escape(unit)
+        arabic_with_unit = (
+            rf"(?<![{numeric_chars}]){arabic}(?![{numeric_chars}])"
+            rf"\s*{unit_pattern}(?![0-9０-９.])"
+        )
+        if re.search(arabic_with_unit, text):
+            return True
+    elif re.search(rf"(?<![{numeric_chars}]){arabic}(?![{numeric_chars}])", text):
+        return True
+
+    if unit and float(number).is_integer():
+        chinese_numerals = "零〇一二兩两三四五六七八九十百千萬万億亿兆"
+        mixed_or_approximate = r"半|多|餘|余|左右|上下|以上|以下"
+        for digit, value in _CHINESE_SINGLE_DIGITS.items():
+            if value != int(number):
+                continue
+            chinese_with_unit = (
+                rf"(?<![{chinese_numerals}]){re.escape(digit)}{re.escape(unit)}"
+                rf"(?![{chinese_numerals}]|{mixed_or_approximate})"
+            )
+            if re.search(chinese_with_unit, text):
+                return True
+    return False
+
+
+def resolve_claim_occurrences(
+    claims: Iterable[FactClaim], evidence: Mapping[str, EvidenceSpan], *, source_sha256: str,
+) -> tuple[FactClaim, ...]:
+    """Resolve exact model quotes or chunk-relative offsets to unique raw intervals."""
+    resolved: list[FactClaim] = []
+    for claim in claims:
+        if claim.status != ClaimStatus.ASSERTED:
+            resolved.append(claim)
+            continue
+        spans = [evidence.get(ref) for ref in claim.evidence_refs]
+        if (not claim.evidence_quote or any(span is None for span in spans)
+                or any(span.source_sha256 != source_sha256 for span in spans if span is not None)):
+            resolved.append(claim.model_copy(update={
+                "status": ClaimStatus.AMBIGUOUS,
+                "uncertainty": claim.uncertainty or "unresolved_raw_source_occurrence",
+                "resolved_start_offset": None, "resolved_end_offset": None,
+            }))
+            continue
+        occurrences: set[tuple[int, int]] = set()
+        unlocated_occurrence = False
+        for span in spans:
+            assert span is not None
+            if claim.evidence_start_offset is not None:
+                start = claim.evidence_start_offset
+                end = claim.evidence_end_offset
+                if (end is not None and span.start_offset is not None
+                        and span.raw_text[start:end] == claim.evidence_quote):
+                    occurrences.add((span.start_offset + start, span.start_offset + end))
+                continue
+            cursor = 0
+            while True:
+                local_start = span.raw_text.find(claim.evidence_quote, cursor)
+                if local_start < 0:
+                    break
+                if span.start_offset is None:
+                    # This quote exists, but without the span's origin we cannot
+                    # prove a unique absolute source occurrence.
+                    unlocated_occurrence = True
+                    break
+                start = span.start_offset + local_start
+                occurrences.add((start, start + len(claim.evidence_quote)))
+                cursor = local_start + 1
+            if unlocated_occurrence:
+                break
+        if unlocated_occurrence or len(occurrences) != 1:
+            resolved.append(claim.model_copy(update={
+                "status": ClaimStatus.AMBIGUOUS,
+                "uncertainty": claim.uncertainty or "unresolved_raw_source_occurrence",
+                "resolved_start_offset": None, "resolved_end_offset": None,
+            }))
+            continue
+        start, end = next(iter(occurrences))
+        resolved.append(claim.model_copy(update={
+            "resolved_start_offset": start,
+            "resolved_end_offset": end,
+        }))
+    return tuple(resolved)
+
+
+def bind_selected_claim_target(
+    target: SelectedClaimTarget | Mapping[str, Any],
+    claims: Iterable[FactClaim],
+    evidence: Mapping[str, EvidenceSpan],
+    raw_transcript: str,
+) -> str:
+    """Resolve an acceptance target by unique raw occurrence and typed relation."""
+    target = target if isinstance(target, SelectedClaimTarget) else SelectedClaimTarget.model_validate(target)
+    starts: list[int] = []
+    cursor = 0
+    while True:
+        start = raw_transcript.find(target.source_quote, cursor)
+        if start < 0:
+            break
+        starts.append(start)
+        cursor = start + 1
+    if len(starts) != 1:
+        raise ValueError("selected target source occurrence is missing or ambiguous")
+    target_start = starts[0]
+    target_end = target_start + len(target.source_quote)
+    matches: list[str] = []
+    for claim in claims:
+        if (claim.status != ClaimStatus.ASSERTED
+                or (claim.subject, claim.predicate, claim.object, claim.relation_type,
+                    claim.direction, claim.polarity, claim.condition)
+                != (target.subject, target.predicate, target.object, target.relation_type,
+                    target.direction, target.polarity, target.condition)):
+            continue
+        if not claim.evidence_quote or claim.evidence_quote != target.source_quote:
+            continue
+        spans = [evidence.get(ref) for ref in claim.evidence_refs]
+        if any(span is None for span in spans):
+            continue
+        occurrence_in_refs = any(
+            span is not None and span.start_offset is not None
+            and span.start_offset <= target_start and target_end <= span.end_offset
+            and span.raw_text[target_start - span.start_offset:target_end - span.start_offset] == target.source_quote
+            and span.source_sha256 == _hash(raw_transcript)
+            for span in spans
+        )
+        if occurrence_in_refs:
+            matches.append(claim.claim_id)
+    if len(matches) != 1:
+        raise ValueError("selected target did not bind to one validated typed claim")
+    return matches[0]
 
 
 def validate_relation_metadata(
@@ -841,7 +1158,8 @@ def snapshot_section(plan: SectionPlan, rendered: str, claims: Mapping[str, Fact
     return SectionQualitySnapshot(section_id=plan.section_id, required_claim_ids=required,
                                  covered_claim_ids=covered, unsupported_high_risk_values=unsupported,
                                  duplicate_items=duplicate_items,
-                                 source_trace_complete=(not policy.require_source_trace or not unsupported))
+                                 source_trace_complete=(not policy.require_source_trace or not unsupported),
+                                 coverage_issues=plan.coverage_issues)
 
 
 @dataclass(frozen=True)

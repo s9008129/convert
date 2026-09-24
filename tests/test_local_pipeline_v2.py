@@ -19,14 +19,23 @@ from backend.services.local_pipeline_v2 import (
     validate_asserted_claims_against_source, validate_relation_metadata,
     template_section_plans, RelationMetadata, relation_is_supported_in_order,
     select_profile_candidate, sample_candidate_profiles,
+    resolve_claim_occurrences,
+    template_claim_policy, inventory_source_candidates,
+    cross_section_claim_duplicates, validate_template_terms,
+    _number_value_supported,
 )
 from backend.core.templates import get_template
 from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
 
 
 def _claim(cid="c1", *, object="完成", refs=("span-1",), **kwargs):
-    values = {"subject": "團隊", "predicate": "決定", "object": object,
-              "evidence_refs": refs, **kwargs}
+    subject = kwargs.get("subject", "團隊")
+    predicate = kwargs.get("predicate", "決定")
+    condition = kwargs.get("condition")
+    quote = kwargs.get("evidence_quote", f"{condition or ''}{subject}{predicate}{object}")
+    values = {"subject": subject, "predicate": predicate, "object": object,
+              "evidence_refs": refs, "evidence_quote": quote,
+              "resolved_start_offset": 0, "resolved_end_offset": len(quote), **kwargs}
     return FactClaim(claim_id=cid, **values)
 
 
@@ -89,7 +98,10 @@ def test_ledger_preserves_and_conflicts_semantically_distinct_same_evidence_clai
     second = first.model_copy(update={"claim_id": "c2", **change})
     ledger = consolidate_claims((first, second), source_sha256="a" * 64)
     assert len(ledger.claims) == 2
-    assert len(ledger.conflicts) == 1
+    expected_conflicts = 0 if change.get("status") == ClaimStatus.AMBIGUOUS or change.get("uncertainty") == "ambiguous" else 1
+    assert len(ledger.conflicts) == expected_conflicts
+    if not expected_conflicts:
+        return
     assert ledger.conflicts[0].claim_ids == ("c1", "c2")
     assert ledger.conflicts[0].conflict_type == "same_evidence_semantic_conflict"
 
@@ -103,6 +115,69 @@ def test_ledger_flags_reversed_endpoint_assertions_as_conflict():
     assert len(ledger.claims) == 2
     assert len(ledger.conflicts) == 1
     assert ledger.conflicts[0].conflict_type == "same_evidence_semantic_conflict"
+
+
+def test_occurrence_resolution_and_conflict_identity_use_exact_raw_intervals():
+    raw = "甲導致乙；丙造成丁。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    spans = build_evidence_spans(raw, [raw[:5], raw[5:]], source_sha256=digest,
+                                 chunk_offsets=[(0, 5), (5, len(raw))])
+    evidence = {span.span_id: span for span in spans}
+    left = _claim("left", subject="甲", predicate="導致", object="乙", relation_type="causal",
+                  refs=("span-1",), evidence_quote="甲導致乙")
+    right = _claim("right", subject="丙", predicate="造成", object="丁", relation_type="causal",
+                   refs=("span-2",), evidence_quote="丙造成丁")
+    resolved = resolve_claim_occurrences((left, right), evidence, source_sha256=digest)
+    assert [(claim.resolved_start_offset, claim.resolved_end_offset) for claim in resolved] == [(0, 4), (5, 9)]
+    ledger = consolidate_claims(resolved, source_sha256=digest, evidence=evidence)
+    assert not ledger.conflicts
+
+    invalid = _claim("invalid", refs=("missing-span",), evidence_quote="甲導致乙")
+    unresolved = resolve_claim_occurrences((invalid,), evidence, source_sha256=digest)[0]
+    assert unresolved.status == ClaimStatus.AMBIGUOUS
+    assert unresolved.resolved_start_offset is None
+
+
+def test_repeated_exact_quote_is_ambiguous_not_arbitrarily_resolved():
+    raw = "甲導致乙；甲導致乙。"
+    span = EvidenceSpan.from_source("span-1", raw, start_offset=0, end_offset=len(raw))
+    claim = _claim("repeat", subject="甲", predicate="導致", object="乙", relation_type="causal",
+                   evidence_quote="甲導致乙")
+    resolved = resolve_claim_occurrences((claim,), {"span-1": span}, source_sha256=span.source_sha256)[0]
+    assert resolved.status == ClaimStatus.AMBIGUOUS
+    assert resolved.uncertainty == "unresolved_raw_source_occurrence"
+
+
+def test_occurrence_resolution_returns_ambiguous_for_offsetless_span():
+    raw = "甲導致乙"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    span = EvidenceSpan(span_id="span-offsetless", raw_text=raw, source_sha256=digest)
+    claim = _claim("offsetless", subject="甲", predicate="導致", object="乙",
+                   relation_type="causal", refs=(span.span_id,), evidence_quote=raw)
+
+    resolved = resolve_claim_occurrences(
+        (claim,), {span.span_id: span}, source_sha256=digest,
+    )[0]
+
+    assert resolved.status == ClaimStatus.AMBIGUOUS
+    assert resolved.resolved_start_offset is None
+    assert resolved.resolved_end_offset is None
+
+
+@pytest.mark.parametrize(("number", "unit", "source", "expected"), (
+    (2, "週", "12週", False),
+    (1, "週", "10週", False),
+    (1, "週", "1.5週", False),
+    (2, "週", "2週", True),
+    (1, "週", "一週", True),
+    (1, "天", "一週", False),
+    (1, "週", "一二週", False),
+    (1, "週", "一週半", False),
+))
+def test_numeric_grounding_requires_exact_value_unit_and_unmodified_token(
+    number, unit, source, expected,
+):
+    assert _number_value_supported(number, unit, source) is expected
 
 
 def test_h_section_render_is_allow_listed_and_traceable():
@@ -152,8 +227,81 @@ def test_template_plan_follows_header_section_subfield_topology_and_assigns_clai
     discussion = next(p for p in plans if p.template_path == "record_sections[1]")
     subfields = [p for p in plans if p.template_kind == "subfield" and p.parent_section_id == discussion.section_id]
     assert [p.parent_section_id for p in subfields] == [discussion.section_id] * len(subfields)
-    assert sum("c1" in p.required_claim_ids for p in plans) == 1
+    assert sum("c1" in (*p.required_claim_ids, *p.optional_claim_ids) for p in plans) == 1
     assert plans == tuple(sorted(plans, key=lambda p: p.template_order))
+
+
+def test_trusted_template_policies_are_source_present_and_candidate_gaps_are_scoped():
+    cues = {
+        "general": "決議事項",
+        "procurement_evaluation": "評選結果",
+        "section_meeting": "解除列管",
+        "isms_monthly": "風險處理",
+    }
+    for template_id, cue in cues.items():
+        policy = template_claim_policy(template_id)
+        assert policy.is_required(f"原文提及{cue}並記錄具體內容")
+        assert not policy.is_required("一般背景敘述")
+        assert inventory_source_candidates(template_id, f"原文{cue}")
+
+    template = get_template("general")
+    raw = "預算導致延後，會議並確認決議事項。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    span = EvidenceSpan(span_id="span-1", raw_text=raw, start_offset=0,
+                        end_offset=len(raw), source_sha256=digest)
+    claim = _claim("c1", subject="預算", predicate="導致", object="延後", relation_type="causal",
+                   evidence_quote="預算導致延後", resolved_start_offset=0, resolved_end_offset=6)
+    plans = template_section_plans(template, FactLedger(source_sha256=digest, claims=(claim,)),
+                                   {"span-1": span}, raw_source=raw)
+    discussion = next(plan for plan in plans if plan.section_id == "section-2")
+    assert discussion.coverage_issues
+    assert all("確認決議事項" not in issue for issue in discussion.coverage_issues)
+
+
+def test_w5_firewall_checks_occurrence_numeric_date_entity_attribution_and_source_tags():
+    quote = "主席表示團隊於2026-09-24以12件完成決議"
+    claim = _claim("c1", subject="團隊", predicate="完成", object="決議",
+                   number=12, unit="件", date="2026-09-24", attribution="主席",
+                   evidence_quote=quote, resolved_start_offset=0,
+                   resolved_end_offset=len(quote))
+    evidence = {"span-1": EvidenceSpan.from_source("span-1", quote)}
+    plan = SectionPlan(section_id="s", title="決議", optional_claim_ids=("c1",))
+
+    complete = fidelity_firewall(
+        plan, "主席表示團隊於2026-09-24以12件完成決議〔span-1〕",
+        {"c1": claim}, evidence,
+    )
+    assert complete.accepted
+
+    incomplete = fidelity_firewall(
+        plan, "團隊完成決議",
+        {"c1": claim}, evidence,
+    )
+    assert incomplete.numeric_issues == ("c1",)
+    assert incomplete.date_issues == ("c1",)
+    assert incomplete.attribution_issues == ("c1",)
+    assert incomplete.source_tag_issues == ("c1",)
+
+    mismatched_entity = claim.model_copy(update={"subject": "廠商"})
+    entity_snapshot = fidelity_firewall(
+        plan, "廠商完成決議〔span-1〕", {"c1": mismatched_entity}, evidence,
+    )
+    assert entity_snapshot.entity_issues == ("c1",)
+
+
+def test_w5_source_candidate_offsets_and_record_term_checks_are_deterministic():
+    raw = "主席：於2026-09-24決議12件並延後一週"
+    candidates = inventory_source_candidates("general", raw)
+    assert ("date", raw.index("2026-09-24"), raw.index("2026-09-24") + len("2026-09-24")) in candidates
+    assert ("numeric", raw.index("12件"), raw.index("12件") + 2) in candidates
+    assert ("numeric", raw.index("一週"), raw.index("一週") + 1) in candidates
+
+    duplicated = cross_section_claim_duplicates((
+        SectionPlan(section_id="s1", title="一", optional_claim_ids=("c1",)),
+        SectionPlan(section_id="s2", title="二", required_claim_ids=("c1",)),
+    ))
+    assert duplicated == ("c1",)
+    assert validate_template_terms("會議決議事項", ("決議事項", "散會")) == ("散會",)
 
 
 def test_section_render_envelope_keeps_identity_outside_prose():
@@ -169,10 +317,49 @@ def test_section_render_envelope_keeps_identity_outside_prose():
 
 
 def test_high_risk_asserted_fields_require_ordered_raw_source():
-    claim = _claim(relation_type="causal", predicate="導致", object="延後", number=12, unit="件")
-    evidence = {"span-1": EvidenceSpan.from_source("span-1", "團隊導致延後。")}
-    with pytest.raises(ValueError, match="source-grounded"):
-        validate_asserted_claims_against_source((claim,), evidence)
+    claim = _claim(relation_type="causal", predicate="導致", object="延後", number=12, unit="件",
+                   evidence_quote="團隊導致延後", resolved_end_offset=6)
+    evidence = {"span-1": EvidenceSpan.from_source("span-1", "團隊導致延後。", start_offset=0, end_offset=7)}
+    validated = validate_asserted_claims_against_source((claim,), evidence)
+    assert validated[0].status == ClaimStatus.AMBIGUOUS
+    with pytest.raises(ValueError, match="no unique raw-source occurrence"):
+        validate_asserted_claims_against_source(
+            (claim.model_copy(update={"resolved_start_offset": None, "resolved_end_offset": None}),), evidence
+        )
+
+
+def test_chinese_single_digit_plus_unit_is_losslessly_grounded_and_rendered():
+    quote = "預算增加導致工程延後一週"
+    digest = hashlib.sha256(quote.encode()).hexdigest()
+    claim = _claim("c1", subject="預算增加", predicate="導致", object="工程延後一週",
+                   relation_type="causal", number=1, unit="週", evidence_quote=quote,
+                   resolved_start_offset=0, resolved_end_offset=len(quote))
+    evidence = {"span-1": EvidenceSpan(span_id="span-1", raw_text=quote, start_offset=0,
+                                       end_offset=len(quote), source_sha256=digest)}
+    validated = validate_asserted_claims_against_source((claim,), evidence)
+    assert validated[0].status == ClaimStatus.ASSERTED
+    plan = SectionPlan(section_id="s", title="決議", required_claim_ids=("c1",))
+    rendered = "預算增加導致工程延後一週〔span-1〕"
+    snapshot = fidelity_firewall(
+        plan, rendered, {"c1": validated[0]}, evidence,
+        relation_metadata={"c1": RelationMetadata(subject="預算增加", predicate="導致",
+            object="工程延後一週", direction="subject_to_object", polarity="positive",
+            relation_type="causal")},
+    )
+    assert snapshot.numeric_issues == ()
+    assert snapshot.accepted
+
+    for number, unit in ((2, "週"), (1, "天")):
+        changed = claim.model_copy(update={"number": number, "unit": unit})
+        unresolved = validate_asserted_claims_against_source((changed,), evidence)
+        assert unresolved[0].status == ClaimStatus.AMBIGUOUS
+        changed_snapshot = fidelity_firewall(
+            plan, rendered, {"c1": changed}, evidence,
+            relation_metadata={"c1": RelationMetadata(subject="預算增加", predicate="導致",
+                object="工程延後一週", direction="subject_to_object", polarity="positive",
+                relation_type="causal")},
+        )
+        assert "c1" in changed_snapshot.numeric_issues
 
 
 def test_core_relation_metadata_requires_exact_claim_and_predicate():
@@ -261,6 +448,7 @@ async def test_live_c1_inverted_predicate_is_rejected_at_v2_boundary(monkeypatch
                 "object": "延後",
                 "relation_type": "causal",
                 "evidence_refs": ["span-1"],
+                "evidence_quote": "預算導致延後",
             }]
         })
 
@@ -283,10 +471,11 @@ async def test_live_c1_unsafe_render_rolls_back_to_source_grounded_baseline(monk
         if "SOURCE CHUNK" in message:
             return json.dumps({"claims": [{
                 "claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
-                "relation_type": "causal", "evidence_refs": ["span-1"],
+                "relation_type": "causal", "evidence_refs": ["span-1"], "evidence_quote": "預算導致延後",
             }]})
-        ids_match = __import__("re").search(r'REQUIRED_CLAIM_IDS: (\[[^\n]*\])', message)
-        ids = json.loads(ids_match.group(1)) if ids_match else []
+        allowed_match = __import__("re").search(r'ALLOWED_CLAIMS: (\[[^\n]*\])', message)
+        allowed = json.loads(allowed_match.group(1)) if allowed_match else []
+        ids = [claim["claim_id"] for claim in allowed]
         if candidate_mode == "omission" and "c1" in ids:
             return json.dumps({"text": "決議未列該關係", "claim_ids": [], "relation_metadata": {}})
         relation_metadata = {"c1": {"subject": "預算", "predicate": "避免", "object": "延後",
@@ -299,7 +488,11 @@ async def test_live_c1_unsafe_render_rolls_back_to_source_grounded_baseline(monk
         return json.dumps({"text": text, "claim_ids": ids,
                            "relation_metadata": relation_metadata})
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
-    result = await service._summarize_with_local_pipeline_v2("預算導致延後。", "system", template=None)
+    result = await service._summarize_with_local_pipeline_v2(
+        "預算導致延後。", "system", template=None,
+        selected_claim_target={"source_quote": "預算導致延後", "subject": "預算",
+                               "predicate": "導致", "object": "延後", "relation_type": "causal"},
+    )
     assert "預算導致延後" in result
     assert "預算避免延後" not in result
 
@@ -312,20 +505,21 @@ async def test_live_required_relation_metadata_and_ids_are_complete_for_every_cl
     service = SummarizationService()
     monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
     monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
-    monkeypatch.setattr(v2, "template_section_plans", lambda _template, _ledger, _evidence: (
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
         SectionPlan(section_id="relations", title="關係", required_claim_ids=("c1", "c2")),
     ))
 
     async def generation(_engine, _system, message, **_kwargs):
         if "SOURCE CHUNK" in message:
             return json.dumps({"claims": [
-                {"claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
-                 "relation_type": "causal", "evidence_refs": ["span-1"]},
-                {"claim_id": "c2", "subject": "人力", "predicate": "造成", "object": "延期",
-                 "relation_type": "causal", "evidence_refs": ["span-1"]},
+                    {"claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                     "relation_type": "causal", "evidence_refs": ["span-1"], "evidence_quote": "預算導致延後"},
+                    {"claim_id": "c2", "subject": "人力", "predicate": "造成", "object": "延期",
+                     "relation_type": "causal", "evidence_refs": ["span-1"], "evidence_quote": "人力造成延期"},
             ]})
-        ids_match = __import__("re").search(r'REQUIRED_CLAIM_IDS: (\[[^\n]*\])', message)
-        ids = json.loads(ids_match.group(1)) if ids_match else []
+        allowed_match = __import__("re").search(r'ALLOWED_CLAIMS: (\[[^\n]*\])', message)
+        allowed = json.loads(allowed_match.group(1)) if allowed_match else []
+        ids = [claim["claim_id"] for claim in allowed]
         if candidate_fault == "missing_id":
             ids = ["c1"]
         elif candidate_fault == "reordered_ids":
@@ -355,7 +549,7 @@ async def test_live_final_firewall_rejects_relation_moved_to_another_section(mon
     service = SummarizationService()
     monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
     monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
-    monkeypatch.setattr(v2, "template_section_plans", lambda _template, _ledger, _evidence: (
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
         SectionPlan(section_id="s0", title="第一節", required_claim_ids=("c1",), template_order=0),
         SectionPlan(section_id="s1", title="第二節", required_claim_ids=("c2",), template_order=1),
     ))
@@ -404,7 +598,7 @@ async def test_live_final_firewall_fails_closed_on_corrupt_section_markers(monke
     service = SummarizationService()
     monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
     monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
-    monkeypatch.setattr(v2, "template_section_plans", lambda _template, _ledger, _evidence: (
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
         SectionPlan(section_id="s0", title="第一節", template_order=0),
         SectionPlan(section_id="s1", title="第二節", template_order=1),
     ))
@@ -470,6 +664,34 @@ async def test_qwen_live_v2_uses_w7_production_baseline_temperature(monkeypatch)
     await service._summarize_with_local_pipeline_v2("短來源", "system", template=get_template("general"))
     assert temperatures
     assert set(temperatures) == {0.7}
+
+
+@pytest.mark.asyncio
+async def test_qwen_candidate_temperature_varies_extraction_only(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("lmstudio"))
+    service._active_lmstudio_selection = SimpleNamespace(
+        model_identifier="qwen3.8-27b", provider="lmstudio", loaded_instance_id="instance-1",
+        context_length=8192,
+    )
+    observed = []
+
+    async def generation(_engine, _system, message, **kwargs):
+        observed.append(("SOURCE CHUNK" in message, kwargs["temperature"]))
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "section", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    await service._summarize_with_local_pipeline_v2(
+        "短來源", "system", template=get_template("general"),
+        extraction_temperature_candidate=0.3,
+    )
+    extraction = [temperature for is_extraction, temperature in observed if is_extraction]
+    rendering = [temperature for is_extraction, temperature in observed if not is_extraction]
+    assert extraction and set(extraction) == {0.3}
+    assert rendering and set(rendering) == {0.7}
 
 
 @pytest.mark.asyncio

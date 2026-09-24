@@ -405,6 +405,7 @@ class SummarizationService:
         template_id: str = "general",
         diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
         raw_source_transcript: Optional[str] = None,
+        selected_claim_target: Optional[dict] = None,
     ) -> str:
         """
         生成會議摘要
@@ -433,6 +434,11 @@ class SummarizationService:
         if user_prompt:
             log.info("偵測到 user_prompt；摘要結構仍以系統格式為主，額外偏好將僅隨結果一併保存")
 
+        if selected_claim_target is not None and mode != ProcessingMode.LOCAL:
+            raise ValueError("selected claim targets are supported only by local V2 acceptance runs")
+        if selected_claim_target is not None and getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() != "v2":
+            raise ValueError("selected claim targets require LOCAL_PIPELINE_VERSION=v2")
+
         try:
             if mode == ProcessingMode.CLOUD:
                 summary = await self._summarize_with_gemini(system_prompt, transcript, progress_callback, template=template)
@@ -441,6 +447,7 @@ class SummarizationService:
                     transcript, system_prompt, progress_callback, template=template,
                     diagnostic_recorder=diagnostic_recorder,
                     raw_source_transcript=raw_source_transcript,
+                    selected_claim_target=selected_claim_target,
                 )
 
             self._emit_progress(progress_callback, 95.0, "摘要生成完成")
@@ -869,6 +876,45 @@ class SummarizationService:
             transcript, chunks, chunk_overlaps, max_input_tokens
         )
         return chunks
+
+    def _split_v2_source_into_chunks(
+        self, transcript: str, max_input_tokens: int, *, overlap_chars: int = 96,
+    ) -> tuple[list[str], list[tuple[int, int]]]:
+        """Split immutable V2 source into exact raw slices with explicit offsets."""
+        if not transcript:
+            return [], []
+        if max_input_tokens < 1:
+            raise ValueError("V2 chunk token budget must be positive")
+        chunks: list[str] = []
+        offsets: list[tuple[int, int]] = []
+        start = 0
+        while start < len(transcript):
+            low, high = start + 1, len(transcript)
+            best = start
+            while low <= high:
+                middle = (low + high) // 2
+                if self._estimate_tokens(transcript[start:middle]) <= max_input_tokens:
+                    best = middle
+                    low = middle + 1
+                else:
+                    high = middle - 1
+            if best == start:
+                raise ValueError("V2 context budget cannot fit one source character")
+            end = best
+            if best < len(transcript):
+                lower_boundary = start + max(1, int((best - start) * 0.6))
+                boundaries = [transcript.rfind(mark, lower_boundary, best)
+                              for mark in ("\n", "。", "！", "？", "；", ".", "!", "?", ";")]
+                boundary = max(boundaries)
+                if boundary >= lower_boundary:
+                    end = boundary + 1
+            chunks.append(transcript[start:end])
+            offsets.append((start, end))
+            if end == len(transcript):
+                break
+            next_start = max(start + 1, end - min(overlap_chars, max(0, (end - start) // 5)))
+            start = next_start
+        return chunks, offsets
 
     @staticmethod
     def _normalize_action_key(text: str) -> str:
@@ -1889,6 +1935,7 @@ class SummarizationService:
         template: Optional[MeetingTemplate] = None,
         diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
         raw_source_transcript: Optional[str] = None,
+        selected_claim_target: Optional[dict] = None,
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
         # V2 is deliberately opt-in.  A failed V2 run raises explicitly; there
@@ -1898,6 +1945,7 @@ class SummarizationService:
                 transcript, system_prompt, progress_callback=progress_callback,
                 template=template, diagnostic_recorder=diagnostic_recorder,
                 raw_source_transcript=raw_source_transcript,
+                selected_claim_target=selected_claim_target,
             )
         engine = await self._select_local_engine()
         # LM Studio 選模只在工作開始時做一次；整個摘要工作沿用 immutable
@@ -2251,6 +2299,8 @@ class SummarizationService:
         template: Optional[MeetingTemplate] = None,
         diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
         raw_source_transcript: Optional[str] = None,
+        selected_claim_target: Optional[dict] = None,
+        extraction_temperature_candidate: Optional[float] = None,
     ) -> str:
         """Minimal live V2 path: strict fact extraction then deterministic render.
 
@@ -2267,6 +2317,7 @@ class SummarizationService:
             validate_relation_metadata,
             template_section_plans, cross_section_claim_duplicates,
             validate_template_terms, RelationMetadata,
+            bind_selected_claim_target, SelectedClaimTarget, resolve_claim_occurrences,
         )
 
         if getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() != "v2":
@@ -2301,7 +2352,11 @@ class SummarizationService:
         # Qwen .3/.5/.7 remain extraction-only candidates for explicit C14
         # sampling; an unsampled candidate never changes production settings.
         extraction_temperature = profile.temperature
-        section_temperature = profile.temperature
+        if extraction_temperature_candidate is not None:
+            if family != "Qwen" or extraction_temperature_candidate not in {0.3, 0.5, 0.7}:
+                raise LocalPipelineV2Error("Unsupported experimental extraction profile")
+            extraction_temperature = extraction_temperature_candidate
+        section_temperature = 0.7 if family == "Qwen" else profile.temperature
         if diagnostic_recorder:
             diagnostic_recorder.record(
                 "v2.runtime.profile", status="validated" if profile.validated else "unsupported_controls",
@@ -2324,12 +2379,16 @@ class SummarizationService:
         # used for comprehension only when spans can be aligned; this path does
         # not have a verified aligner, so it deliberately extracts raw-only.
         source_transcript = raw_source_transcript if raw_source_transcript is not None else transcript
-        chunks = self._split_transcript_into_chunks(source_transcript, self._build_local_context_plan(
+        chunk_budget = self._build_local_context_plan(
             source_transcript, system_prompt, template=template, context_window_tokens=context_tokens
-        ).chunk_input_budget_tokens)
+        ).chunk_input_budget_tokens
+        chunks, chunk_offsets = self._split_v2_source_into_chunks(source_transcript, chunk_budget)
         chunks = chunks or [source_transcript]
+        if not chunk_offsets and chunks:
+            chunk_offsets = [(0, len(source_transcript))]
         source_sha = __import__("hashlib").sha256(source_transcript.encode("utf-8")).hexdigest()
-        spans = build_evidence_spans(source_transcript, chunks, source_sha256=source_sha)
+        spans = build_evidence_spans(source_transcript, chunks, source_sha256=source_sha,
+                                     chunk_offsets=chunk_offsets)
         if diagnostic_recorder:
             diagnostic_recorder.record("v2.source", status="raw_only" if raw_source_transcript is not None else "raw_input",
                                        metadata={"raw_source_sha256": source_sha,
@@ -2344,7 +2403,8 @@ class SummarizationService:
                 '"direction":"subject_to_object|object_to_subject",'
                 '"polarity":"positive|negative","condition":null,"number":null,"unit":null,'
                 '"date":null,"attribution":null,"uncertainty":null,"status":"asserted|unknown|ambiguous",'
-                '"evidence_refs":["' + span.span_id + '"]}]}\n'
+                '"evidence_refs":["' + span.span_id + '"],"evidence_quote":"exact raw-source quote",'
+                '"evidence_start_offset":null,"evidence_end_offset":null}]}\n'
                 "Unknown or ambiguous values must be represented explicitly; never invent facts.\n"
                 "Every asserted subject/predicate/object, relation direction, polarity, condition, number/unit, date, "
                 "entity, attribution and uncertainty must be directly supported by the ordered raw source span; "
@@ -2417,26 +2477,49 @@ class SummarizationService:
                         f"V2 structured extraction failed after one schema-only repair (chunk {index})"
                     ) from second_error
             claims.extend(parsed.claims)
-        ledger = consolidate_claims(claims, source_sha256=source_sha)
+        evidence = {span.span_id: span for span in spans}
+        occurrence_claims = resolve_claim_occurrences(claims, evidence, source_sha256=source_sha)
+        if diagnostic_recorder:
+            resolved_count = sum(claim.resolved_start_offset is not None for claim in occurrence_claims)
+            ambiguous_count = sum(claim.status.value == "ambiguous" for claim in occurrence_claims)
+            diagnostic_recorder.record(
+                "v2.evidence-resolution", status="resolved" if ambiguous_count == 0 else "scoped_ambiguity",
+                metadata={"claim_count": len(occurrence_claims), "resolved_count": resolved_count,
+                          "ambiguous_count": ambiguous_count},
+            )
+        ledger = consolidate_claims(occurrence_claims, source_sha256=source_sha, evidence=evidence)
         if ledger.conflicts:
             raise LocalPipelineV2Error("V2 ledger contains unresolved same-evidence conflicts")
-        evidence = {span.span_id: span for span in spans}
         try:
             grounded_claims = validate_asserted_claims_against_source(ledger.claims, evidence)
         except ValueError as exc:
             raise LocalPipelineV2Error(f"V2 fidelity firewall rejected source-grounded claim: {exc}") from exc
-        ledger = ledger.model_copy(update={"claims": grounded_claims})
-        plans = template_section_plans(template, ledger, evidence)
-        by_id = {claim.claim_id: claim for claim in ledger.claims}
-        selected_claim_id = next(
-            (
-                claim.claim_id
-                for claim in ledger.claims
-                if claim.relation_type.value in {"causal", "conditional"}
-                and claim.status.value == "asserted"
-            ),
-            None,
+        source_mismatch_count = sum(
+            before.status.value == "asserted" and after.status.value == "ambiguous"
+            for before, after in zip(ledger.claims, grounded_claims)
         )
+        if diagnostic_recorder:
+            diagnostic_recorder.record(
+                "v2.source-validation",
+                status="scoped_ambiguity" if source_mismatch_count else "grounded",
+                metadata={"claim_count": len(grounded_claims),
+                          "source_mismatch_claim_count": source_mismatch_count},
+            )
+        ledger = ledger.model_copy(update={"claims": grounded_claims})
+        plans = template_section_plans(template, ledger, evidence, raw_source=source_transcript)
+        by_id = {claim.claim_id: claim for claim in ledger.claims}
+        selected_claim_id = None
+        selected_target_relation = None
+        if selected_claim_target is not None:
+            try:
+                selected_claim_id = bind_selected_claim_target(
+                    selected_claim_target, ledger.claims, evidence, source_transcript
+                )
+                selected_target_relation = SelectedClaimTarget.model_validate(
+                    selected_claim_target
+                ).model_dump(exclude={"source_quote"}, mode="python")
+            except (ValueError, TypeError) as exc:
+                raise LocalPipelineV2Error("V2 selected-target acceptance binding failed") from exc
         rendered: dict[str, str] = {}
         section_relations: dict[str, dict[str, RelationMetadata]] = {}
         for plan in plans:
@@ -2499,6 +2582,14 @@ class SummarizationService:
                 for cid in plan.required_claim_ids if cid in by_id
                 and by_id[cid].relation_type.value in {"causal", "conditional"}
             }
+            if selected_claim_id in by_id and by_id[selected_claim_id].relation_type.value in {"causal", "conditional"}:
+                selected_claim = by_id[selected_claim_id]
+                baseline_relations[selected_claim_id] = RelationMetadata(
+                    subject=selected_claim.subject, predicate=selected_claim.predicate,
+                    object=selected_claim.object, direction=selected_claim.direction,
+                    polarity=selected_claim.polarity, condition=selected_claim.condition,
+                    relation_type=selected_claim.relation_type,
+                )
             baseline_snapshot = fidelity_firewall(plan, baseline_text, by_id, evidence,
                                                   selected_claim_id=selected_claim_id,
                                                   relation_metadata=baseline_relations)
@@ -2543,12 +2634,14 @@ class SummarizationService:
                 selected_claim_id=selected_claim_id,
                 relation_metadata=section_relations[plan.section_id],
             )
-            if not snapshot.accepted and plan.required_claim_ids:
-                raise LocalPipelineV2Error(
-                    f"V2 fidelity firewall rejected section {plan.section_id}"
-                )
             if diagnostic_recorder:
-                diagnostic_recorder.record(f"v2.section.{plan.section_id}.validation", status="accepted", metadata={"validation_issue_count": 0, "claim_id": plan.section_id})
+                diagnostic_recorder.record(
+                    f"v2.section.{plan.section_id}.validation",
+                    status="accepted" if snapshot.accepted else "section_scoped_issue",
+                    metadata={"validation_issue_count": int(not snapshot.accepted),
+                              "coverage_issue_count": len(snapshot.coverage_issues),
+                              "claim_id": plan.section_id},
+                )
         marker_nonce = source_sha[:16]
         marker_pairs: dict[str, tuple[str, str]] = {}
         marked_rendered: dict[str, str] = {}
@@ -2583,6 +2676,7 @@ class SummarizationService:
         coverage_issue_count = 0
         marker_bounds = []
         marker_integrity_valid = True
+        selected_delivery_checked = False
         for plan in plans:
             start_marker, end_marker = marker_pairs[plan.section_id]
             start_at = finalized_marked_result.find(start_marker)
@@ -2608,8 +2702,21 @@ class SummarizationService:
                                                selected_claim_id=selected_claim_id,
                                                relation_metadata=section_relations[plan.section_id])
             coverage_issue_count += len(set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids))
-            if not final_snapshot.accepted and plan.required_claim_ids:
-                final_firewall_issues.append(plan.section_id)
+            if not final_snapshot.accepted:
+                coverage_issue_count += len(final_snapshot.coverage_issues)
+            if selected_claim_id and selected_claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
+                expected = RelationMetadata.model_validate(selected_target_relation)
+                relation = section_relations[plan.section_id].get(selected_claim_id)
+                relation_text = f"{expected.subject}{expected.predicate}{expected.object}"
+                delivered = (relation_text in section_slice
+                             and (not expected.condition or expected.condition in section_slice)
+                             and (expected.polarity.casefold() not in {"negative", "negated"}
+                                  or "否定" in section_slice))
+                selected_delivery_checked = True
+                if relation != expected or not delivered:
+                    final_firewall_issues.append(f"selected-target:{plan.section_id}")
+        if selected_claim_id and not selected_delivery_checked:
+            final_firewall_issues.append("selected-target:not-delivered")
         if final_firewall_issues:
             raise LocalPipelineV2Error("V2 final assembly failed source-alignment firewall")
         result = finalized_marked_result
