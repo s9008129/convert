@@ -79,6 +79,30 @@ def test_disabled_recorder_writes_no_raw_content_and_writer_failure_is_fail_soft
     assert enabled.redacted_manifest()["events"][0]["stage_id"] == "final.raw"
 
 
+def test_ollama_raw_capture_precedes_provider_cleaning(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from backend.services.summarization import SummarizationService
+
+    service = SummarizationService()
+    raw = "OK, 來源原文"
+    monkeypatch.setattr(service, "_get_ollama_client", AsyncMock(return_value=object()))
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "safe-model")
+    monkeypatch.setattr(service, "_post_ollama_chat", AsyncMock(return_value=(raw, {}, False)))
+    collected = []
+
+    import asyncio
+
+    cleaned = asyncio.run(
+        service._summarize_with_ollama(
+            "system", "message", num_predict=32, context_window_tokens=512,
+            expand_output_budget=False, raw_output_collector=collected,
+        )
+    )
+    assert collected == [raw]
+    assert cleaned != raw
+
+
 def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock, Mock
 

@@ -39,6 +39,7 @@ from backend.core.platform_config import (
     resolve_local_llm_provider,
 )
 from backend.core.templates import MeetingTemplate, get_template
+from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
 from backend.models.schemas import ProcessingMode
 
 
@@ -238,6 +239,7 @@ class SummarizationService:
         self._lmstudio_logical_generations = 0
         self._lmstudio_semantic_attempts = 0
         self._lmstudio_network_retries = 0
+        self._lmstudio_last_response_metadata: dict = {}
         self._merge_rounds_used = 0
         self._merge_groups_last_round = 0
         self._lmstudio_client: Optional[AsyncOpenAI] = None
@@ -386,6 +388,7 @@ class SummarizationService:
         user_prompt: Optional[str] = None,
         progress_callback: Optional[callable] = None,
         template_id: str = "general",
+        diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
     ) -> str:
         """
         生成會議摘要
@@ -418,7 +421,10 @@ class SummarizationService:
             if mode == ProcessingMode.CLOUD:
                 summary = await self._summarize_with_gemini(system_prompt, transcript, progress_callback, template=template)
             else:
-                summary = await self._summarize_with_local_pipeline(transcript, system_prompt, progress_callback, template=template)
+                summary = await self._summarize_with_local_pipeline(
+                    transcript, system_prompt, progress_callback, template=template,
+                    diagnostic_recorder=diagnostic_recorder,
+                )
 
             self._emit_progress(progress_callback, 95.0, "摘要生成完成")
 
@@ -1706,6 +1712,7 @@ class SummarizationService:
         expand_output_budget: bool = True,
         lmstudio_selection: Optional[LMStudioModelSelection] = None,
         allow_reasoning_retry: bool = True,
+        raw_output_collector: Optional[list[str]] = None,
     ) -> str:
         """對選定的本地引擎執行一次生成。
 
@@ -1722,6 +1729,7 @@ class SummarizationService:
                 num_predict=num_predict,
                 context_window_tokens=context_window_tokens,
                 expand_output_budget=expand_output_budget,
+                raw_output_collector=raw_output_collector,
             )
 
         if engine == "lmstudio":
@@ -1735,6 +1743,7 @@ class SummarizationService:
                 selection=lmstudio_selection,
                 expand_output_budget=expand_output_budget,
                 allow_reasoning_retry=allow_reasoning_retry,
+                raw_output_collector=raw_output_collector,
             )
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
@@ -1745,6 +1754,7 @@ class SummarizationService:
         system_prompt: str,
         progress_callback: Optional[callable] = None,
         template: Optional[MeetingTemplate] = None,
+        diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
         engine = await self._select_local_engine()
@@ -1755,6 +1765,7 @@ class SummarizationService:
         self._lmstudio_logical_generations = 0
         self._lmstudio_semantic_attempts = 0
         self._lmstudio_network_retries = 0
+        self._lmstudio_last_response_metadata = {}
         self._merge_rounds_used = 0
         self._merge_groups_last_round = 0
         pipeline_started = time.monotonic()
@@ -1770,6 +1781,43 @@ class SummarizationService:
             # 輪數上限。instance context 較小（< settings）時結果與舊行為相同。
             context_tokens = lmstudio_selection.context_length
             context_window_source = "lmstudio_instance"
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.metadata.update({
+                key: value for key, value in {
+                    "provider": lmstudio_selection.provider if lmstudio_selection else engine,
+                    "engine": engine,
+                    "model_key": lmstudio_selection.model_identifier if lmstudio_selection else None,
+                    "loaded_instance_id": lmstudio_selection.loaded_instance_id if lmstudio_selection else None,
+                    "context_length": context_tokens,
+                    "template_id": template.id if template else None,
+                    "context_window_source": context_window_source,
+                }.items() if value is not None
+            })
+            diagnostic_recorder.record(
+                "pipeline.start",
+                input_text=transcript,
+                source_branch="source",
+                metadata={"context_length": context_tokens},
+            )
+
+        def diagnostic_generation_metadata(temperature: float, *, include_response: bool = False) -> dict:
+            if diagnostic_recorder is None:
+                return {}
+            selection = self._active_lmstudio_selection
+            values = {
+                "provider": selection.provider if selection else engine,
+                "engine": engine,
+                "model_key": selection.model_identifier if selection else None,
+                "loaded_instance_id": selection.loaded_instance_id if selection else None,
+                "context_length": context_tokens,
+                "requested_max_tokens": settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                "temperature": temperature,
+                "semantic_retry_count": getattr(self, "_lmstudio_semantic_attempts", 0),
+                "network_retry_count": getattr(self, "_lmstudio_network_retries", 0),
+            }
+            if include_response:
+                values.update(getattr(self, "_lmstudio_last_response_metadata", {}))
+            return {key: value for key, value in values.items() if value is not None}
         plan = self._build_local_context_plan(
             transcript, system_prompt, template=template,
             context_window_tokens=context_tokens,
@@ -1800,6 +1848,15 @@ class SummarizationService:
         for chunk_index, chunk in enumerate(chunks, start=1):
             progress = 68.0 + ((chunk_index - 1) / max(total_chunks, 1)) * 12.0
             self._emit_progress(progress_callback, progress, f"萃取逐字稿重點 {chunk_index}/{total_chunks}...")
+            stage = f"extraction.chunk.{chunk_index}"
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"{stage}.input",
+                    input_text=chunk,
+                    source_branch="transcript_chunk",
+                    metadata=diagnostic_generation_metadata(0.1),
+                )
+            raw_outputs: list[str] = []
             notes = await self._generate_with_local_engine(
                 engine,
                 self._local_extraction_prompt(template),
@@ -1808,10 +1865,30 @@ class SummarizationService:
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                 context_window_tokens=context_tokens,
                 lmstudio_selection=lmstudio_selection,
+                raw_output_collector=raw_outputs if diagnostic_recorder is not None else None,
             )
-            extracted_notes.append(self._clean_ollama_output(notes))
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"{stage}.raw",
+                    output_text=raw_outputs[-1] if raw_outputs else notes,
+                    source_branch="transcript_chunk",
+                    metadata=diagnostic_generation_metadata(0.1, include_response=True),
+                )
+            cleaned_notes = self._clean_ollama_output(notes)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"{stage}.cleaned",
+                    input_text=notes,
+                    output_text=cleaned_notes,
+                    source_branch="transcript_chunk",
+                )
+            extracted_notes.append(cleaned_notes)
 
         extraction_duration = time.monotonic() - extraction_started
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "consolidation.input", input_text="\n\n".join(extracted_notes), source_branch="notes_only"
+            )
         merged_notes = await self._merge_notes_until_fit(
             engine,
             extracted_notes,
@@ -1823,41 +1900,132 @@ class SummarizationService:
             merge_provider_output_tokens=plan.merge_provider_output_tokens,
             merge_feasible_input_tokens=plan.merge_feasible_input_tokens,
         )
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "consolidation.output", input_text="\n\n".join(extracted_notes),
+                output_text=merged_notes, source_branch="notes_only",
+                metadata={"merge_rounds": self._merge_rounds_used},
+            )
 
         merge_duration = time.monotonic() - extraction_duration - extraction_started
         self._emit_progress(progress_callback, 86.0, "整理最終會議記錄...")
+        final_message = self._build_summary_from_notes_message(merged_notes, template=template)
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "final.input", input_text=final_message, source_branch="notes_only",
+                metadata=diagnostic_generation_metadata(0.2),
+            )
+        raw_outputs = []
         summary = await self._generate_with_local_engine(
             engine,
             system_prompt,
-            self._build_summary_from_notes_message(merged_notes, template=template),
+            final_message,
             temperature=0.2,
             num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
             context_window_tokens=context_tokens,
             lmstudio_selection=lmstudio_selection,
+            raw_output_collector=raw_outputs if diagnostic_recorder is not None else None,
         )
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "final.raw", output_text=raw_outputs[-1] if raw_outputs else summary,
+                source_branch="notes_only",
+                metadata=diagnostic_generation_metadata(0.2, include_response=True),
+            )
         # P1-9：記錄級後處理（英文清理/結構補全）一律在「驗證前」執行，
         # 驗證是最後一關，通過後不得再被任何流程改寫。
-        summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
+        cleaned_summary = self._clean_ollama_output(summary)
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "final.cleaned", input_text=summary, output_text=cleaned_summary,
+                source_branch="notes_only",
+            )
+        finalized_summary = self._finalize_record_text(cleaned_summary, template=template)
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "final.finalized", input_text=cleaned_summary,
+                output_text=finalized_summary, source_branch="notes_only",
+            )
+        summary = finalized_summary
 
         issues = self._validate_summary_quality(summary, merged_notes, template=template)
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "final.validation", input_text=summary, source_branch="notes_only",
+                status="issues" if issues else "valid",
+                metadata={"validation_issue_count": len(issues)},
+            )
         attempts = 0
         while issues and attempts < settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS:
             attempts += 1
             self._emit_progress(progress_callback, 88.0 + attempts, f"補強摘要完整性（第 {attempts} 輪）...")
-            summary = await self._generate_with_local_engine(
+            refinement_message = self._build_refinement_message(summary, merged_notes, issues, template=template)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.input", input_text=refinement_message,
+                    source_branch="notes_only",
+                    metadata=diagnostic_generation_metadata(0.15),
+                )
+            raw_outputs = []
+            candidate = await self._generate_with_local_engine(
                 engine,
                 system_prompt,
-                self._build_refinement_message(summary, merged_notes, issues, template=template),
+                refinement_message,
                 temperature=0.15,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                 context_window_tokens=context_tokens,
                 lmstudio_selection=lmstudio_selection,
+                raw_output_collector=raw_outputs if diagnostic_recorder is not None else None,
             )
-            summary = self._finalize_record_text(self._clean_ollama_output(summary), template=template)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.raw",
+                    output_text=raw_outputs[-1] if raw_outputs else candidate,
+                    source_branch="notes_only",
+                    metadata=diagnostic_generation_metadata(0.15, include_response=True),
+                )
+            cleaned_candidate = self._clean_ollama_output(candidate)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.cleaned", input_text=candidate,
+                    output_text=cleaned_candidate, source_branch="notes_only",
+                )
+            finalized_candidate = self._finalize_record_text(cleaned_candidate, template=template)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.finalized", input_text=cleaned_candidate,
+                    output_text=finalized_candidate, source_branch="notes_only",
+                )
+            summary = finalized_candidate
             issues = self._validate_summary_quality(summary, merged_notes, template=template)
+            if diagnostic_recorder is not None:
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.validation", input_text=summary,
+                    source_branch="notes_only", status="issues" if issues else "valid",
+                    metadata={"validation_issue_count": len(issues)},
+                )
+                diagnostic_recorder.record(
+                    f"refinement.round.{attempts}.accepted_or_discarded",
+                    output_text=summary, source_branch="notes_only", status="accepted",
+                )
 
         if issues:
             log.warning(f"本地摘要仍有待補強問題: {'; '.join(issues)}")
+
+        if diagnostic_recorder is not None:
+            diagnostic_recorder.record(
+                "selection.final", output_text=summary,
+                source_branch="notes_only", status="selected",
+            )
+            diagnostic_recorder.record(
+                "pipeline.end", output_text=summary,
+                source_branch="notes_only", status="complete",
+                metadata={
+                    "chunk_count": total_chunks,
+                    "merge_rounds": self._merge_rounds_used,
+                    "elapsed_ms": int((time.monotonic() - pipeline_started) * 1000),
+                },
+            )
 
         # CHANGE_MAP 4：bounded-call structured metrics 彙總（不虛構 wall-time SLO，
         # 僅呈現呼叫放大與階段耗時事實，供驗收與除錯使用）
@@ -2094,6 +2262,7 @@ class SummarizationService:
         num_predict: Optional[int] = None,
         context_window_tokens: Optional[int] = None,
         expand_output_budget: bool = True,
+        raw_output_collector: Optional[list[str]] = None,
     ) -> str:
         """
         使用 Ollama 本地模式生成摘要
@@ -2159,6 +2328,8 @@ class SummarizationService:
                 raw_content, _metrics, send_think_field = await self._post_ollama_chat(
                     client, payload, send_think_field
                 )
+                if raw_output_collector is not None:
+                    raw_output_collector.append(raw_content)
 
                 self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
 
@@ -2281,6 +2452,7 @@ class SummarizationService:
         selection: Optional[LMStudioModelSelection] = None,
         expand_output_budget: bool = True,
         allow_reasoning_retry: bool = True,
+        raw_output_collector: Optional[list[str]] = None,
     ) -> str:
         """
         使用已選定的 LM Studio loaded instance 生成摘要。
@@ -2358,6 +2530,16 @@ class SummarizationService:
         content, reasoning_text, finish_reason, usage_tokens = (
             self._parse_lmstudio_response_payload(response)
         )
+        if raw_output_collector is not None:
+            raw_output_collector.append(str(content))
+        self._lmstudio_last_response_metadata = {
+            "finish_reason": finish_reason,
+            "prompt_tokens": usage_tokens.get("prompt_tokens"),
+            "completion_tokens": usage_tokens.get("completion_tokens"),
+            "reasoning_tokens": usage_tokens.get("reasoning_tokens"),
+            "reasoning_present": bool(reasoning_text and reasoning_text.strip()),
+            "reasoning_char_count": len(reasoning_text or ""),
+        }
         self._log_lmstudio_response_diagnostics(
             selection, finish_reason, content, reasoning_text,
             usage_tokens, requested_max_tokens, attempt_type="initial",
@@ -2463,6 +2645,16 @@ class SummarizationService:
         growth_content, growth_reasoning, growth_finish_reason, growth_usage = (
             self._parse_lmstudio_response_payload(growth_response)
         )
+        if raw_output_collector is not None:
+            raw_output_collector.append(str(growth_content))
+        self._lmstudio_last_response_metadata = {
+            "finish_reason": growth_finish_reason,
+            "prompt_tokens": growth_usage.get("prompt_tokens"),
+            "completion_tokens": growth_usage.get("completion_tokens"),
+            "reasoning_tokens": growth_usage.get("reasoning_tokens"),
+            "reasoning_present": bool(growth_reasoning and growth_reasoning.strip()),
+            "reasoning_char_count": len(growth_reasoning or ""),
+        }
         self._log_lmstudio_response_diagnostics(
             selection, growth_finish_reason, growth_content, growth_reasoning,
             growth_usage, retry_cap, attempt_type="growth retry",
@@ -2539,6 +2731,16 @@ class SummarizationService:
         replay_content, replay_reasoning, replay_finish_reason, replay_usage = (
             self._parse_lmstudio_response_payload(replay_response)
         )
+        if raw_output_collector is not None:
+            raw_output_collector.append(str(replay_content))
+        self._lmstudio_last_response_metadata = {
+            "finish_reason": replay_finish_reason,
+            "prompt_tokens": replay_usage.get("prompt_tokens"),
+            "completion_tokens": replay_usage.get("completion_tokens"),
+            "reasoning_tokens": replay_usage.get("reasoning_tokens"),
+            "reasoning_present": bool(replay_reasoning and replay_reasoning.strip()),
+            "reasoning_char_count": len(replay_reasoning or ""),
+        }
         self._log_lmstudio_response_diagnostics(
             selection, replay_finish_reason, replay_content, replay_reasoning,
             replay_usage, replay_max_tokens, attempt_type="stop replay",
