@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "run_id": "65f618d42a5d4b1180f8fe5609f7f9e5",
+  "claim_id": "C-R03-F056-CAUSAL-DIRECTION",
+  "claim_type": "causal_direction",
+  "source_anchor_sha256": "5eb677f3b05bb414c058d065ed19444a6f780525c1bb184815967e67ce30010f",
+  "manifest_sha256": "8b8fefef0c52c6dd9bc2d0a5614c54e8a084f9413408307ef4ada90c02f41f9e",
+  "first_divergence_stage": "extraction.chunk.3.raw",
+  "final_delivery_status": "MISSING",
+  "stages": [
+    {
+      "stage_id": "source",
+      "status": "CORRECT",
+      "event_sequence": null,
+      "input_sha256": null,
+      "output_sha256": "5eb677f3b05bb414c058d065ed19444a6f780525c1bb184815967e67ce30010f"
+    },
+    {
+      "stage_id": "pipeline.start",
+      "status": "CORRECT",
+      "event_sequence": 1,
+      "input_sha256": "b7b9e5e05be5a560101312d9fb954d2e6aa10044febb8d3fca5a79f3931d9db0",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "extraction.chunk.1.input",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 2,
+      "input_sha256": "ffbef87244f279d14e32d08528f94f581dc29b1b77b5a43147b051aa655be402",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "extraction.chunk.1.raw",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 3,
+      "input_sha256": null,
+      "output_sha256": "7bd8fe1103c7996d8dba132addb89ca508b00ce8d027136ba0088f04805e91a8"
+    },
+    {
+      "stage_id": "extraction.chunk.1.cleaned",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 4,
+      "input_sha256": "7bd8fe1103c7996d8dba132addb89ca508b00ce8d027136ba0088f04805e91a8",
+      "output_sha256": "7bd8fe1103c7996d8dba132addb89ca508b00ce8d027136ba0088f04805e91a8"
+    },
+    {
+      "stage_id": "extraction.chunk.2.input",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 5,
+      "input_sha256": "8c17951f4b424d1ba650276c46079df93d56f6161d67f2e8db6ac14d1d889333",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "extraction.chunk.2.raw",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 6,
+      "input_sha256": null,
+      "output_sha256": "bfe5e08d5e6ef8d0d8a75d8700a5a6215fd31e08a6065177c894f9ed10736373"
+    },
+    {
+      "stage_id": "extraction.chunk.2.cleaned",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 7,
+      "input_sha256": "bfe5e08d5e6ef8d0d8a75d8700a5a6215fd31e08a6065177c894f9ed10736373",
+      "output_sha256": "bfe5e08d5e6ef8d0d8a75d8700a5a6215fd31e08a6065177c894f9ed10736373"
+    },
+    {
+      "stage_id": "extraction.chunk.3.input",
+      "status": "CORRECT",
+      "event_sequence": 8,
+      "input_sha256": "d7efe28141736ceb04894a6bccc9c25203e09945064f08226cb9ba98916a7b31",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "extraction.chunk.3.raw",
+      "status": "DISTORTED",
+      "event_sequence": 9,
+      "input_sha256": null,
+      "output_sha256": "68a06df9655eb6cd244776806e767e56103b425e278c4dd87ad1d0d8155c7f44"
+    },
+    {
+      "stage_id": "extraction.chunk.3.cleaned",
+      "status": "DISTORTED",
+      "event_sequence": 10,
+      "input_sha256": "68a06df9655eb6cd244776806e767e56103b425e278c4dd87ad1d0d8155c7f44",
+      "output_sha256": "68a06df9655eb6cd244776806e767e56103b425e278c4dd87ad1d0d8155c7f44"
+    },
+    {
+      "stage_id": "extraction.chunk.4.input",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 11,
+      "input_sha256": "592388112705d8c2611dcbf995b17ae7f62d62a5037d4f2939632b0b55c5becf",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "extraction.chunk.4.raw",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 12,
+      "input_sha256": null,
+      "output_sha256": "66533301c2e960a4c7fa1e673213425533fda371a22348c8a6852b951499a41a"
+    },
+    {
+      "stage_id": "extraction.chunk.4.cleaned",
+      "status": "NOT_APPLICABLE",
+      "event_sequence": 13,
+      "input_sha256": "66533301c2e960a4c7fa1e673213425533fda371a22348c8a6852b951499a41a",
+      "output_sha256": "66533301c2e960a4c7fa1e673213425533fda371a22348c8a6852b951499a41a"
+    },
+    {
+      "stage_id": "consolidation.input",
+      "status": "DISTORTED",
+      "event_sequence": 14,
+      "input_sha256": "7a4d75ed05036f73093755a5841b08a6e1644c85ac8ed21d423e133f09120f2d",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "consolidation.output",
+      "status": "MISSING",
+      "event_sequence": 15,
+      "input_sha256": "7a4d75ed05036f73093755a5841b08a6e1644c85ac8ed21d423e133f09120f2d",
+      "output_sha256": "14566061d667bd1aa4a97dec384c21245081076b21a24d84cfbeff3f5db1cb99"
+    },
+    {
+      "stage_id": "final.input",
+      "status": "MISSING",
+      "event_sequence": 16,
+      "input_sha256": "8dc31d1c122529d35ae74bca4f5c487c2e1bebc6879bad7f6a0909fe2d8e8afd",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "final.raw",
+      "status": "MISSING",
+      "event_sequence": 17,
+      "input_sha256": null,
+      "output_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3"
+    },
+    {
+      "stage_id": "final.cleaned",
+      "status": "MISSING",
+      "event_sequence": 18,
+      "input_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3",
+      "output_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3"
+    },
+    {
+      "stage_id": "final.finalized",
+      "status": "MISSING",
+      "event_sequence": 19,
+      "input_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3",
+      "output_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3"
+    },
+    {
+      "stage_id": "final.validation",
+      "status": "MISSING",
+      "event_sequence": 20,
+      "input_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3",
+      "output_sha256": null
+    },
+    {
+      "stage_id": "selection.final",
+      "status": "MISSING",
+      "event_sequence": 21,
+      "input_sha256": null,
+      "output_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3"
+    },
+    {
+      "stage_id": "pipeline.end",
+      "status": "MISSING",
+      "event_sequence": 22,
+      "input_sha256": null,
+      "output_sha256": "5d645f481ca483aadcc2c9b6ae5b9c93f4513e3f1c4e9ed3db772e0b76d078e3"
+    }
+  ]
+}

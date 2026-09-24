@@ -267,8 +267,8 @@ def test_local_final_generation_receives_source_when_the_effective_context_fits(
     from backend.services.summarization import LocalContextPlan, SummarizationService
 
     service = SummarizationService()
-    source = "[00:06:56] 發言者3：請把內稽前要用的物品整理妥當。"
-    extracted_notes = "[00:08:15] 發言者1（科長）：請把內稽前要用的物品整理妥當。"
+    source = "[source-anchor] 因果關係 A 導致 B。"
+    extracted_notes = "[source-anchor] 因果關係 B 導致 A。"
     plan = LocalContextPlan(
         context_window_tokens=32000,
         estimated_transcript_tokens=100,
@@ -279,7 +279,7 @@ def test_local_final_generation_receives_source_when_the_effective_context_fits(
         needs_chunking=False,
         estimated_chunk_count=1,
     )
-    corrected_final = "會議紀錄：發言者3於00:06:56提出內稽前置整理事項。"
+    corrected_final = "會議紀錄：因果關係 A 導致 B。"
     generator = AsyncMock(side_effect=[extracted_notes, corrected_final])
     monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
     monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=32000))
@@ -298,7 +298,7 @@ def test_local_final_generation_receives_source_when_the_effective_context_fits(
         )
     )
 
-    assert "發言者3於00:06:56提出內稽前置整理事項" in result
+    assert "因果關係 A 導致 B" in result
     final_message = generator.await_args_list[1].args[2]
     assert source in final_message
     final_input_event = next(
