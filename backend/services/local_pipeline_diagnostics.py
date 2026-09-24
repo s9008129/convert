@@ -42,6 +42,7 @@ _SAFE_METADATA_KEYS = {
     "claim_id",
     "context_window_source",
     "chunk_count",
+    "source_excerpt_count",
     "merge_rounds",
     "validation_issue_count",
 }
