@@ -37,6 +37,12 @@
 - **First divergence:** none in this run. **Final delivery:** `CORRECT`.
 - [CORRECTION] Although the user DOCX omitted this concrete issue, the current controlled Qwen pipeline output retained it. Thus this DOCX omission is not a valid first-divergence claim for the current pipeline and cannot support a repair branch. It may reflect different run/configuration or an output artifact not reproducible in this controlled path.
 
+### Historical cohort score comparison (redacted aggregates)
+
+- [VERIFIED] Historical adjudicated three-output medians, in rubric order Completeness / Faithfulness / Traceability / Usability: Gemini `83.9286 / 89.7959 / 93.8776 / 85.0000`; Gemma `98.2143 / 86.5672 / 91.0448 / 90.0000`; Qwen `94.6429 / 85.8824 / 89.6552 / 70.0000`.
+- [VERIFIED] Relative to Gemini medians, Gemma's dimension deltas were `+17.02% / -3.60% / -3.02% / +5.88%`; Qwen's were `+12.77% / -4.36% / -4.50% / -17.65%`. Positive means the local score is higher; negative means lower.
+- [VERIFIED] These are descriptive historical medians only, not fresh post-repair results. Historical majority hard-fails affected Gemma 1/3 outputs and Qwen 2/3 outputs; high medians do not clear the zero-hard-fail criterion.
+
 ### Attempt 3: select a source-verifiable historical hard-fail claim
 
 - [VERIFIED] Selected historical Qwen hard-fail claim `C-R03-F056-CAUSAL-DIRECTION`, an anchored causal-direction claim that does not rely on speaker-role mapping. The historical blind cohort had majority adjudication as a major fidelity hard fail for this candidate.
@@ -46,25 +52,32 @@
 
 ## WAVE-05 — Evidence-driven repair (Branch A candidate; acceptance pending post-repair evidence)
 
-- [SUPPORTED] Attempt 3 established a valid first divergence during extraction and showed that final generation had no transcript source available to recover the distorted causal relation. The source-grounding change below gives local final/refinement a bounded, budget-checked source path; it remains a candidate until selected-claim E2E demonstrates recovery.
+- [SUPPORTED] Attempt 3 established a valid first divergence during extraction and showed that final generation had no transcript source available to recover the distorted causal relation. The source-grounding change below gives local final/refinement a bounded, budget-checked source path. The valid selected-claim E2E has now shown that this candidate alone is insufficient: source was present in final input, but final delivery remained `MISSING`.
 - [VERIFIED] The fail-first regression captures the downstream recovery mechanism: final generation received notes only, so a source-verifiable correction could not be recovered from source. The corrected causal-direction fixture **failed on the pre-repair `722797b` worktree** at `assert source in final_message`, then passed on the candidate implementation.
 - [IMPLEMENTED] A budget-aware resolver prefers the full transcript if it safely fits, otherwise selects complete timestamp/lexical-overlap source chunks, and otherwise reports an explicit notes-only fallback. It never silently truncates evidence. The local cloud path is unchanged.
-- [VERIFIED] Temperature, context limit, extraction prompt, refinement count, and validation/gating semantics were not tuned by this repair.
-- [PENDING] The mocked test proves the source branch is supplied; only fresh E2E can establish semantic recovery by the actual model.
+- [VERIFIED] The first source-grounding candidate did not change temperature, context, extraction prompt, refinement count, or validation/gating semantics. The new evidence-driven extraction-contract attempt changes only the local extraction prompt; cloud prompt, context, temperatures, refinement count, and validation/gating semantics remain unchanged.
+- [FAILED] The first valid-claim post-repair Qwen E2E did not establish semantic recovery. Two independent reviewers found first divergence still at `extraction.chunk.3.raw`, with claim missing from final delivery despite source in `final.input`. Do not treat the source-grounding candidate alone as accepted.
+- [VERIFIED] Added a fail-first test requiring local extraction to preserve causal/conditional/temporal/negation direction, retain source timestamps, avoid inference, and leave the cloud extraction prompt unchanged. It failed before the local-only contract change because the required relation-direction instruction was absent.
+- [IMPLEMENTED] Added a local-only relation/provenance contract to extraction: preserve subject/object/direction and negation scope, carry explicit source timestamps, treat overlap as one fact, and leave unsupported or unclear relations unasserted. Cloud extraction prompt is unchanged.
+- [VERIFIED] Focused checks for the new local extraction contract, source-grounding path, and overlap preservation: 3 passed. The overlap fixture carries a synthetic anchored relation unchanged across adjacent chunks.
+- [PENDING] The extraction-contract edit has not yet been validated by the selected-claim Qwen E2E; it remains a candidate until that run is independently adjudicated.
 
 ## WAVE-06 — Targeted and repository regression
 
-- [VERIFIED] Focused diagnostic suite after claim-table tooling and selected-claim correction: 8 passed.
-- [VERIFIED] Full repository suite after claim-table tooling and selected-claim correction: 813 passed, 2 skipped in 10.21 s.
+- [VERIFIED] Focused diagnostic suite after claim-table tooling and selected-claim correction: 8 passed; the evidence-driven local extraction-contract, source-grounding, and overlap checks add 3 passing focused cases.
+- [VERIFIED] Full repository suite after the local-only extraction-contract change: 814 passed, 2 skipped in 10.12 s.
 - [VERIFIED] `git diff --check` passed.
-- [PENDING] Run full required regressions again after any final code adjustment and record docs check result.
+- [VERIFIED] Documentation checker exited 0 after the extraction-contract change; it repeated the two README version warnings (`README.md`, `doc/README.md` vs VERSION).
+- [PENDING] Re-run required regressions after any further product-code adjustment.
 
 ## WAVE-07–08 — Fresh E2E and blind cohort
 
 - [VERIFIED] Qwen post-repair pipeline run `16c2ffac86224d6dacb0aa8cef6ea088` completed with `summary_failed=false`, 22 events, 719,134 ms, and `final.input=notes_plus_transcript`; it used the invalidated attribution claim and is not counted as a quality sample.
-- [IN_PROGRESS] A second post-repair Qwen diagnostic now uses the valid selected claim `C-R03-F056-CAUSAL-DIRECTION`, with the exact frozen source snapshot. It is a targeted E2E diagnostic, not a cohort sample; adjudication is pending.
+- [VERIFIED] Valid-claim Qwen diagnostic `170d08f286b145f59798da29c7ded61b`, code revision `2e5c34fb06c67edfb9480458b83ee7ee9612a493`, completed at 32,000 context with four chunks, one merge round, zero refinements, 22 events, `summary_failed=false`, and 712,587 ms. It is not a cohort sample.
+- [VERIFIED] Two independent redacted reviewers found `final.input=CORRECT` (source supplied), but `final.raw`, selection, and pipeline delivery remained `MISSING`; first divergence persisted at `extraction.chunk.3.raw`. Semantic recovery: **NO**.
+- [VERIFIED] `check_record_output.py` rejected this Markdown artifact only on `formal_title`; fallback marker, required sections (6/6), decision/action sections, minimum length, placeholder, and CJK-ratio checks passed. No DOCX artifact was produced by this transcript-only diagnostic.
 - [PENDING] Fresh post-repair E2E for Gemma 4 31B.
-- [PENDING] Fresh blind cohort: three outputs per model, scored against the recovered frozen unrounded Gemini baseline and rubric. Diagnostic runs are excluded from cohort samples.
+- [PENDING] Fresh blind cohort: three outputs per model, scored against the recovered frozen unrounded Gemini baseline and rubric. Diagnostic runs are excluded from cohort samples; defer cohort until a mechanism candidate passes selected-claim E2E.
 - [VERIFIED] Historical Issue #18 already contains an earlier three-model comparison (Gemini 3, Gemma 3, Qwen 3; three outputs/model), with recorded local-model failures. That historical comparison is not the required post-repair fresh cohort and is not counted toward this acceptance gate.
 
 ## WAVE-09 — Closure

@@ -186,6 +186,14 @@ class SummarizationService:
 - 不要加入逐字稿未提及的內容，不要輸出前言。
 - 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
 
+    LOCAL_CAUSAL_PRESERVATION_PROMPT = """
+
+因果與來源錨點規則：
+- 因果、條件、先後、否定與必要性等關係，必須保留逐字稿明確指出的主體、客體、方向與否定範圍；不得把「甲導致乙」改成「乙導致甲」，也不得只摘錄關鍵詞而省略兩者關係。
+- 上述關係若有明確來源時間戳，請在對應筆記旁保留時間戳，供後續核對。
+- 重疊分段中的相同語句只代表同一來源事實；不得將重複片段改寫成相反或新增的關係。
+- 逐字稿未明確支持的關係不得推補；方向或來源不清楚時標記「（待確認）」，不得用常識補推論。"""
+
     # v4.3.3：雲端萃取在本地規則之上追加「豐富度」規則。
     # 根因：雲端模型對長輸入有強烈壓縮傾向，單句帶過實質討論；
     # 本地提示詞聚焦待辦完整性即可（豐富度由分塊結構保證），
@@ -460,7 +468,7 @@ class SummarizationService:
     def _local_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
         """本地萃取提示詞（共用基底＋模板增補；v4.4.0）。"""
         extra = template.extraction_prompt_extra if template else ""
-        return self.LOCAL_EXTRACTION_PROMPT + extra
+        return self.LOCAL_EXTRACTION_PROMPT + self.LOCAL_CAUSAL_PRESERVATION_PROMPT + extra
 
     def _cloud_extraction_prompt(self, template: Optional[MeetingTemplate] = None) -> str:
         """雲端萃取提示詞（共用基底＋模板增補；v4.4.0）。"""

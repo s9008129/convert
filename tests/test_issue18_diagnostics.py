@@ -340,3 +340,21 @@ def test_local_source_grounding_uses_complete_ranked_excerpt_or_explicit_notes_f
     assert fallback == "notes"
     assert branch == "notes_only"
     assert excerpt_count == 0
+
+
+def test_local_extraction_contract_preserves_relation_direction_and_source_anchor():
+    from backend.core.templates import get_template
+    from backend.services.summarization import SummarizationService
+
+    service = SummarizationService()
+    local_prompt = service._local_extraction_prompt(get_template("section_meeting"))
+    cloud_prompt = service._cloud_extraction_prompt(get_template("section_meeting"))
+
+    for required_rule in (
+        "因果、條件、先後、否定",
+        "主體、客體、方向",
+        "來源時間戳",
+        "不得用常識補推論",
+    ):
+        assert required_rule in local_prompt, f"local extraction contract missing: {required_rule}"
+    assert "不得用常識補推論" not in cloud_prompt

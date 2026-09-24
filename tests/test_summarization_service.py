@@ -178,7 +178,7 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
     transcript = "\n".join(
         [
             "甲：今天先確認專案時程。",
-            "乙：請王主任整理測試清單。",
+            "[00:00:02] 乙：方案甲使管線乙外露。",
             "丙：請陳科長準備上線公告。",
             "丁：下週三前要完成整合測試。",
             "戊：本週五前送出公告草案。",
@@ -189,8 +189,9 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
     chunks = service._split_transcript_into_chunks(transcript, max_input_tokens=25)
 
     assert len(chunks) >= 2
-    assert "乙：請王主任整理測試清單。" in chunks[0]
-    assert "乙：請王主任整理測試清單。" in chunks[1], "第二塊應保留前一塊的重疊行"
+    anchored_relation = "[00:00:02] 乙：方案甲使管線乙外露。"
+    assert anchored_relation in chunks[0]
+    assert anchored_relation in chunks[1], "重疊塊應保留原因→結果方向與來源錨點"
     assert all(service._estimate_tokens(chunk) <= 35 for chunk in chunks)
 
 
