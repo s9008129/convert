@@ -446,6 +446,76 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     assert temperatures and set(temperatures) == {1.0}
 
 
+@pytest.mark.parametrize("snapshots_enabled", (False, True))
+@pytest.mark.asyncio
+async def test_v2_generation_outputs_are_opt_in_snapshots_and_manifest_redacted(
+    monkeypatch, tmp_path, snapshots_enabled,
+):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    generated_sentinel = "PRIVATE_OUTPUT_SENTINEL"
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            if "SCHEMA REPAIR" not in message:
+                return "PRIVATE_BAD_JSON_OUTPUT"
+            return json.dumps({"claims": []})
+        return json.dumps({"text": generated_sentinel, "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    raw_dir = tmp_path / "raw"
+    recorder = LocalPipelineDiagnosticRecorder(
+        run_id=f"generation-output-{snapshots_enabled}", raw_snapshot_dir=raw_dir,
+        raw_snapshots_enabled=snapshots_enabled,
+    )
+    await service._summarize_with_local_pipeline_v2(
+        "safe synthetic source", "system", template=get_template("general"), diagnostic_recorder=recorder,
+    )
+
+    events = recorder.events
+    failed_first_parse = next(event for event in events if event["stage_id"] == "v2.extraction.chunk.1.outcome")
+    assert failed_first_parse["status"] == "failed:ValueError"
+    assert any(event["stage_id"] == "v2.extraction.chunk.1.repair.output" for event in events)
+    assert any(event["stage_id"].startswith("v2.section.") and event["stage_id"].endswith(".output") for event in events)
+    assert any(event["stage_id"].startswith("v2.patch.") and event["stage_id"].endswith(".output") for event in events)
+    assert any(event["stage_id"] == "v2.selection.final" and "output_sha256" in event for event in events)
+    manifest_text = json.dumps(recorder.redacted_manifest(), ensure_ascii=False)
+    assert generated_sentinel not in manifest_text
+    assert "PRIVATE_BAD_JSON_OUTPUT" not in manifest_text
+    if snapshots_enabled:
+        assert (raw_dir / "v2.extraction.chunk.1.output.txt").read_text() == "PRIVATE_BAD_JSON_OUTPUT"
+        assert (raw_dir / "v2.extraction.chunk.1.repair.output.txt").is_file()
+        assert list(raw_dir.glob("v2.section.*.output.txt"))
+        assert list(raw_dir.glob("v2.patch.*.output.txt"))
+        assert (raw_dir / "v2.selection.final.txt").is_file()
+        assert any(generated_sentinel in path.read_text() for path in raw_dir.glob("v2.section.*.output.txt"))
+    else:
+        assert not raw_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_v2_failure_diagnostics_keep_error_class_not_message(monkeypatch, tmp_path):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+
+    async def failing_generation(*_args, **_kwargs):
+        raise ValueError("PRIVATE_EXCEPTION_MESSAGE")
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", failing_generation)
+    recorder = LocalPipelineDiagnosticRecorder(run_id="safe-error-class", raw_snapshot_dir=tmp_path / "raw")
+    with pytest.raises(LocalPipelineV2Error):
+        await service._summarize_with_local_pipeline_v2(
+            "safe synthetic source", "system", template=get_template("general"), diagnostic_recorder=recorder,
+        )
+    outcomes = [event for event in recorder.events if event["stage_id"].endswith(".outcome")]
+    assert [event["status"] for event in outcomes] == ["failed:ValueError", "failed:ValueError"]
+    manifest_text = json.dumps(recorder.redacted_manifest(), ensure_ascii=False)
+    assert "PRIVATE_EXCEPTION_MESSAGE" not in manifest_text
+    assert not (tmp_path / "raw").exists()
+
+
 @pytest.mark.asyncio
 async def test_live_v2_uses_immutable_raw_source_when_corrected_view_is_unaligned(monkeypatch):
     service = SummarizationService()

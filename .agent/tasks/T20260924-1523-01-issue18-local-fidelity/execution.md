@@ -264,3 +264,35 @@ REQUIRED_VERIFICATION_STATUS: INCOMPLETE (available code/full/docs/diff checks p
 INDEPENDENT_ACCEPTANCE_STATUS: PENDING fresh Stage05 attempt
 TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
 NEXT_ACTION: Parent runs the controlled Qwen E2E and fresh Stage05 audit; do not fabricate C10/C14 samples or change the production baseline without approved evidence.
+
+## Stage 04 R9 diagnostics repair — after controlled Qwen attempt
+
+Date: 2026-09-25. This append preserves all prior status and does not alter the approved plan or handoff.
+
+### Parent-reported attempt and diagnostic repair
+
+- Parent reports the controlled Qwen R9 run failed after approximately 291 seconds with `LocalPipelineV2Error`. The redacted manifest showed extraction chunks 1 and 2 and a chunk-2 schema-repair input before the pipeline failure. The run had raw-snapshot opt-in enabled for inputs, but generated outputs were not captured, so the failing output could not be located. This implementer did not read raw transcript/model payloads and did not call a model.
+- Added opt-in diagnostic output snapshots for extraction responses, schema-repair responses, section-render candidates, guarded patch outputs, and final selection. With snapshots disabled these outputs are retained only as allow-listed hash/count events; no raw output files are created. The final-selection recorder uses the same explicit opt-in mechanism.
+- Added safe outcome events for extraction parse, schema repair, and section envelope handling. Failure status contains only the exception class (for example `failed:ValueError`); exception messages and payload text are never copied into manifest metadata.
+- Added synthetic snapshot-off/on tests verifying private sentinels are absent from redacted manifests, generated output files exist only with explicit raw-snapshot opt-in, relevant stage outputs are captured, and exception messages are not recorded.
+
+### Verification actually run
+
+- `python3 -m py_compile backend/services/summarization.py tests/test_local_pipeline_v2.py`: PASS.
+- `DATA_DIR=$(mktemp -d /tmp/convert-stage04.XXXXXX) uv run pytest -q tests/test_local_pipeline_v2.py`: PASS, 37 passed.
+- `git diff --check` and `git diff --cached --check`: PASS.
+
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED pending parent-controlled rerun and evaluator-backed quality/profile evidence
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING fresh Stage05 review of the new controlled attempt
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Parent reruns controlled Qwen with raw snapshots explicitly enabled and inspects private outputs outside the tracked task artifacts; record only a redacted finding in the next Stage05 attempt. No model was invoked by this implementer.
+
+### Final diagnostics-wave verification rerun (2026-09-25)
+
+- `DATA_DIR=$(mktemp -d /tmp/convert-stage04-final.XXXXXX) uv run pytest tests/ -q`: PASS, 854 passed, 2 skipped (9.60s).
+- `bash scripts/check_docs.sh`: exit 0; the same two README version warnings remain.
+- `git diff --check` and `git diff --cached --check`: PASS.
+
+These results supersede the earlier full-suite/docs/diff results for the diagnostics repair wave; no product semantics or plan/handoff files changed.

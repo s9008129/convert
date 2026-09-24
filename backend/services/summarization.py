@@ -2363,8 +2363,22 @@ class SummarizationService:
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
                 )
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.extraction.chunk.{index}.output", output_text=raw,
+                        source_branch="transcript_chunk", status="received",
+                    )
                 parsed = parse_fact_payload(raw, source_sha256=source_sha)
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.extraction.chunk.{index}.outcome", status="parsed",
+                    )
             except Exception as first_error:
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.extraction.chunk.{index}.outcome",
+                        status=f"failed:{type(first_error).__name__}",
+                    )
                 # Exactly one schema-only repair; changing source/policy is not
                 # a repair and would violate the V2 contract.
                 repair_message = extraction_message + "\nSCHEMA REPAIR: output valid JSON only."
@@ -2383,8 +2397,22 @@ class SummarizationService:
                         runtime_profile=profile,
                         runtime_control_rejection_callback=report_runtime_control_rejection,
                     )
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.extraction.chunk.{index}.repair.output", output_text=raw,
+                            source_branch="transcript_chunk", status="received",
+                        )
                     parsed = parse_fact_payload(raw, source_sha256=source_sha)
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.extraction.chunk.{index}.repair.outcome", status="parsed",
+                        )
                 except Exception as second_error:
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.extraction.chunk.{index}.repair.outcome",
+                            status=f"failed:{type(second_error).__name__}",
+                        )
                     raise LocalPipelineV2Error(
                         f"V2 structured extraction failed after one schema-only repair (chunk {index})"
                     ) from second_error
@@ -2442,8 +2470,22 @@ class SummarizationService:
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
                 )
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.section.{plan.section_id}.output", output_text=raw_section,
+                        source_branch="section_plan", status="received",
+                    )
                 section_text, claim_ids, relation_metadata = parse_section_render_payload(raw_section, plan=plan)
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.section.{plan.section_id}.outcome", status="parsed",
+                    )
             except Exception as exc:
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.section.{plan.section_id}.outcome",
+                        status=f"failed:{type(exc).__name__}",
+                    )
                 raise LocalPipelineV2Error(f"V2 fidelity firewall rejected section {plan.section_id}") from exc
             # Missing required identity is candidate non-regression failure,
             # not permission to erase the source-backed baseline. The guarded
@@ -2488,6 +2530,10 @@ class SummarizationService:
                 diagnostic_recorder.record(
                     f"v2.patch.{plan.section_id}", status="accepted" if patch_result.accepted else "rolled_back",
                     metadata={"claim_id": plan.section_id, "validation_issue_count": 0 if patch_result.accepted else 1},
+                )
+                diagnostic_recorder.record(
+                    f"v2.patch.{plan.section_id}.output", output_text=patch_result.text,
+                    source_branch="guarded_patch", status="accepted" if patch_result.accepted else "rolled_back",
                 )
             snapshot = fidelity_firewall(
                 plan,
