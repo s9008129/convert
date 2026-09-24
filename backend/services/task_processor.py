@@ -289,6 +289,10 @@ class TaskProcessor:
 
             # 步驟 1：轉錄（含快取）
             transcript = await self._obtain_transcript(task, file_path)
+            # Keep immutable ASR output alongside the existing corrected view.
+            # Only local V2 consumes this optional argument; legacy/cloud paths
+            # continue receiving the same `transcript` value as before.
+            raw_source_transcript = transcript
 
             # 步驟 1.5：預熱本地 LLM（v4.6.2）
             # ASR 前已強制卸載 Ollama 模型（VRAM 交接），這裡先以 load-only
@@ -329,6 +333,7 @@ class TaskProcessor:
                     user_prompt=task.user_prompt,
                     progress_callback=sync_progress_cb,
                     template_id=task.template_id,
+                    raw_source_transcript=raw_source_transcript,
                 )
             except Exception as e:
                 # P0-5：摘要失敗不偽裝成功——保留逐字稿輸出，但以顯著警告標示

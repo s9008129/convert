@@ -1,0 +1,28 @@
+Stage 05 attempt 02 command evidence (2026-09-24 Asia/Taipei)
+
+1. sha256sum .agent/tasks/T20260924-1523-01-issue18-local-fidelity/plan.md .agent/tasks/T20260924-1523-01-issue18-local-fidelity/handoff.md .agent/tasks/T20260924-1523-01-issue18-local-fidelity/execution.md
+   plan 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+   handoff 78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+   execution b78ce81996df13d6911521b017c786682f10c876381994ccc0313ccbff793433
+
+2. DATA_DIR=/tmp/meetingscribe-stage05-attempt02 uv run pytest -q tests/test_local_pipeline_v2.py
+   exit 0; 10 passed in 0.42s
+   Includes the live SummarizationService V2 boundary inversion regression; inverted predicate raised LocalPipelineV2Error.
+
+3. DATA_DIR=/tmp/meetingscribe-stage05-attempt02 uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"
+   exit 0; 13 passed, 41 deselected in 0.45s
+
+4. DATA_DIR=/tmp/meetingscribe-stage05-attempt02 uv run pytest -q tests/ -k 'not slow' --disable-warnings
+   exit 0; 827 passed, 2 skipped in 9.90s
+
+5. bash scripts/check_docs.sh
+   exit 0; two pre-existing README version warnings.
+
+6. git diff --check
+   exit 2; trailing whitespace is present in the already-dirty Stage04 execution.md status block (lines 65-68 and 112-117). No product or task artifact was changed to remediate it in this verifier attempt.
+
+7. curl --max-time 2 http://127.0.0.1:1234/v1/models and /api/v0/models
+   both failed to connect (HTTP 000); no LM Studio endpoint available. No model load was attempted.
+
+8. df -h .
+   approximately 8.3 GiB available on the workspace volume. No cleanup or model load was attempted.

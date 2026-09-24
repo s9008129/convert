@@ -286,17 +286,21 @@ async def test_process_task_warms_up_before_correction_and_reports_timeout(monke
 
     async def fake_obtain(_task, _path):
         calls.append("transcript")
-        return "逐字稿內容"
+        return "不可變ASR原文"
 
     async def fake_warmup():
         calls.append("warmup")
 
     async def fake_correction(_task, transcript):
         calls.append("correction")
-        return transcript, None
+        assert transcript == "不可變ASR原文"
+        return "校正後理解文字", None
 
-    async def fake_summarize(*_args, **_kwargs):
+    observed_summary: dict = {}
+    async def fake_summarize(*args, **kwargs):
         calls.append("summarize")
+        observed_summary["transcript"] = args[0]
+        observed_summary.update(kwargs)
         raise httpx.ReadTimeout("")
 
     async def fake_save_result(_task_id, _filename, content):
@@ -319,6 +323,8 @@ async def test_process_task_warms_up_before_correction_and_reports_timeout(monke
     await processor._process_task(task)
 
     assert calls == ["transcript", "warmup", "correction", "summarize"]
+    assert observed_summary["transcript"] == "校正後理解文字"
+    assert observed_summary["raw_source_transcript"] == "不可變ASR原文"
     assert task.summary_failed is True
     assert "失敗原因：ReadTimeout" in saved["content"]
     assert "會議紀錄生成失敗" in saved["content"]

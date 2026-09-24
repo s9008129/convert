@@ -404,6 +404,7 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         template_id: str = "general",
         diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
+        raw_source_transcript: Optional[str] = None,
     ) -> str:
         """
         生成會議摘要
@@ -439,6 +440,7 @@ class SummarizationService:
                 summary = await self._summarize_with_local_pipeline(
                     transcript, system_prompt, progress_callback, template=template,
                     diagnostic_recorder=diagnostic_recorder,
+                    raw_source_transcript=raw_source_transcript,
                 )
 
             self._emit_progress(progress_callback, 95.0, "摘要生成完成")
@@ -1840,6 +1842,8 @@ class SummarizationService:
         lmstudio_selection: Optional[LMStudioModelSelection] = None,
         allow_reasoning_retry: bool = True,
         raw_output_collector: Optional[list[str]] = None,
+        runtime_profile: Optional[object] = None,
+        runtime_control_rejection_callback: Optional[callable] = None,
     ) -> str:
         """對選定的本地引擎執行一次生成。
 
@@ -1871,6 +1875,8 @@ class SummarizationService:
                 expand_output_budget=expand_output_budget,
                 allow_reasoning_retry=allow_reasoning_retry,
                 raw_output_collector=raw_output_collector,
+                runtime_profile=runtime_profile,
+                runtime_control_rejection_callback=runtime_control_rejection_callback,
             )
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
@@ -1882,8 +1888,17 @@ class SummarizationService:
         progress_callback: Optional[callable] = None,
         template: Optional[MeetingTemplate] = None,
         diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
+        raw_source_transcript: Optional[str] = None,
     ) -> str:
         """本地模式的 extraction-first + chunk-merge + refine 流程。"""
+        # V2 is deliberately opt-in.  A failed V2 run raises explicitly; there
+        # is no hidden fallback to the legacy path (the operator may select v1).
+        if getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() == "v2":
+            return await self._summarize_with_local_pipeline_v2(
+                transcript, system_prompt, progress_callback=progress_callback,
+                template=template, diagnostic_recorder=diagnostic_recorder,
+                raw_source_transcript=raw_source_transcript,
+            )
         engine = await self._select_local_engine()
         # LM Studio 選模只在工作開始時做一次；整個摘要工作沿用 immutable
         # selection，避免中途 inventory 變化導致不同階段偷偷換模型。
@@ -2226,6 +2241,352 @@ class SummarizationService:
         )
 
         return summary
+
+    async def _summarize_with_local_pipeline_v2(
+        self,
+        transcript: str,
+        system_prompt: str,
+        *,
+        progress_callback: Optional[callable] = None,
+        template: Optional[MeetingTemplate] = None,
+        diagnostic_recorder: Optional[LocalPipelineDiagnosticRecorder] = None,
+        raw_source_transcript: Optional[str] = None,
+    ) -> str:
+        """Minimal live V2 path: strict fact extraction then deterministic render.
+
+        This path intentionally shares only provider selection/request plumbing
+        with V1.  Its contract, rendering and failure semantics live in
+        ``local_pipeline_v2`` and are independently testable.
+        """
+        from backend.services.local_pipeline_v2 import (
+            LocalPipelineV2Error, build_evidence_spans, consolidate_claims,
+            parse_fact_payload, render_section, assemble_sections,
+            fidelity_firewall, parse_section_render_payload,
+            guarded_section_patch, ModelRuntimeProfile,
+            validate_runtime_profile, validate_asserted_claims_against_source,
+            validate_relation_metadata,
+            template_section_plans, cross_section_claim_duplicates,
+            validate_template_terms, RelationMetadata,
+        )
+
+        if getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() != "v2":
+            raise LocalPipelineV2Error("Local V2 execution requires LOCAL_PIPELINE_VERSION=v2")
+
+        engine = await self._select_local_engine()
+        selection = self._active_lmstudio_selection
+        context_tokens = self._effective_context_tokens()
+        if selection and selection.context_length:
+            context_tokens = selection.context_length
+        family = "Qwen" if selection and "qwen" in selection.model_identifier.casefold() else "Gemma"
+        profile = validate_runtime_profile(
+            ModelRuntimeProfile(
+                family=family, model_key=selection.model_identifier if selection else "unresolved",
+                provider=selection.provider if selection else engine,
+                loaded_instance_id=selection.loaded_instance_id if selection else None,
+                context_length=context_tokens, thinking=False,
+                temperature=0.7 if family == "Qwen" else 1.0,
+                top_p=0.8 if family == "Qwen" else 0.95,
+                top_k=20 if family == "Qwen" else 64,
+            ),
+            # This adapter's documented chat endpoint accepts temperature,
+            # top_p, and top_k. Context is sourced from the active loaded
+            # instance for planning, not sent as a per-request knob. The
+            # existing reasoning_effort compatibility path is independent and
+            # does not prove native thinking-control capability.
+            {"context_length": bool(engine == "lmstudio" and selection and selection.context_length),
+             "thinking": False, "temperature": engine == "lmstudio",
+             "top_p": engine == "lmstudio", "top_k": engine == "lmstudio"},
+        )
+        # W7 defines the normal production baseline (Qwen .7, Gemma 1.0).
+        # Qwen .3/.5/.7 remain extraction-only candidates for explicit C14
+        # sampling; an unsampled candidate never changes production settings.
+        extraction_temperature = profile.temperature
+        section_temperature = profile.temperature
+        if diagnostic_recorder:
+            diagnostic_recorder.record(
+                "v2.runtime.profile", status="validated" if profile.validated else "unsupported_controls",
+                metadata={"provider": profile.provider, "model_key": profile.model_key,
+                          "loaded_instance_id": profile.loaded_instance_id,
+                          "context_length": profile.context_length,
+                          "baseline_temperature": profile.temperature,
+                          "unsupported_control_count": len(profile.unsupported_controls),
+                          "supported_profile_control_count": len(profile.supported_controls),
+                          "unsupported_controls": ",".join(profile.unsupported_controls),
+                          "supported_controls": ",".join(profile.supported_controls)},
+            )
+        def report_runtime_control_rejection(control: str) -> None:
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    "v2.runtime.control-rejected", status="unsupported",
+                    metadata={"unsupported_controls": control, "unsupported_control_count": 1},
+                )
+        # Raw ASR text is the only provenance authority. A corrected view may be
+        # used for comprehension only when spans can be aligned; this path does
+        # not have a verified aligner, so it deliberately extracts raw-only.
+        source_transcript = raw_source_transcript if raw_source_transcript is not None else transcript
+        chunks = self._split_transcript_into_chunks(source_transcript, self._build_local_context_plan(
+            source_transcript, system_prompt, template=template, context_window_tokens=context_tokens
+        ).chunk_input_budget_tokens)
+        chunks = chunks or [source_transcript]
+        source_sha = __import__("hashlib").sha256(source_transcript.encode("utf-8")).hexdigest()
+        spans = build_evidence_spans(source_transcript, chunks, source_sha256=source_sha)
+        if diagnostic_recorder:
+            diagnostic_recorder.record("v2.source", status="raw_only" if raw_source_transcript is not None else "raw_input",
+                                       metadata={"raw_source_sha256": source_sha,
+                                                 "corrected_view_supplied": raw_source_transcript is not None,
+                                                 "corrected_alignment": "unavailable_not_mapped" if raw_source_transcript is not None else "not_applicable"})
+        claims: list = []
+        for index, (chunk, span) in enumerate(zip(chunks, spans), 1):
+            extraction_message = (
+                "Return ONLY strict JSON (no markdown) matching this shape: "
+                '{"claims":[{"claim_id":"...","subject":"...","predicate":"...",'
+                '"object":"...","relation_type":"fact|causal|conditional|temporal",'
+                '"direction":"subject_to_object|object_to_subject",'
+                '"polarity":"positive|negative","condition":null,"number":null,"unit":null,'
+                '"date":null,"attribution":null,"uncertainty":null,"status":"asserted|unknown|ambiguous",'
+                '"evidence_refs":["' + span.span_id + '"]}]}\n'
+                "Unknown or ambiguous values must be represented explicitly; never invent facts.\n"
+                "Every asserted subject/predicate/object, relation direction, polarity, condition, number/unit, date, "
+                "entity, attribution and uncertainty must be directly supported by the ordered raw source span; "
+                "unsupported values must be null or status unknown/ambiguous.\n"
+                f"SOURCE CHUNK {index}/{len(chunks)}:\n{chunk}"
+            )
+            if diagnostic_recorder:
+                diagnostic_recorder.record(f"v2.extraction.chunk.{index}.input", input_text=extraction_message,
+                                           source_branch="transcript_chunk",
+                                           metadata={"temperature": extraction_temperature})
+            try:
+                raw = await self._generate_with_local_engine(
+                    engine, system_prompt, extraction_message, temperature=extraction_temperature,
+                    num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                    context_window_tokens=context_tokens, lmstudio_selection=selection,
+                    runtime_profile=profile,
+                    runtime_control_rejection_callback=report_runtime_control_rejection,
+                )
+                parsed = parse_fact_payload(raw, source_sha256=source_sha)
+            except Exception as first_error:
+                # Exactly one schema-only repair; changing source/policy is not
+                # a repair and would violate the V2 contract.
+                repair_message = extraction_message + "\nSCHEMA REPAIR: output valid JSON only."
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.extraction.chunk.{index}.repair",
+                        input_text=repair_message,
+                        source_branch="transcript_chunk",
+                        metadata={"temperature": extraction_temperature},
+                    )
+                try:
+                    raw = await self._generate_with_local_engine(
+                        engine, system_prompt, repair_message, temperature=extraction_temperature,
+                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        context_window_tokens=context_tokens, lmstudio_selection=selection,
+                        runtime_profile=profile,
+                        runtime_control_rejection_callback=report_runtime_control_rejection,
+                    )
+                    parsed = parse_fact_payload(raw, source_sha256=source_sha)
+                except Exception as second_error:
+                    raise LocalPipelineV2Error(
+                        f"V2 structured extraction failed after one schema-only repair (chunk {index})"
+                    ) from second_error
+            claims.extend(parsed.claims)
+        ledger = consolidate_claims(claims, source_sha256=source_sha)
+        if ledger.conflicts:
+            raise LocalPipelineV2Error("V2 ledger contains unresolved same-evidence conflicts")
+        evidence = {span.span_id: span for span in spans}
+        try:
+            grounded_claims = validate_asserted_claims_against_source(ledger.claims, evidence)
+        except ValueError as exc:
+            raise LocalPipelineV2Error(f"V2 fidelity firewall rejected source-grounded claim: {exc}") from exc
+        ledger = ledger.model_copy(update={"claims": grounded_claims})
+        plans = template_section_plans(template, ledger, evidence)
+        by_id = {claim.claim_id: claim for claim in ledger.claims}
+        selected_claim_id = next(
+            (
+                claim.claim_id
+                for claim in ledger.claims
+                if claim.relation_type.value in {"causal", "conditional"}
+                and claim.status.value == "asserted"
+            ),
+            None,
+        )
+        rendered: dict[str, str] = {}
+        section_relations: dict[str, dict[str, RelationMetadata]] = {}
+        for plan in plans:
+            allowed = tuple(dict.fromkeys((*plan.required_claim_ids, *plan.optional_claim_ids)))
+            claims_json = json.dumps([
+                by_id[cid].model_dump(mode="json") for cid in allowed if cid in by_id
+            ], ensure_ascii=False)
+            section_message = (
+                "Render exactly this planned meeting-record section. Return ONLY strict JSON: "
+                '{"text":"...","claim_ids":["..."],"relation_metadata":{"claim_id":{"subject":"...",'
+                '"predicate":"...","object":"...","direction":"subject_to_object",'
+                '"polarity":"positive","condition":null,"relation_type":"causal"}}}. '
+                "Use only the listed claims and source tags〔span-id〕; do not invent, omit required claims, "
+                "or alter relation direction, polarity, condition, number, date, entity, attribution.\n"
+                f"SECTION {plan.section_id}: {plan.title}\n"
+                f"TEMPLATE_PATH: {plan.template_path}; KIND: {plan.template_kind}; ORDER: {plan.template_order}; "
+                f"PARENT: {plan.parent_section_id or 'none'}\n"
+                f"REQUIRED_CLAIM_IDS: {json.dumps(plan.required_claim_ids, ensure_ascii=False)}\n"
+                f"ALLOWED_CLAIMS: {claims_json}"
+            )
+            if diagnostic_recorder:
+                diagnostic_recorder.record(f"v2.section.{plan.section_id}.input", input_text=section_message,
+                                           source_branch="section_plan",
+                                           metadata={"claim_id": plan.section_id,
+                                                     "temperature": section_temperature})
+            try:
+                raw_section = await self._generate_with_local_engine(
+                    engine, system_prompt, section_message, temperature=section_temperature,
+                    num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                    context_window_tokens=context_tokens, lmstudio_selection=selection,
+                    runtime_profile=profile,
+                    runtime_control_rejection_callback=report_runtime_control_rejection,
+                )
+                section_text, claim_ids, relation_metadata = parse_section_render_payload(raw_section, plan=plan)
+            except Exception as exc:
+                raise LocalPipelineV2Error(f"V2 fidelity firewall rejected section {plan.section_id}") from exc
+            # Missing required identity is candidate non-regression failure,
+            # not permission to erase the source-backed baseline. The guarded
+            # patch below detects the coverage loss and restores prior bytes.
+            baseline_text = render_section(plan, by_id)
+            baseline_relations = {
+                cid: RelationMetadata(subject=by_id[cid].subject, predicate=by_id[cid].predicate,
+                                      object=by_id[cid].object, direction=by_id[cid].direction,
+                                      polarity=by_id[cid].polarity, condition=by_id[cid].condition,
+                                      relation_type=by_id[cid].relation_type)
+                for cid in plan.required_claim_ids if cid in by_id
+                and by_id[cid].relation_type.value in {"causal", "conditional"}
+            }
+            baseline_snapshot = fidelity_firewall(plan, baseline_text, by_id, evidence,
+                                                  selected_claim_id=selected_claim_id,
+                                                  relation_metadata=baseline_relations)
+            relation_metadata_valid = True
+            required_relation_ids = {
+                cid for cid in plan.required_claim_ids
+                if cid in by_id and by_id[cid].relation_type.value in {"causal", "conditional"}
+            }
+            ordered_required_relation_ids = tuple(
+                cid for cid in plan.required_claim_ids if cid in required_relation_ids
+            )
+            ordered_rendered_relation_ids = tuple(
+                cid for cid in claim_ids if cid in required_relation_ids
+            )
+            try:
+                if (len(claim_ids) != len(set(claim_ids))
+                        or ordered_rendered_relation_ids != ordered_required_relation_ids):
+                    raise ValueError("required relation claim IDs are missing, duplicated, or out of order")
+                validate_relation_metadata(plan, by_id, relation_metadata)
+            except ValueError:
+                relation_metadata_valid = False
+            candidate_snapshot = fidelity_firewall(plan, section_text, by_id, evidence,
+                                                   selected_claim_id=selected_claim_id,
+                                                   relation_metadata=relation_metadata if relation_metadata_valid else {})
+            patch_result = guarded_section_patch(baseline_text, section_text, baseline_snapshot, candidate_snapshot)
+            rendered[plan.section_id] = patch_result.text
+            section_relations[plan.section_id] = relation_metadata if patch_result.accepted else baseline_relations
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    f"v2.patch.{plan.section_id}", status="accepted" if patch_result.accepted else "rolled_back",
+                    metadata={"claim_id": plan.section_id, "validation_issue_count": 0 if patch_result.accepted else 1},
+                )
+            snapshot = fidelity_firewall(
+                plan,
+                rendered[plan.section_id],
+                by_id,
+                evidence,
+                selected_claim_id=selected_claim_id,
+                relation_metadata=section_relations[plan.section_id],
+            )
+            if not snapshot.accepted and plan.required_claim_ids:
+                raise LocalPipelineV2Error(
+                    f"V2 fidelity firewall rejected section {plan.section_id}"
+                )
+            if diagnostic_recorder:
+                diagnostic_recorder.record(f"v2.section.{plan.section_id}.validation", status="accepted", metadata={"validation_issue_count": 0, "claim_id": plan.section_id})
+        marker_nonce = source_sha[:16]
+        marker_pairs: dict[str, tuple[str, str]] = {}
+        marked_rendered: dict[str, str] = {}
+        content_values = tuple(rendered.values())
+        marker_suffix = 0
+        while True:
+            marker_pairs = {
+                plan.section_id: (
+                    f"【V2段界:{marker_nonce}:{plan.template_order}:開始】",
+                    f"【V2段界:{marker_nonce}:{plan.template_order}:結束】",
+                )
+                for plan in plans
+            }
+            if not any(marker in content for content in content_values
+                       for pair in marker_pairs.values() for marker in pair):
+                break
+            marker_suffix += 1
+            marker_nonce = f"{source_sha[:12]}-{marker_suffix}"
+        for plan in plans:
+            start_marker, end_marker = marker_pairs[plan.section_id]
+            marked_rendered[plan.section_id] = (
+                f"{start_marker}\n{rendered[plan.section_id]}\n{end_marker}"
+            )
+        marked_result = assemble_sections(marked_rendered, [plan.section_id for plan in plans])
+        if not marked_result.strip():
+            raise LocalPipelineV2Error("V2 produced no source-backed sections")
+        # Reuse the existing local finalizer so the public template/header and
+        # section skeleton contract remains identical to V1. The final source
+        # firewall below runs after deterministic post-processing.
+        finalized_marked_result = self._finalize_record_text(marked_result, template=template)
+        final_firewall_issues = []
+        coverage_issue_count = 0
+        marker_bounds = []
+        marker_integrity_valid = True
+        for plan in plans:
+            start_marker, end_marker = marker_pairs[plan.section_id]
+            start_at = finalized_marked_result.find(start_marker)
+            end_at = finalized_marked_result.find(end_marker)
+            if (finalized_marked_result.count(start_marker) != 1
+                    or finalized_marked_result.count(end_marker) != 1
+                    or start_at < 0 or end_at < 0 or start_at >= end_at):
+                marker_integrity_valid = False
+            marker_bounds.append((start_at, end_at))
+        for (_, prior_end), (next_start, _) in zip(marker_bounds, marker_bounds[1:]):
+            if prior_end < 0 or next_start < 0 or prior_end >= next_start:
+                marker_integrity_valid = False
+        for plan in plans:
+            start_marker, end_marker = marker_pairs[plan.section_id]
+            start_at = finalized_marked_result.find(start_marker)
+            end_at = finalized_marked_result.find(end_marker, start_at + len(start_marker)) if start_at >= 0 else -1
+            if start_at < 0 or end_at < 0 or not marker_integrity_valid:
+                final_firewall_issues.append(plan.section_id)
+                section_slice = ""
+            else:
+                section_slice = finalized_marked_result[start_at + len(start_marker):end_at].strip()
+            final_snapshot = fidelity_firewall(plan, section_slice, by_id, evidence,
+                                               selected_claim_id=selected_claim_id,
+                                               relation_metadata=section_relations[plan.section_id])
+            coverage_issue_count += len(set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids))
+            if not final_snapshot.accepted and plan.required_claim_ids:
+                final_firewall_issues.append(plan.section_id)
+        if final_firewall_issues:
+            raise LocalPipelineV2Error("V2 final assembly failed source-alignment firewall")
+        result = finalized_marked_result
+        for start_marker, end_marker in marker_pairs.values():
+            result = result.replace(start_marker, "").replace(end_marker, "")
+        result = result.strip()
+        duplicate_ids = cross_section_claim_duplicates(plans)
+        template_terms = tuple(dict.fromkeys(
+            (*[term for plan in plans for term in plan.required_terms],
+             *tuple(getattr(template, "glossary_terms", ())))
+        ))
+        missing_template_terms = validate_template_terms(result, template_terms)
+        if diagnostic_recorder:
+            diagnostic_recorder.record("v2.coverage.final", status="diagnostic_only",
+                                       metadata={"planned_sections": len(plans),
+                                                 "required_claim_count": sum(len(p.required_claim_ids) for p in plans),
+                                                 "coverage_issue_count": coverage_issue_count,
+                                                 "duplicate_claim_count": len(duplicate_ids),
+                                                 "template_term_missing_count": len(missing_template_terms)})
+        if diagnostic_recorder:
+            diagnostic_recorder.record("v2.ledger", status="valid", metadata={"chunk_count": len(chunks)})
+            diagnostic_recorder.record("v2.selection.final", output_text=result, source_branch="structured_facts", status="selected")
+        return result
 
     @staticmethod
     def _finalize_record_text(summary: str, template: Optional[MeetingTemplate] = None) -> str:
@@ -2635,6 +2996,8 @@ class SummarizationService:
         expand_output_budget: bool = True,
         allow_reasoning_retry: bool = True,
         raw_output_collector: Optional[list[str]] = None,
+        runtime_profile: Optional[object] = None,
+        runtime_control_rejection_callback: Optional[callable] = None,
     ) -> str:
         """
         使用已選定的 LM Studio loaded instance 生成摘要。
@@ -2705,7 +3068,9 @@ class SummarizationService:
         )
 
         response = await self._lmstudio_chat_request(
-            client, selection, messages, temperature, requested_max_tokens
+            client, selection, messages, temperature, requested_max_tokens,
+            runtime_profile=runtime_profile,
+            runtime_control_rejection_callback=runtime_control_rejection_callback,
         )
 
         self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
@@ -2978,6 +3343,8 @@ class SummarizationService:
         messages: list[dict],
         temperature: float,
         max_tokens: int,
+        runtime_profile: Optional[object] = None,
+        runtime_control_rejection_callback: Optional[callable] = None,
     ) -> object:
         """單次 chat.completions.create（含 transient/HTTP 錯誤映射與思考關閉降級）。
 
@@ -3000,9 +3367,19 @@ class SummarizationService:
         # 87.5%（1246s／1422s）。LM Studio 為 OpenAI 相容端點，關閉思考的正確
         # 欄位是 `reasoning_effort: "none"`（實測 reasoning_tokens=0）。openai
         # 1.12.0 無此具名參數，僅能經 extra_body 傳遞。
+        profile_controls = {}
+        if runtime_profile is not None:
+            profile_controls = {
+                key: getattr(runtime_profile, key)
+                for key in ("top_p", "top_k")
+                if key in getattr(runtime_profile, "supported_controls", ())
+                and getattr(runtime_profile, key, None) is not None
+            }
         extra_body: Optional[dict] = (
             {"reasoning_effort": "none"} if settings.LOCAL_LLM_DISABLE_THINKING else None
         )
+        if "top_k" in profile_controls:
+            extra_body = {**(extra_body or {}), "top_k": profile_controls["top_k"]}
 
         async def _create(extra: Optional[dict]):
             kwargs = {
@@ -3011,6 +3388,8 @@ class SummarizationService:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
+            if "top_p" in profile_controls:
+                kwargs["top_p"] = profile_controls["top_p"]
             if extra:
                 kwargs["extra_body"] = extra
             return await client.chat.completions.create(**kwargs)
@@ -3021,15 +3400,38 @@ class SummarizationService:
                     return await _create(extra_body)
                 except Exception as exc:  # noqa: BLE001 — 相容降級需先讀 status code
                     status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    if status_code == 400 and extra_body:
+                    if status_code == 400 and "top_k" in profile_controls and extra_body and "top_k" in extra_body:
+                        log.warning("LM Studio Chat Completions rejected top_k; retrying without unsupported profile control")
+                        profile_controls.pop("top_k", None)
+                        if runtime_control_rejection_callback:
+                            runtime_control_rejection_callback("top_k")
+                        retry_body = dict(extra_body)
+                        retry_body.pop("top_k", None)
+                        extra_body = retry_body or None
+                        try:
+                            return await _create(extra_body)
+                        except Exception as retry_error:
+                            retry_status = getattr(getattr(retry_error, "response", None), "status_code", None)
+                            if retry_status != 400 or not extra_body or "reasoning_effort" not in extra_body:
+                                raise
+                            log.warning("LM Studio also rejected reasoning_effort; retrying without that control")
+                            if runtime_control_rejection_callback:
+                                runtime_control_rejection_callback("reasoning_effort")
+                            extra_body = None
+                            return await _create(None)
+                    if status_code == 400 and extra_body and "reasoning_effort" in extra_body:
                         # 與 `_post_ollama_chat` 的 think 相容降級同語意：伺服器不
                         # 認識該欄位時，降級為不帶欄位重送一次，不得讓整份紀錄失敗。
                         log.warning(
                             "LM Studio 端點不接受 reasoning_effort（HTTP 400），"
                             "改以不帶該欄位的相容模式重送"
                         )
-                        extra_body = None
-                        return await _create(None)
+                        if runtime_control_rejection_callback:
+                            runtime_control_rejection_callback("reasoning_effort")
+                        retry_body = dict(extra_body)
+                        retry_body.pop("reasoning_effort", None)
+                        extra_body = retry_body or None
+                        return await _create(extra_body)
                     raise
             except transient_errors as exc:
                 if attempt >= retries:

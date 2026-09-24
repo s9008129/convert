@@ -1,0 +1,22 @@
+Stage 05 attempt-04 immutable startup snapshot
+Captured: 2026-09-24 Asia/Taipei before acceptance command execution
+
+PLAN_REVISION: 9
+PLAN_SHA256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+HANDOFF_PATH: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/handoff.md
+HANDOFF_SHA256: 78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+REVIEW_APPROVAL: review/attempt-08/review_report.md
+REVIEWED_PLAN_REVISION: 9
+REVIEWED_PLAN_SHA256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+STAGE04_EXECUTION_PATH: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/execution.md
+STAGE04_EXECUTION_ARTIFACT_SHA256: 7e9d34a8c2c68a5fdfc6242349b23f65d21bc99feceb4e73a01a8afd793c88a7
+
+STAGE_04_REPORTED_IMPLEMENTATION_STATUS: COMPLETE
+STAGE_04_REPORTED_CORE_ACCEPTANCE_STATUS: BLOCKED
+STAGE_04_REPORTED_REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+
+REPOSITORY_BRANCH: issue-18-first-divergence-diagnostic
+REPOSITORY_HEAD: eb3ca049cc72d21d2f4db974db5314b5f399d736
+WORKTREE: dirty; Stage04 repair and task paths preserved; no reset/stash/clean/overwrite performed
+
+Freshness result: R9 plan/handoff/review08 identities agree. The latest Stage04 execution append explicitly identifies this as the fresh Stage05 attempt-04 target and carries the immutable fields above. No model load/unload or product mutation was performed.

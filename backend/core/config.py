@@ -219,6 +219,18 @@ class Settings(BaseSettings):
         default=True,
         description="關閉思考型模型（如 gemma4）的 thinking 輸出；否則 num_predict 預算會被思考耗盡導致正文極短或為空（E2E 實測根因）"
     )
+    LOCAL_PIPELINE_VERSION: str = Field(
+        default="v1",
+        description="本地摘要流程版本；僅明確設定 v2 才啟用結構化證據流程，v1 為相容預設"
+    )
+
+    @field_validator("LOCAL_PIPELINE_VERSION", mode="before")
+    @classmethod
+    def validate_local_pipeline_version(cls, value: str) -> str:
+        normalized = (value or "v1").strip().lower()
+        if normalized not in {"v1", "v2"}:
+            raise ValueError("LOCAL_PIPELINE_VERSION 必須是 v1 或 v2")
+        return normalized
 
     # ========================================
     # LLM 請求逾時與重試（v4.6.2）

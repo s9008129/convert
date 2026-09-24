@@ -1,0 +1,34 @@
+Stage 05 independent acceptance attempt 04
+Date: 2026-09-24 Asia/Taipei
+Mode: CONTRACT + INTEGRATION + SOURCE-LEVEL PRODUCTION CALL-PATH ACCEPTANCE; not literal model E2E
+
+CHECK C2/C5 focused V2
+Command: DATA_DIR="$RUN_DATA_DIR" uv run pytest -q tests/test_local_pipeline_v2.py
+Observed: 14 passed in 0.41s; exit 0.
+
+CHECK C3 cloud focused
+Command: DATA_DIR="$RUN_DATA_DIR" uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'
+Observed: 13 passed, 41 deselected in 0.40s; exit 0.
+
+CHECK C6 full suite
+Command: DATA_DIR="$RUN_DATA_DIR" uv run pytest tests/ -q
+Observed: 831 passed, 2 skipped in 8.84s; exit 0. RUN_DATA_DIR was a fresh process-scoped temporary directory.
+
+CHECK C7 docs
+Command: bash scripts/check_docs.sh
+Observed: exit 0; two pre-existing README.md/doc/README.md version warnings.
+
+CHECK C8 diff
+Command: git diff --check
+Observed: exit 2; trailing whitespace remains only in historical/task execution.md lines 65-68 and 112-117. No verifier repair performed.
+
+READ-ONLY RUNTIME INVENTORY
+Command: curl --max-time 3 -sS http://127.0.0.1:1234/api/v1/models
+Observed: LM Studio responds; required Gemma and Qwen keys are listed with loaded_instances: []. No load/unload attempted. C9/C14 remain ENVIRONMENT-blocked.
+
+QUALITY AUTHORITY SEARCH
+Command: find .agent/tasks/T20260924-1523-01-issue18-local-fidelity -type f | rg -i 'eval|rubric|blind|baseline|frozen'
+Observed: no frozen evaluator/protocol or original unrounded Gemini baseline; only historical claim-attempt-3-baseline.json and cloud-contract-focused.txt. C10/C14 retain QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR; no rounded substitution.
+
+SYNTHETIC PRODUCTION CALL-PATH PROBE
+Action: mocked only the engine selector/generator with synthetic Chinese causal text; extraction returned source-supported 導致, section model returned inverted 避免 with relation_metadata c1=導致. V2 returned a final hash with HAS_INVERTED=False and HAS_SOURCE=True, demonstrating candidate rollback to the deterministic source-backed baseline. No private/raw transcript was used.

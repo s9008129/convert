@@ -1,0 +1,1 @@
+Attempt-04 artifact hygiene: PASS. Only hashes, counts, statuses, source line references, synthetic probe result/hash, and safe model inventory facts were recorded. No raw/private transcript, prompt, model output, credential, or model load/unload action was used. This does not waive C9/C10/C14 blockers or the partial contract findings.

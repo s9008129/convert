@@ -111,12 +111,18 @@ async def run(args: argparse.Namespace) -> int:
     # available in memory and in the explicitly opted-in ignored snapshot root.
     os.environ["DATA_DIR"] = str(PROJECT_ROOT / "data")
     os.environ["LOG_LEVEL"] = "CRITICAL"
+    # This diagnostic is specifically for the approved local V2 path. Do not
+    # report frozen V1 phase temperatures as if they described a V2 run.
+    os.environ["LOCAL_PIPELINE_VERSION"] = "v2"
     sys.path.insert(0, str(PROJECT_ROOT))
     from backend.core.config import settings
     from backend.core.templates import get_template
     from backend.models.schemas import ProcessingMode
     from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
     from backend.services.summarization import SummarizationService
+
+    if settings.LOCAL_PIPELINE_VERSION != "v2":
+        raise RuntimeError("local fidelity diagnostic requires LOCAL_PIPELINE_VERSION=v2")
 
     template = get_template(args.template)
     service = SummarizationService()
@@ -144,9 +150,8 @@ async def run(args: argparse.Namespace) -> int:
         "loaded_instance_id": selection.loaded_instance_id if selection else None,
         "context_length": selection.context_length if selection else settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS,
         "template_id": template.id,
-        "temperature_extraction": 0.1,
-        "temperature_final": 0.2,
-        "temperature_refinement": 0.15,
+        "temperature_baseline": 0.7 if "qwen" in actual_model.casefold() else 1.0,
+        "temperature_event_source": "v2 runtime profile and per-stage request events",
         "requested_max_tokens": settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
         "max_refinement_rounds": settings.LOCAL_LLM_MAX_REFINEMENT_ROUNDS,
         "max_merge_rounds": settings.LOCAL_LLM_MAX_MERGE_ROUNDS,
@@ -190,6 +195,14 @@ async def run(args: argparse.Namespace) -> int:
         if after_inventory != before_inventory:
             raise RuntimeError("LM Studio loaded model inventory changed during the run")
 
+    temperature_events = [
+        {"stage_id": event["stage_id"], "temperature": event["temperature"]}
+        for event in recorder.events
+        if "temperature" in event and event["stage_id"].startswith("v2.")
+    ]
+    if not temperature_events:
+        raise RuntimeError("V2 run did not record per-stage temperature requests")
+
     recorder.metadata.update({"code_revision": code_revision, "elapsed_ms": elapsed_ms})
     diagnostic_root.mkdir(parents=True, exist_ok=True)
     output_path = diagnostic_root / "summary.local-only.md"
@@ -202,6 +215,7 @@ async def run(args: argparse.Namespace) -> int:
         "summary_failed": False,
         "elapsed_ms": elapsed_ms,
         "event_count": len(recorder.events),
+        "temperature_requests": temperature_events,
         "claim_status_requires_human_adjudication": True,
     }, sort_keys=True))
     return 0

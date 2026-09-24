@@ -1,0 +1,23 @@
+Stage 05 attempt-03 immutable startup snapshot
+Captured: 2026-09-24 (Asia/Taipei), before attempt-03 product/code acceptance checks
+
+PLAN_REVISION: 9
+PLAN_SHA256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+HANDOFF_PATH: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/handoff.md
+HANDOFF_SHA256: 78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+REVIEW_APPROVAL: review/attempt-08/review_report.md
+REVIEWED_PLAN_REVISION: 9
+REVIEWED_PLAN_SHA256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+STAGE04_EXECUTION_PATH: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/execution.md
+STAGE04_EXECUTION_ARTIFACT_SHA256: b78ce81996df13d6911521b017c786682f10c876381994ccc0313ccbff793433
+
+STAGE_04_REPORTED_IMPLEMENTATION_STATUS: COMPLETE
+STAGE_04_REPORTED_CORE_ACCEPTANCE_STATUS: BLOCKED
+STAGE_04_REPORTED_REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+
+REPOSITORY_BRANCH: issue-18-first-divergence-diagnostic
+REPOSITORY_HEAD: eb3ca049cc72d21d2f4db974db5314b5f399d736
+WORKTREE: dirty; known Stage04/product/task paths preserved; no reset/stash/clean/overwrite performed
+ATTEMPT02_REPORT_SHA256: 516f8f6e61df5df1a647ead886d9eb79e750f2698a71a11d1402d60f2bf8fbef
+
+Freshness result: plan revision/hash agrees with handoff and review attempt-08; Stage04 execution carries the same revision-9 plan identity in its later durable section. Stage04 fields above are immutable carry-forward facts and are not rewritten by attempt-03.

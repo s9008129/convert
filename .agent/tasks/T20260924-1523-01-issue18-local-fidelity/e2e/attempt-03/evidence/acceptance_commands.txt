@@ -1,0 +1,40 @@
+Stage 05 independent acceptance attempt 03
+Date: 2026-09-24 Asia/Taipei
+Mode: contract + integration + source-level architecture acceptance; not literal full-model E2E
+
+FRESHNESS / IMMUTABLE SNAPSHOT
+- plan SHA-256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+- handoff SHA-256: 78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+- execution SHA-256 at startup: b78ce81996df13d6911521b017c786682f10c876381994ccc0313ccbff793433
+- immutable Stage04 fields: COMPLETE / BLOCKED / INCOMPLETE
+
+CHECK C1/C2 focused live boundary
+Command: RUN_DATA_DIR=$(mktemp -d); DATA_DIR="$RUN_DATA_DIR" uv run pytest -q tests/test_local_pipeline_v2.py
+Observed: 10 passed in 0.42s; exit 0. This includes the live SummarizationService V2 inverted-predicate rejection test. It does not prove the missing template/profile/model mechanisms.
+
+CHECK C3 cloud contract
+Command: RUN_DATA_DIR=$(mktemp -d); DATA_DIR="$RUN_DATA_DIR" uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'
+Observed: 13 passed, 41 deselected in 0.46s; exit 0.
+
+CHECK C6 full suite
+Command: RUN_DATA_DIR=$(mktemp -d); DATA_DIR="$RUN_DATA_DIR" uv run pytest tests/ -q
+Observed: 827 passed, 2 skipped in 10.79s; exit 0. Safe process-scoped DATA_DIR used.
+
+CHECK C7 docs
+Command: bash scripts/check_docs.sh
+Observed: exit 0; two existing version warnings for README.md and doc/README.md.
+
+CHECK C8 diff check
+Command: git diff --check
+Observed: exit 2. Existing dirty Stage04 execution.md has trailing whitespace at lines 65-68 and 112-117. No verifier repair performed.
+
+RUNTIME / CAPABILITY INVENTORY (read-only; no load/cleanup)
+Commands: curl --max-time 3 -sS http://127.0.0.1:1234/v1/models; curl --max-time 3 -sS http://127.0.0.1:1234/api/v1/models
+Observed: LM Studio API responds. gemma-4-31b-it-mlx and qwen3.8-27b-splash are listed; both have loaded_instances: []. No model was loaded or unloaded. No valid live Qwen/Gemma generation/profile sample was possible.
+
+FROZEN QUALITY INPUT SEARCH
+Command: find .agent/tasks/T20260924-1523-01-issue18-local-fidelity -type f | rg -i 'eval|rubric|blind|baseline|frozen'
+Observed: only historical claim-attempt-3-baseline.json and cloud-contract-focused.txt; no frozen evaluator/protocol or original unrounded Gemini baseline. C10/C14 authority blocker retained; no adjacent/rounded substitution.
+
+SOURCE AUDIT
+Read-only line-level inspection of backend/services/local_pipeline_v2.py, backend/services/summarization.py, backend/services/local_pipeline_diagnostics.py, backend/core/templates.py and tests/test_local_pipeline_v2.py. See architecture_audit.md for findings and classifications.

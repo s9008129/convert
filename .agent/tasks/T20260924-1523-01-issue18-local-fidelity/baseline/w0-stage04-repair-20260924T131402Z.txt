@@ -1,0 +1,13 @@
+W0_STAGE04_REPAIR_TIMESTAMP_UTC: 2026-09-24T13:14:02Z
+TASK_ID: T20260924-1523-01-issue18-local-fidelity
+BRANCH: issue-18-first-divergence-diagnostic
+HEAD: eb3ca049cc72d21d2f4db974db5314b5f399d736
+PLAN_REVISION: 9
+PLAN_SHA256: 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+HANDOFF_STATUS: READY_FOR_IMPLEMENTATION
+SAFETY_BRANCHES: backup/issue-18-before-gpt6-20260924-074037, backup/issue-18-before-gpt6-20260924-153522 (both contain starting HEAD)
+DIRTY_PATH_CLASSIFICATION: all paths classified as expected Stage04 candidate, task artifact/evidence, or approved documentation/test path listed in handoff; no unclassified owner path
+MUTATION_GATE: CLEAR
+RUNTIME_RECHECK: LM Studio API reachable; gemma-4-31b-it-mlx and qwen3.8-27b-splash listed; loaded_instances unavailable/empty; no load or cleanup attempted due environment and low disk headroom
+EVALUATOR_RECHECK: frozen evaluator, protocol, and original unrounded Gemini baseline not found; exact blocker retained: QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR
+PRIVACY: redacted metadata only; no transcript, prompt, raw output, private names, or absolute local paths recorded
