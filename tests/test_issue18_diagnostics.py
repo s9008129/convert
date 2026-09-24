@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import json
+
+from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
+
+
+REQUIRED_EVENTS = [
+    "pipeline.start",
+    "extraction.chunk.1.input",
+    "extraction.chunk.1.raw",
+    "extraction.chunk.1.cleaned",
+    "consolidation.input",
+    "consolidation.output",
+    "final.input",
+    "final.raw",
+    "final.cleaned",
+    "final.finalized",
+    "final.validation",
+    "refinement.round.1.input",
+    "refinement.round.1.raw",
+    "refinement.round.1.cleaned",
+    "refinement.round.1.finalized",
+    "refinement.round.1.validation",
+    "refinement.round.1.accepted_or_discarded",
+    "selection.final",
+    "pipeline.end",
+]
+
+
+def test_recorder_emits_redacted_ordered_events_and_exact_source_branch(tmp_path):
+    recorder = LocalPipelineDiagnosticRecorder(
+        run_id="unit-safe-run",
+        raw_snapshot_dir=tmp_path / "raw",
+        raw_snapshots_enabled=True,
+        metadata={"model_key": "safe-model-key", "context_length": 32000},
+    )
+
+    recorder.record("pipeline.start", input_text="private transcript", source_branch="source")
+    recorder.record("final.input", input_text="private prompt and transcript", source_branch="notes_only")
+    recorder.record("final.raw", output_text="private generated text", source_branch="notes_only")
+    recorder.record("final.cleaned", output_text="clean text", source_branch="notes_only")
+    recorder.record("final.cleaned.copy", output_text="clean text", source_branch="notes_only")
+    recorder.set_claim_status("claim-1", "CORRECT")
+    recorder.record("pipeline.end", status="complete")
+
+    manifest = recorder.redacted_manifest()
+    assert [event["stage_id"] for event in manifest["events"]] == [
+        "pipeline.start", "final.input", "final.raw", "final.cleaned", "final.cleaned.copy", "pipeline.end"
+    ]
+    assert manifest["events"][1]["source_branch"] == "notes_only"
+    assert manifest["events"][2]["source_branch"] == "notes_only"
+    assert manifest["events"][1]["input_sha256"] != manifest["events"][2]["output_sha256"]
+    assert manifest["events"][3]["output_sha256"] == manifest["events"][4]["output_sha256"]
+    assert manifest["claim_status"] == {"claim-1": "CORRECT"}
+    serialized = json.dumps(manifest, ensure_ascii=False)
+    for secret in ("private transcript", "private prompt", "private generated text"):
+        assert secret not in serialized
+    assert (tmp_path / "raw" / "final.raw.txt").read_text() == "private generated text"
+
+
+def test_disabled_recorder_writes_no_raw_content_and_writer_failure_is_fail_soft(tmp_path, monkeypatch):
+    recorder = LocalPipelineDiagnosticRecorder(
+        run_id="disabled-run", raw_snapshot_dir=tmp_path / "raw", raw_snapshots_enabled=False
+    )
+    recorder.record("final.raw", output_text="sensitive")
+    recorder.write_raw_snapshot("final.raw", "sensitive")
+    assert not (tmp_path / "raw").exists()
+
+    enabled = LocalPipelineDiagnosticRecorder(
+        run_id="failed-writer-run", raw_snapshot_dir=tmp_path / "raw", raw_snapshots_enabled=True
+    )
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr("pathlib.Path.write_text", fail_write)
+    enabled.record("final.raw", output_text="still returned to caller")
+    assert enabled.redacted_manifest()["events"][0]["stage_id"] == "final.raw"
+
+
+def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock, Mock
+
+    from backend.core.config import settings
+    from backend.services.summarization import LocalContextPlan, SummarizationService
+
+    service = SummarizationService()
+    plan = LocalContextPlan(
+        context_window_tokens=8192,
+        estimated_transcript_tokens=6000,
+        chunk_input_budget_tokens=1200,
+        merge_input_budget_tokens=1500,
+        merge_visible_target_tokens=900,
+        merge_provider_output_tokens=3072,
+        needs_chunking=True,
+        estimated_chunk_count=2,
+    )
+    notes = "筆記"
+    initial = "# 標題\n過短"
+    refined = "會議名稱：x\n\n一、測試紀錄\n（二）議題\n1. 已確認項目。\n" + "內容。" * 200
+    responses = iter([notes, notes, notes, initial, refined])
+    monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
+    monkeypatch.setattr(service, "_build_local_context_plan", Mock(return_value=plan))
+    monkeypatch.setattr(service, "_split_transcript_into_chunks", Mock(return_value=["chunk-1", "chunk-2"]))
+    monkeypatch.setattr(service, "_validate_summary_quality", Mock(side_effect=[["test issue"], []]))
+    monkeypatch.setattr(
+        service,
+        "_generate_with_local_engine",
+        AsyncMock(side_effect=lambda *_args, **_kwargs: next(responses)),
+    )
+
+    recorder = LocalPipelineDiagnosticRecorder(
+        run_id="pipeline-run", raw_snapshot_dir=tmp_path / "raw", raw_snapshots_enabled=False
+    )
+    result = __import__("asyncio").run(
+        service._summarize_with_local_pipeline(
+            "fixed source", settings.DEFAULT_SYSTEM_PROMPT, diagnostic_recorder=recorder
+        )
+    )
+    assert result
+    stages = [event["stage_id"] for event in recorder.redacted_manifest()["events"]]
+    positions = [stages.index(stage) for stage in REQUIRED_EVENTS]
+    assert positions == sorted(positions)
+    generation_events = [
+        event for event in recorder.redacted_manifest()["events"]
+        if event["stage_id"].endswith((".input", ".raw", ".cleaned", ".finalized"))
+    ]
+    for event in generation_events:
+        expected_branch = "transcript_chunk" if event["stage_id"].startswith("extraction.") else "notes_only"
+        assert event["source_branch"] == expected_branch
+    assert not (tmp_path / "raw").exists()
+
+    responses_without_trace = iter([notes, notes, notes, initial, refined])
+    generator_without_trace = AsyncMock(side_effect=lambda *_args, **_kwargs: next(responses_without_trace))
+    monkeypatch.setattr(service, "_generate_with_local_engine", generator_without_trace)
+    monkeypatch.setattr(service, "_validate_summary_quality", Mock(side_effect=[["test issue"], []]))
+    without_trace = __import__("asyncio").run(
+        service._summarize_with_local_pipeline("fixed source", settings.DEFAULT_SYSTEM_PROMPT)
+    )
+    assert without_trace == result
+    assert generator_without_trace.await_count == 5
