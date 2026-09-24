@@ -29,10 +29,17 @@
 - [CORRECTION] The original claim attempted to infer that source speaker index 3 was not the DOCX role “科長”. Independent source audit found no verified speaker-index-to-role mapping. Therefore the claim is **AMBIGUOUS**, and neither run establishes first divergence for that claim. The earlier categorical stage table was too strong and has been superseded.
 - [VERIFIED] [`evidence/first-divergence.json`](evidence/first-divergence.json) now records this adjudication as `AMBIGUOUS`, includes no first-divergence stage, and links only safe event hashes to the two local redacted manifests. It contains no raw text.
 
-### Attempt 2: source-verifiable omission claim
+### Attempt 2: source-verifiable omission claim did not reproduce
 
-- [DECIDED] Use `W04-OMISSION-ENV-01`, an omission claim anchored to `00:33:57–00:35:21`, concerning a concrete facilities/pipe issue that appears repeatedly in the source but is absent from the supplied DOCX. This does not rely on speaker-role mapping or private names.
-- [PENDING] Run a controlled pre-repair Qwen diagnostic at the frozen baseline revision, then adjudicate the claim across all stages before accepting any repair branch.
+- [VERIFIED] Claim `W04-OMISSION-ENV-01` was anchored to `00:33:57–00:35:21` and concerned a repeated concrete facilities issue, without relying on speaker-role mapping or private names.
+- [VERIFIED] Frozen pre-repair baseline run: `5ddabe69fff64cdab0b9ce8a1240b487`, code revision `722797b6fa42c8cca73838b1bd9e50fbdb12161f`, same Qwen loaded instance/context/template/transcript hash. It completed in 685,497 ms with 34 events, four chunks, one merge round, two refinement rounds, and `summary_failed=false`.
+- [VERIFIED] Human-adjudicated claim table with event hashes is in [`evidence/claim-attempt-2-no-divergence.json`](evidence/claim-attempt-2-no-divergence.json): the claim remained represented through extraction chunks 3–4, consolidation, final generation, both refinements, and `selection.final`. Chunks 1–2 are `NOT_APPLICABLE`.
+- **First divergence:** none in this run. **Final delivery:** `CORRECT`.
+- [CORRECTION] Although the user DOCX omitted this concrete issue, the current controlled Qwen pipeline output retained it. Thus this DOCX omission is not a valid first-divergence claim for the current pipeline and cannot support a repair branch. It may reflect different run/configuration or an output artifact not reproducible in this controlled path.
+
+### Attempt 3: select a source-verifiable historical hard-fail claim
+
+- [PENDING] An independent audit is selecting an atomic claim from the historical Qwen hard-fail cohort, avoiding speaker-role ambiguity. Run a fresh frozen baseline diagnostic on that claim before accepting the repair branch.
 
 ## WAVE-05 — Evidence-driven repair (Branch A candidate; acceptance pending valid claim evidence)
 
@@ -52,7 +59,8 @@
 
 ## WAVE-07–08 — Fresh E2E and blind cohort
 
-- [PENDING] Fresh post-repair E2E for Gemma 4 31B and Qwen 3.8 27B.
+- [VERIFIED] Qwen post-repair pipeline run `16c2ffac86224d6dacb0aa8cef6ea088` completed with `summary_failed=false`, 22 events, 719,134 ms, and `final.input=notes_plus_transcript`; it is not counted as a quality sample and did not adjudicate the later omission claim.
+- [PENDING] Fresh post-repair E2E for Gemma 4 31B.
 - [PENDING] Fresh blind cohort: three outputs per model, scored against the recovered frozen unrounded Gemini baseline and rubric. Diagnostic runs are excluded from cohort samples.
 - [VERIFIED] Historical Issue #18 already contains an earlier three-model comparison (Gemini 3, Gemma 3, Qwen 3; three outputs/model), with recorded local-model failures. That historical comparison is not the required post-repair fresh cohort and is not counted toward this acceptance gate.
 
