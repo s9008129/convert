@@ -17,42 +17,26 @@
 ## WAVE-01–03 — Trace, runner, and privacy
 
 - [VERIFIED] Added opt-in stage diagnostics and a controlled local runner. Tracing disabled preserves ordinary pipeline behavior; raw snapshots require explicit opt-in and stay in the ignored task cache.
-- [VERIFIED] Redacted manifests contain stage identifiers, hashes/counts, safe model/config scalars, branch labels, and categorical claim outcomes; no source or generated text is written into tracked evidence.
+- [VERIFIED] Redacted manifests contain stage identifiers, hashes/counts, safe model/config scalars, and branch labels; a separate validator links human-adjudicated categorical claim statuses to event hashes. No source or generated text is written into tracked evidence.
 - [VERIFIED] The diagnostic test suite checks stage ordering, privacy, disabled behavior, and safe metadata.
 
 ## WAVE-04 — Frozen first-divergence evidence
 
-Selected claim: `internal_audit_prep_attribution_0656` (attribution; source anchor `00:06:56`, speaker index 3). Exact expected relation and raw claim specification remain local-only.
+### Attempt 1: attribution claim rejected as ambiguous
 
-- [VERIFIED] Frozen run: `03129fa7709a42f285c38f6b82fe5a0d`.
-- [VERIFIED] Code revision: `722797b6fa42c8cca73838b1bd9e50fbdb12161f`; model/provider: Qwen 3.8 27B / LM Studio; loaded context: 32,000; template: `section_meeting`.
-- [VERIFIED] The same redacted manifest records transcript SHA-256 `b7b9e5e05be5a560101312d9fb954d2e6aa10044febb8d3fca5a79f3931d9db0`, code revision, claim id, model/provider, context, template, and elapsed time.
-- [VERIFIED] Temperatures remained extraction 0.1, final 0.2, refinement 0.15; requested output cap 3,072; thinking disabled; no semantic or network retries. No prompt/context/temperature/refinement changes were made before this evidence.
-- [VERIFIED] Run completed successfully in 524,836 ms with 22 stage events, four extraction chunks, one merge round, zero refinement rounds, and `summary_failed=false`.
+- [VERIFIED] Frozen Qwen baseline run: `03129fa7709a42f285c38f6b82fe5a0d`, code revision `722797b6fa42c8cca73838b1bd9e50fbdb12161f`, LM Studio loaded instance `qwen3.8-27b-splash`, context 32,000, template `section_meeting`, transcript SHA-256 `b7b9e5e05be5a560101312d9fb954d2e6aa10044febb8d3fca5a79f3931d9db0`. It completed in 524,836 ms with four chunks, one merge round, zero refinements, and `summary_failed=false`.
+- [VERIFIED] A second fresh run after the candidate repair, `16c2ffac86224d6dacb0aa8cef6ea088`, completed in 719,134 ms with `final.input=notes_plus_transcript`, 22 events, and `summary_failed=false`. It is not counted as a quality sample.
+- [CORRECTION] The original claim attempted to infer that source speaker index 3 was not the DOCX role “科長”. Independent source audit found no verified speaker-index-to-role mapping. Therefore the claim is **AMBIGUOUS**, and neither run establishes first divergence for that claim. The earlier categorical stage table was too strong and has been superseded.
+- [VERIFIED] [`evidence/first-divergence.json`](evidence/first-divergence.json) now records this adjudication as `AMBIGUOUS`, includes no first-divergence stage, and links only safe event hashes to the two local redacted manifests. It contains no raw text.
 
-### Redacted claim stage table
+### Attempt 2: source-verifiable omission claim
 
-| Stage | Claim status | Evidence summary |
-|---|---|---|
-| Source | CORRECT | Source relation is tied to the selected timestamp and speaker index. |
-| `extraction.chunk.1.raw` | DISTORTED | The relation is assigned to the chair role and shifted to a different timestamp. |
-| `extraction.chunk.1.cleaned` | DISTORTED | Byte-preserving cleanup did not repair the relation. |
-| Other extraction chunks | NOT_APPLICABLE | The selected relation is in chunk 1. |
-| `consolidation.output` | DISTORTED | The shifted attribution remains. |
-| `final.input` (`notes_only`) | DISTORTED | Downstream local generation receives only the already-distorted notes. |
-| `final.raw` | MISSING | The topic remains, but the selected attribution relation is omitted. |
-| `final.cleaned` / `final.finalized` | MISSING | No deterministic transform restores the relation. |
-| `selection.final` | MISSING | Final delivered candidate lacks the attribution. |
+- [DECIDED] Use `W04-OMISSION-ENV-01`, an omission claim anchored to `00:33:57–00:35:21`, concerning a concrete facilities/pipe issue that appears repeatedly in the source but is absent from the supplied DOCX. This does not rely on speaker-role mapping or private names.
+- [PENDING] Run a controlled pre-repair Qwen diagnostic at the frozen baseline revision, then adjudicate the claim across all stages before accepting any repair branch.
 
-- **First divergence:** `extraction.chunk.1.raw`.
-- **Final delivery status:** `MISSING`.
-- [VERIFIED] Machine-readable categorical stage evidence with corresponding event input/output hashes is in [`evidence/first-divergence.json`](evidence/first-divergence.json); it references the local redacted manifest by SHA-256 and contains no raw text. Stage categories are human-adjudicated; hashes identify the exact frozen event payloads without disclosing them.
-- **Historical reproduction:** the same source-verifiable attribution failure is reproduced in this controlled run; this does not establish that every historical cohort error has the same cause.
-- **Rejected alternatives for this claim:** cleanup is not first (raw is already distorted); consolidation is later; final generation loses the attribution but its input already has a distortion; no refinement occurred. No evidence implicates output truncation, reasoning, retries, or model/context changes in this run.
+## WAVE-05 — Evidence-driven repair (Branch A candidate; acceptance pending valid claim evidence)
 
-## WAVE-05 — Evidence-driven repair (Branch A)
-
-- [DECIDED] Use the plan's Branch A source-recovery option: make source evidence available to local final/refinement generation under the selected instance's effective context budget.
+- [UNVERIFIED] The source-grounding change below is a candidate Branch A mechanism, not an accepted root-cause repair until Attempt 2 establishes a valid first divergence and fresh E2E validates the selected claim.
 - [VERIFIED] The pre-repair fail-first regression captured the mechanism: final generation received notes only, so a source-verifiable correction could not be recovered from source.
 - [IMPLEMENTED] A budget-aware resolver prefers the full transcript if it safely fits, otherwise selects complete timestamp/lexical-overlap source chunks, and otherwise reports an explicit notes-only fallback. It never silently truncates evidence. The local cloud path is unchanged.
 - [VERIFIED] Temperature, context limit, extraction prompt, refinement count, and validation/gating semantics were not tuned by this repair.
@@ -60,8 +44,9 @@ Selected claim: `internal_audit_prep_attribution_0656` (attribution; source anch
 
 ## WAVE-06 — Targeted and repository regression
 
-- [VERIFIED] Focused diagnostic tests: 7 passed after the change.
-- [VERIFIED] Full suite after the current repair: 812 passed, 2 skipped.
+- [VERIFIED] Focused diagnostic tests before claim-table tooling: 7 passed.
+- [VERIFIED] Full suite before claim-table tooling: 812 passed, 2 skipped.
+- [PENDING] Re-run focused/full tests after claim-table tooling and the selected-claim correction.
 - [VERIFIED] `git diff --check` passed.
 - [PENDING] Run full required regressions again after any final code adjustment and record docs check result.
 
