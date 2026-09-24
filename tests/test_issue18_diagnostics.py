@@ -144,6 +144,7 @@ def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypa
     refined = "會議名稱：x\n\n一、測試紀錄\n（二）議題\n1. 已確認項目。\n" + "內容。" * 200
     responses = iter([notes, notes, notes, initial, refined])
     monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
+    monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=32000))
     monkeypatch.setattr(service, "_build_local_context_plan", Mock(return_value=plan))
     monkeypatch.setattr(service, "_split_transcript_into_chunks", Mock(return_value=["chunk-1", "chunk-2"]))
     monkeypatch.setattr(service, "_validate_summary_quality", Mock(side_effect=[["test issue"], []]))
@@ -170,7 +171,13 @@ def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypa
         if event["stage_id"].endswith((".input", ".raw", ".cleaned", ".finalized"))
     ]
     for event in generation_events:
-        expected_branch = "transcript_chunk" if event["stage_id"].startswith("extraction.") else "notes_only"
+        expected_branch = (
+            "transcript_chunk"
+            if event["stage_id"].startswith("extraction.")
+            else "notes_plus_transcript"
+            if event["stage_id"].startswith(("final.", "refinement."))
+            else "notes_only"
+        )
         assert event["source_branch"] == expected_branch
     assert not (tmp_path / "raw").exists()
 
@@ -183,3 +190,86 @@ def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypa
     )
     assert without_trace == result
     assert generator_without_trace.await_count == 5
+
+
+def test_local_final_generation_receives_source_when_the_effective_context_fits(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from backend.core.config import settings
+    from backend.core.templates import get_template
+    from backend.services.summarization import LocalContextPlan, SummarizationService
+
+    service = SummarizationService()
+    source = "[00:06:56] 發言者3：請把內稽前要用的物品整理妥當。"
+    extracted_notes = "[00:08:15] 發言者1（科長）：請把內稽前要用的物品整理妥當。"
+    plan = LocalContextPlan(
+        context_window_tokens=32000,
+        estimated_transcript_tokens=100,
+        chunk_input_budget_tokens=8000,
+        merge_input_budget_tokens=8000,
+        merge_visible_target_tokens=4096,
+        merge_provider_output_tokens=3072,
+        needs_chunking=False,
+        estimated_chunk_count=1,
+    )
+    corrected_final = "會議紀錄：發言者3於00:06:56提出內稽前置整理事項。"
+    generator = AsyncMock(side_effect=[extracted_notes, corrected_final])
+    monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
+    monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=32000))
+    monkeypatch.setattr(service, "_build_local_context_plan", Mock(return_value=plan))
+    monkeypatch.setattr(service, "_split_transcript_into_chunks", Mock(return_value=[source]))
+    monkeypatch.setattr(service, "_validate_summary_quality", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_generate_with_local_engine", generator)
+
+    recorder = LocalPipelineDiagnosticRecorder(run_id="source-grounding")
+    result = __import__("asyncio").run(
+        service._summarize_with_local_pipeline(
+            source,
+            settings.DEFAULT_SYSTEM_PROMPT,
+            template=get_template("section_meeting"),
+            diagnostic_recorder=recorder,
+        )
+    )
+
+    assert "發言者3於00:06:56提出內稽前置整理事項" in result
+    final_message = generator.await_args_list[1].args[2]
+    assert source in final_message
+    final_input_event = next(
+        event for event in recorder.redacted_manifest()["events"]
+        if event["stage_id"] == "final.input"
+    )
+    assert final_input_event["source_branch"] == "notes_plus_transcript"
+
+
+def test_local_source_grounding_uses_complete_ranked_excerpt_or_explicit_notes_fallback():
+    from backend.services.summarization import SummarizationService
+
+    service = SummarizationService()
+    transcript = "source-window-one " * 120 + "[00:06:56] 發言者3：內稽前整理物品。"
+    message = "內稽前整理物品 [00:06:56]"
+    excerpted, branch, excerpt_count = service._resolve_local_source_grounding_message(
+        message,
+        transcript=transcript,
+        source_chunks=["unrelated source " * 20, "[00:06:56] 發言者3：內稽前整理物品。"],
+        system_prompt="system",
+        relevance_text=message,
+        context_window_tokens=200,
+        output_budget_tokens=16,
+    )
+    assert branch == "notes_plus_source_excerpt"
+    assert excerpt_count == 1
+    assert "[00:06:56] 發言者3：內稽前整理物品。" in excerpted
+    assert "source-window-one" not in excerpted
+
+    fallback, branch, excerpt_count = service._resolve_local_source_grounding_message(
+        "notes",
+        transcript="very long source " * 100,
+        source_chunks=["very long source " * 100],
+        system_prompt="system",
+        relevance_text="unrelated",
+        context_window_tokens=16,
+        output_budget_tokens=16,
+    )
+    assert fallback == "notes"
+    assert branch == "notes_only"
+    assert excerpt_count == 0
