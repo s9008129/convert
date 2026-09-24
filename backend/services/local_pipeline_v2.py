@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 
 def _hash(text: str) -> str:
@@ -262,7 +263,17 @@ def fidelity_firewall(
             numeric_issues.append(claim_id)
         if claim.date and (claim.date not in source or claim.date not in rendered):
             date_issues.append(claim_id)
-        if not any(f"〔{ref}〕" in rendered for ref in claim.evidence_refs):
+        anchored_tag = False
+        for segment in re.split(r"[\n。；;！？!?]", rendered):
+            claim_is_present = (
+                claim.subject in segment and claim.object in segment
+                and (claim.relation_type not in {RelationType.CAUSAL, RelationType.CONDITIONAL}
+                     or claim.predicate in segment)
+            )
+            if claim_is_present and any(f"〔{ref}〕" in segment for ref in claim.evidence_refs):
+                anchored_tag = True
+                break
+        if not anchored_tag:
             source_tag_issues.append(claim_id)
         if (claim_id in plan.required_claim_ids or claim_id == selected_claim_id) and claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
             meta = (relation_metadata or {}).get(claim_id)
@@ -337,18 +348,25 @@ class ModelRuntimeProfile(BaseModel):
         return not self.unsupported_controls
 
 
+class FactPayloadValidationError(ValueError):
+    """Model output was generated but failed strict JSON/schema validation."""
+
+
 def parse_fact_payload(payload: str | Mapping[str, Any], *, source_sha256: str) -> FactLedger:
     """Strict JSON + Pydantic fallback used when native structured output is absent."""
     try:
         value = json.loads(payload) if isinstance(payload, str) else dict(payload)
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("V2 extraction returned invalid JSON") from exc
+        raise FactPayloadValidationError("V2 extraction returned invalid JSON") from exc
     if not isinstance(value, Mapping):
-        raise ValueError("V2 extraction JSON must be an object")
+        raise FactPayloadValidationError("V2 extraction JSON must be an object")
     value = dict(value)
     value.setdefault("source_sha256", source_sha256)
     value.setdefault("claims", ())
-    return FactLedger.model_validate(value)
+    try:
+        return FactLedger.model_validate(value)
+    except ValidationError as exc:
+        raise FactPayloadValidationError("V2 extraction JSON failed schema validation") from exc
 
 
 def build_evidence_spans(
@@ -873,6 +891,83 @@ def _number_value_supported(number: float, unit: str | None, text: str) -> bool:
     return False
 
 
+def unsupported_high_risk_additions(raw_source: str, rendered: str) -> tuple[str, ...]:
+    """Return privacy-safe classes of exact, unsupported high-risk additions.
+
+    The detector intentionally limits veto candidates to unambiguous exact
+    forms: dates, numeric values paired with units, explicit speaker
+    attributions, and organization/entity names with strong suffixes. It does
+    not normalize aliases or fuzzy-match; uncertain variants are left to the
+    blind rubric rather than rejected here.
+    """
+    issue_kinds: list[str] = []
+    patterns = (
+        ("date", re.compile(r"(?<!\d)(?:\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{2,4}年\d{1,2}月\d{1,2}日)(?!\d)")),
+        ("numeric", re.compile(r"(?<![\d０-９])\d+(?:\.\d+)?\s*(?:億元|萬元|元|件|人|名|家|次|日|天|週|周|月|年|小時|分鐘|%|％)(?![\d０-９])")),
+        ("attribution", re.compile(r"(?:主席|委員|承辦人|發言者\s*\d+|Speaker\s*\d+)\s*(?:表示|指出|認為|報告|提議)")),
+        ("entity", re.compile(r"[\u3400-\u9fffA-Za-z0-9]{3,24}?(?:股份有限公司|有限公司|公司)")),
+    )
+    for kind, pattern in patterns:
+        supported = {re.sub(r"\s+", "", match.group(0)) for match in pattern.finditer(raw_source)}
+        for match in pattern.finditer(rendered):
+            candidate = re.sub(r"\s+", "", match.group(0))
+            if kind == "date":
+                digits = tuple(int(value) for value in re.findall(r"\d+", candidate))
+                if any(tuple(int(value) for value in re.findall(r"\d+", known)) == digits for known in supported):
+                    continue
+            elif kind == "numeric":
+                numeric = re.match(r"([\d,.]+)(.*)", candidate)
+                if numeric:
+                    value = numeric.group(1).replace(",", "")
+                    try:
+                        number = float(value)
+                    except ValueError:
+                        number = float("nan")
+                    unit = numeric.group(2).replace("萬", "万").replace("週", "周")
+                    if any(
+                        (known_match := re.match(r"([\d,.]+)(.*)", known)) is not None
+                        and float(known_match.group(1).replace(",", "")) == number
+                        and known_match.group(2).replace("萬", "万").replace("週", "周") == unit
+                        for known in supported
+                    ):
+                        continue
+            elif kind == "entity":
+                # Same name stem with a different legal suffix is an alias or
+                # normalization ambiguity, not decisive evidence of invention.
+                stem = re.sub(r"(?:股份有限公司|有限公司|公司)$", "", candidate)
+                if stem and stem in raw_source:
+                    continue
+            if candidate not in supported:
+                issue_kinds.append(kind)
+                break
+    return tuple(issue_kinds)
+
+
+def unknown_source_tag_references(rendered: str, valid_span_ids: Iterable[str]) -> tuple[str, ...]:
+    """Reject only explicit citation tags that cannot resolve to validated spans."""
+    valid = set(valid_span_ids)
+    unknown = []
+    for group in re.findall(r"〔([^〕]+)〕", rendered):
+        for span_id in (part.strip() for part in group.split(",")):
+            if span_id and span_id not in valid:
+                unknown.append("unknown_span_reference")
+    return tuple(dict.fromkeys(unknown))
+
+
+def apply_template_glossary_corrections(text: str, corrections: Sequence[tuple[str, str]]) -> str:
+    """Apply only explicit, template-owned exact mappings, deterministically."""
+    result = text
+    for _ in range(len(corrections) + 1):
+        corrected = result
+        for wrong, right in corrections:
+            if wrong and right and wrong != right:
+                corrected = corrected.replace(wrong, right)
+        if corrected == result:
+            return result
+        result = corrected
+    raise ValueError("template glossary corrections did not converge")
+
+
 def resolve_claim_occurrences(
     claims: Iterable[FactClaim], evidence: Mapping[str, EvidenceSpan], *, source_sha256: str,
 ) -> tuple[FactClaim, ...]:
@@ -1029,8 +1124,8 @@ async def sample_candidate_profiles(
     repeats: int = 3,
 ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
     """Execute only caller-supplied runtime/evaluator samples; never fabricate data."""
-    if repeats < 1:
-        raise ValueError("repeats must be positive")
+    if repeats < 3:
+        raise ValueError("profile sampling requires at least three observed runs")
     results: dict[str, tuple[Mapping[str, Any], ...]] = {}
     for candidate in candidates:
         if not candidate.validated:
@@ -1038,20 +1133,53 @@ async def sample_candidate_profiles(
         samples: list[Mapping[str, Any]] = []
         for _ in range(repeats):
             observed = await run_sample(candidate)
-            if not isinstance(observed, Mapping) or "score" not in observed:
-                raise ValueError("profile evaluator must return an observed score mapping")
+            if not isinstance(observed, Mapping):
+                raise ValueError("profile evaluator must return an observed mapping")
             unsupported = observed.get("unsupported_controls")
             if unsupported:
                 names = (unsupported,) if isinstance(unsupported, str) else tuple(unsupported)
                 results[_profile_key(candidate)] = ({"unsupported_controls": ",".join(sorted(map(str, names)))},)
                 samples = []
                 break
-            samples.append({key: value for key, value in observed.items()
-                            if key in {"score", "hard_fail", "causal_errors", "attribution_errors",
-                                       "faithfulness", "traceability", "completeness", "usability"}})
+            if not _profile_sample_is_complete(observed):
+                raise ValueError("profile evaluator must return run_id and complete finite metrics")
+            samples.append({key: observed[key] for key in (
+                "run_id", "score", "hard_fail", "causal_errors", "attribution_errors",
+                "faithfulness", "traceability", "completeness", "usability",
+            )})
         if samples:
+            if len({str(sample["run_id"]) for sample in samples}) != len(samples):
+                raise ValueError("profile sampling requires three distinct observed runs")
             results[_profile_key(candidate)] = tuple(samples)
     return results
+
+
+_PROFILE_METRIC_KEYS = (
+    "score", "hard_fail", "causal_errors", "attribution_errors",
+    "faithfulness", "traceability", "completeness", "usability",
+)
+
+
+def _profile_sample_is_complete(sample: Mapping[str, Any]) -> bool:
+    run_id = sample.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        return False
+    if any(key not in sample for key in _PROFILE_METRIC_KEYS):
+        return False
+    try:
+        values = {key: float(sample[key]) for key in _PROFILE_METRIC_KEYS}
+    except (TypeError, ValueError):
+        return False
+    if any(not math.isfinite(value) for value in values.values()):
+        return False
+    if any(not 0 <= values[key] <= 1 for key in (
+        "score", "faithfulness", "traceability", "completeness", "usability",
+    )):
+        return False
+    return all(
+        values[key] >= 0 and values[key].is_integer()
+        for key in ("hard_fail", "causal_errors", "attribution_errors")
+    )
 
 
 def select_profile_candidate(
@@ -1064,15 +1192,16 @@ def select_profile_candidate(
         if not candidate.validated:
             continue
         samples = samples_by_profile.get(_profile_key(candidate), ())
-        if (not samples or any("unsupported_controls" in sample for sample in samples)
-                or any("score" not in sample for sample in samples)):
+        if (len(samples) < 3 or any("unsupported_controls" in sample for sample in samples)
+                or any(not _profile_sample_is_complete(sample) for sample in samples)
+                or len({str(sample["run_id"]) for sample in samples}) != len(samples)):
             continue
         hard_fails = sum(float(sample.get("hard_fail", 0)) for sample in samples)
         causal = sum(float(sample.get("causal_errors", 0)) for sample in samples)
         attribution = sum(float(sample.get("attribution_errors", 0)) for sample in samples)
         dimensions = []
         for key in ("faithfulness", "traceability", "completeness", "usability"):
-            values = sorted(float(sample.get(key, 0)) for sample in samples)
+            values = sorted(float(sample[key]) for sample in samples)
             median = values[len(values) // 2] if len(values) % 2 else (values[len(values)//2 - 1] + values[len(values)//2]) / 2
             dimensions.append((values[0], median, values[-1] - values[0]))
         score = sum(float(sample["score"]) for sample in samples) / len(samples)
@@ -1084,7 +1213,7 @@ def select_profile_candidate(
         rank = (*rank_parts, -score)
         eligible.append((rank, candidate))
     if not eligible:
-        raise ValueError("no capability-valid candidate has observed evaluator samples")
+        raise ValueError("no capability-valid candidate has >=3 complete distinct observed runs (run_id required)")
     return min(eligible, key=lambda item: item[0])[1]
 
 

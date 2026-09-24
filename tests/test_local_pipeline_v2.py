@@ -288,6 +288,11 @@ def test_w5_firewall_checks_occurrence_numeric_date_entity_attribution_and_sourc
     )
     assert entity_snapshot.entity_issues == ("c1",)
 
+    unanchored = fidelity_firewall(
+        plan, "團隊完成決議\n補充〔span-1〕", {"c1": claim}, evidence,
+    )
+    assert unanchored.source_tag_issues == ("c1",)
+
 
 def test_w5_source_candidate_offsets_and_record_term_checks_are_deterministic():
     raw = "主席：於2026-09-24決議12件並延後一週"
@@ -302,6 +307,38 @@ def test_w5_source_candidate_offsets_and_record_term_checks_are_deterministic():
     ))
     assert duplicated == ("c1",)
     assert validate_template_terms("會議決議事項", ("決議事項", "散會")) == ("散會",)
+
+
+def test_source_tags_diversify_over_independent_validated_spans():
+    c1 = _claim("c1", subject="預算", predicate="導致", object="延後",
+                relation_type="causal", evidence_refs=("span-1",), evidence_quote="預算導致延後",
+                resolved_start_offset=0, resolved_end_offset=6)
+    c2 = _claim("c2", subject="人力", predicate="造成", object="延期",
+                relation_type="causal", evidence_refs=("span-2",), evidence_quote="人力造成延期",
+                resolved_start_offset=10, resolved_end_offset=16)
+    evidence = {
+        "span-1": EvidenceSpan.from_source("span-1", "預算導致延後", start_offset=0, end_offset=6),
+        "span-2": EvidenceSpan.from_source("span-2", "人力造成延期", start_offset=10, end_offset=16),
+    }
+    plan = SectionPlan(section_id="s", title="決議", required_claim_ids=("c1", "c2"))
+    relations = {
+        claim.claim_id: RelationMetadata(
+            subject=claim.subject, predicate=claim.predicate, object=claim.object,
+            direction=claim.direction, polarity=claim.polarity,
+            condition=claim.condition, relation_type=claim.relation_type,
+        )
+        for claim in (c1, c2)
+    }
+    snapshot = fidelity_firewall(
+        plan, "預算導致延後〔span-1〕；人力造成延期〔span-2〕",
+        {"c1": c1, "c2": c2}, evidence, relation_metadata=relations,
+    )
+    assert snapshot.accepted
+    unanchored = fidelity_firewall(
+        plan, "預算導致延後〔span-2〕；人力造成延期〔span-1〕",
+        {"c1": c1, "c2": c2}, evidence, relation_metadata=relations,
+    )
+    assert unanchored.source_tag_issues == ("c1", "c2")
 
 
 def test_section_render_envelope_keeps_identity_outside_prose():
@@ -634,6 +671,158 @@ async def test_live_final_firewall_fails_closed_on_corrupt_section_markers(monke
         await service._summarize_with_local_pipeline_v2("來源", "system")
 
 
+@pytest.mark.parametrize("mutation", (
+    "drop_required", "add_unsupported_number", "add_unsupported_entity", "add_unsupported_attribution",
+))
+@pytest.mark.asyncio
+async def test_post_finalizer_bytes_fail_closed_on_required_loss_or_unsupported_value(monkeypatch, mutation):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="s", title="決議", required_claim_ids=("c1",)),
+    ))
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [{
+                "claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                "relation_type": "causal", "evidence_refs": ["span-1"],
+                "evidence_quote": "預算導致延後",
+            }]})
+        additions = {
+            "add_unsupported_number": "；另增列99萬元",
+            "add_unsupported_entity": "；新增星河能源股份有限公司",
+            "add_unsupported_attribution": "；主席表示另增列措施",
+        }
+        return json.dumps({
+            "text": "已移除〔span-1〕" if mutation == "drop_required"
+            else "預算導致延後〔span-1〕" + additions.get(mutation, ""),
+            "claim_ids": ["c1"],
+            "relation_metadata": {"c1": {
+                "subject": "預算", "predicate": "導致", "object": "延後",
+                "direction": "subject_to_object", "polarity": "positive",
+                "condition": None, "relation_type": "causal",
+            }},
+        })
+
+    def finalizer(marked_text, template=None):
+        return marked_text.replace("預算導致延後", "已移除") if mutation == "drop_required" else marked_text
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    monkeypatch.setattr(service, "_finalize_record_text", finalizer)
+    with pytest.raises(LocalPipelineV2Error, match="final assembly"):
+        await service._summarize_with_local_pipeline_v2("預算導致延後。", "system")
+
+
+def test_high_risk_novelty_detector_is_exact_and_ambiguity_tolerant():
+    from backend.services.local_pipeline_v2 import (
+        apply_template_glossary_corrections, unsupported_high_risk_additions,
+    )
+
+    source = "2026年9月24日，新增12萬元，由星河公司提出。"
+    equivalent = "2026-09-24，新增12 萬元，由星河股份有限公司提出。"
+    assert unsupported_high_risk_additions(source, equivalent) == ()
+    assert unsupported_high_risk_additions(source, "2026-09-24，新增99萬元，由星河公司提出。") == ("numeric",)
+    assert unsupported_high_risk_additions(source, "2026-09-24，新增12萬元，由另一家公司提出。") == ("entity",)
+    alias_source = "星河能源有限公司提出建議。"
+    assert unsupported_high_risk_additions(
+        alias_source, "星河能源股份有限公司提出建議。"
+    ) == ()
+    corrected = apply_template_glossary_corrections("本週列冠二案", (("列冠", "列管"),))
+    assert corrected == "本週列管二案"
+    assert apply_template_glossary_corrections(corrected, (("列冠", "列管"),)) == corrected
+    from backend.core.templates import get_template as load_template
+    template_corrections = load_template("section_meeting").glossary_corrections
+    fixture = "、".join(wrong for wrong, _right in template_corrections)
+    once = apply_template_glossary_corrections(fixture, template_corrections)
+    assert apply_template_glossary_corrections(once, template_corrections) == once
+
+
+@pytest.mark.asyncio
+async def test_live_finalizer_rejects_required_fact_duplicated_across_sections(monkeypatch):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="s0", title="決議", required_claim_ids=("c1",), template_order=0),
+        SectionPlan(section_id="s1", title="補充", template_order=1),
+    ))
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [{
+                "claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                "relation_type": "causal", "evidence_refs": ["span-1"],
+                "evidence_quote": "預算導致延後",
+            }]})
+        if '"c1"' in message:
+            return json.dumps({"text": "預算導致延後〔span-1〕", "claim_ids": ["c1"],
+                "relation_metadata": {"c1": {
+                    "subject": "預算", "predicate": "導致", "object": "延後",
+                    "direction": "subject_to_object", "polarity": "positive",
+                    "condition": None, "relation_type": "causal",
+                }}})
+        return json.dumps({"text": "補充說明", "claim_ids": [], "relation_metadata": {}})
+
+    def duplicate_into_second_section(marked_text, template=None):
+        marker = __import__("re").search(r"(【V2段界:[^】]+:1:開始】\n)", marked_text)
+        assert marker
+        return (marked_text[:marker.end()] + "預算導致延後〔span-1〕\n"
+                + marked_text[marker.end():])
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    monkeypatch.setattr(service, "_finalize_record_text", duplicate_into_second_section)
+    with pytest.raises(LocalPipelineV2Error, match="final assembly"):
+        await service._summarize_with_local_pipeline_v2("預算導致延後。", "system")
+
+
+@pytest.mark.asyncio
+async def test_live_final_bytes_reject_omitted_source_inventory_candidates(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "會議完成", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    with pytest.raises(LocalPipelineV2Error, match="final assembly"):
+        await service._summarize_with_local_pipeline_v2("預算因此延後。", "system")
+
+
+@pytest.mark.asyncio
+async def test_live_v2_applies_only_the_selected_templates_verified_glossary_mapping(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "列冠", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2(
+        "列冠", "system", template=get_template("section_meeting"),
+    )
+    assert "列管" in result
+    assert "列冠" not in result
+
+
+def test_final_source_tags_must_resolve_to_validated_spans():
+    from backend.services.local_pipeline_v2 import unknown_source_tag_references
+
+    assert unknown_source_tag_references("完成〔span-1〕", ("span-1",)) == ()
+    assert unknown_source_tag_references("完成〔invented-span〕", ("span-1",)) == ("unknown_span_reference",)
+
+
 @pytest.mark.asyncio
 async def test_direct_v2_entry_requires_explicit_v2_pipeline_version(monkeypatch):
     service = SummarizationService()
@@ -717,6 +906,7 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     await service._summarize_with_local_pipeline_v2(
         "來源", "system", template=get_template("general"), diagnostic_recorder=recorder,
     )
+    assert extraction_calls == 2
     repair = next(event for event in recorder.events if event["stage_id"] == "v2.extraction.chunk.1.repair")
     assert repair["temperature"] == 1.0
     assert temperatures and set(temperatures) == {1.0}
@@ -751,7 +941,7 @@ async def test_v2_generation_outputs_are_opt_in_snapshots_and_manifest_redacted(
 
     events = recorder.events
     failed_first_parse = next(event for event in events if event["stage_id"] == "v2.extraction.chunk.1.outcome")
-    assert failed_first_parse["status"] == "failed:ValueError"
+    assert failed_first_parse["status"] == "schema_failed:FactPayloadValidationError"
     assert any(event["stage_id"] == "v2.extraction.chunk.1.repair.output" for event in events)
     assert any(event["stage_id"].startswith("v2.section.") and event["stage_id"].endswith(".output") for event in events)
     assert any(event["stage_id"].startswith("v2.patch.") and event["stage_id"].endswith(".output") for event in events)
@@ -786,7 +976,8 @@ async def test_v2_failure_diagnostics_keep_error_class_not_message(monkeypatch, 
             "safe synthetic source", "system", template=get_template("general"), diagnostic_recorder=recorder,
         )
     outcomes = [event for event in recorder.events if event["stage_id"].endswith(".outcome")]
-    assert [event["status"] for event in outcomes] == ["failed:ValueError", "failed:ValueError"]
+    assert [event["status"] for event in outcomes] == ["generation_failed:ValueError"]
+    assert not any(".repair" in event["stage_id"] for event in recorder.events)
     manifest_text = json.dumps(recorder.redacted_manifest(), ensure_ascii=False)
     assert "PRIVATE_EXCEPTION_MESSAGE" not in manifest_text
     assert not (tmp_path / "raw").exists()
@@ -835,16 +1026,68 @@ async def test_profile_sampler_runs_only_observed_valid_profiles_and_selector_is
         "temperature": True, "top_p": True, "top_k": True, "thinking": True,
     }) for candidate in candidates)
     calls = []
+    sample_index = 0
     async def run_sample(candidate):
+        nonlocal sample_index
+        sample_index += 1
         calls.append(candidate.temperature)
-        return {"score": candidate.temperature, "hard_fail": 0,
+        return {"run_id": f"run-{sample_index}", "score": candidate.temperature, "hard_fail": 0,
                 "causal_errors": 0, "attribution_errors": 0,
                 "faithfulness": candidate.temperature, "traceability": 1,
                 "completeness": 1, "usability": 1}
-    samples = await sample_candidate_profiles(candidates, run_sample, repeats=2)
-    assert len(calls) == 6
+    samples = await sample_candidate_profiles(candidates, run_sample, repeats=3)
+    assert len(calls) == 9
     selected = select_profile_candidate(candidates, samples)
     assert selected.temperature == 0.7
+
+
+@pytest.mark.asyncio
+async def test_profile_sampling_rejects_under_repeats_replayed_runs_and_incomplete_metrics():
+    candidates = candidate_runtime_profiles("Qwen", "qwen-key", "lmstudio")
+    async def unused(_candidate):
+        return None
+    with pytest.raises(ValueError, match="at least three"):
+        await sample_candidate_profiles(candidates, unused, repeats=2)
+
+    candidate = validate_runtime_profile(candidates[0], {
+        "temperature": True, "top_p": True, "top_k": True, "thinking": True,
+    })
+    async def replayed(_candidate):
+        return {"run_id": "same-run", "score": 0.9, "hard_fail": 0,
+                "causal_errors": 0, "attribution_errors": 0,
+                "faithfulness": 0.9, "traceability": 0.9,
+                "completeness": 0.9, "usability": 0.9}
+    with pytest.raises(ValueError, match="distinct observed runs"):
+        await sample_candidate_profiles((candidate,), replayed, repeats=3)
+
+    incomplete = {"score": 0.9, "hard_fail": 0, "causal_errors": 0,
+                  "attribution_errors": 0, "faithfulness": 0.9,
+                  "traceability": 0.9, "completeness": 0.9, "usability": 0.9}
+    with pytest.raises(ValueError, match="run_id"):
+        select_profile_candidate((candidate,), {_profile_key_for_test(candidate): (incomplete,) * 3})
+
+    complete_replays = tuple({
+        "run_id": f"run-{index}", "score": 0.9, "hard_fail": 0,
+        "causal_errors": 0, "attribution_errors": 0,
+        "faithfulness": 0.9, "traceability": 0.9,
+        "completeness": 0.9, "usability": 0.9,
+    } for index in range(3))
+    incomplete_dimension = tuple({key: value for key, value in sample.items()
+                                  if key != "traceability"}
+                                 for sample in complete_replays)
+    with pytest.raises(ValueError, match="run_id"):
+        select_profile_candidate((candidate,), {
+            _profile_key_for_test(candidate): incomplete_dimension,
+        })
+    out_of_range = tuple({**sample, "score": 1.2} for sample in complete_replays)
+    with pytest.raises(ValueError, match="run_id"):
+        select_profile_candidate((candidate,), {
+            _profile_key_for_test(candidate): out_of_range,
+        })
+
+
+def _profile_key_for_test(profile):
+    return f"{profile.model_key}|{profile.temperature}|{profile.top_p}|{profile.top_k}|{profile.thinking}"
 
 
 @pytest.mark.asyncio

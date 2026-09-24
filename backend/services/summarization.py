@@ -2309,7 +2309,7 @@ class SummarizationService:
         ``local_pipeline_v2`` and are independently testable.
         """
         from backend.services.local_pipeline_v2 import (
-            LocalPipelineV2Error, build_evidence_spans, consolidate_claims,
+            FactPayloadValidationError, LocalPipelineV2Error, build_evidence_spans, consolidate_claims,
             parse_fact_payload, render_section, assemble_sections,
             fidelity_firewall, parse_section_render_payload,
             guarded_section_patch, ModelRuntimeProfile,
@@ -2318,6 +2318,8 @@ class SummarizationService:
             template_section_plans, cross_section_claim_duplicates,
             validate_template_terms, RelationMetadata,
             bind_selected_claim_target, SelectedClaimTarget, resolve_claim_occurrences,
+            unsupported_high_risk_additions, unknown_source_tag_references,
+            apply_template_glossary_corrections,
         )
 
         if getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() != "v2":
@@ -2423,21 +2425,27 @@ class SummarizationService:
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
                 )
-                if diagnostic_recorder:
-                    diagnostic_recorder.record(
-                        f"v2.extraction.chunk.{index}.output", output_text=raw,
-                        source_branch="transcript_chunk", status="received",
-                    )
-                parsed = parse_fact_payload(raw, source_sha256=source_sha)
-                if diagnostic_recorder:
-                    diagnostic_recorder.record(
-                        f"v2.extraction.chunk.{index}.outcome", status="parsed",
-                    )
-            except Exception as first_error:
+            except Exception as generation_error:
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
                         f"v2.extraction.chunk.{index}.outcome",
-                        status=f"failed:{type(first_error).__name__}",
+                        status=f"generation_failed:{type(generation_error).__name__}",
+                    )
+                raise LocalPipelineV2Error(
+                    f"V2 extraction generation failed (chunk {index})"
+                ) from generation_error
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    f"v2.extraction.chunk.{index}.output", output_text=raw,
+                    source_branch="transcript_chunk", status="received",
+                )
+            try:
+                parsed = parse_fact_payload(raw, source_sha256=source_sha)
+            except FactPayloadValidationError as first_error:
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.extraction.chunk.{index}.outcome",
+                        status=f"schema_failed:{type(first_error).__name__}",
                     )
                 # Exactly one schema-only repair; changing source/policy is not
                 # a repair and would violate the V2 contract.
@@ -2462,20 +2470,30 @@ class SummarizationService:
                             f"v2.extraction.chunk.{index}.repair.output", output_text=raw,
                             source_branch="transcript_chunk", status="received",
                         )
-                    parsed = parse_fact_payload(raw, source_sha256=source_sha)
-                    if diagnostic_recorder:
-                        diagnostic_recorder.record(
-                            f"v2.extraction.chunk.{index}.repair.outcome", status="parsed",
-                        )
-                except Exception as second_error:
+                except Exception as repair_generation_error:
                     if diagnostic_recorder:
                         diagnostic_recorder.record(
                             f"v2.extraction.chunk.{index}.repair.outcome",
-                            status=f"failed:{type(second_error).__name__}",
+                            status=f"generation_failed:{type(repair_generation_error).__name__}",
+                        )
+                    raise LocalPipelineV2Error(
+                        f"V2 extraction repair generation failed (chunk {index})"
+                    ) from repair_generation_error
+                try:
+                    parsed = parse_fact_payload(raw, source_sha256=source_sha)
+                except FactPayloadValidationError as repair_schema_error:
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.extraction.chunk.{index}.repair.outcome",
+                            status=f"schema_failed:{type(repair_schema_error).__name__}",
                         )
                     raise LocalPipelineV2Error(
                         f"V2 structured extraction failed after one schema-only repair (chunk {index})"
-                    ) from second_error
+                    ) from repair_schema_error
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    f"v2.extraction.chunk.{index}.outcome", status="parsed",
+                )
             claims.extend(parsed.claims)
         evidence = {span.span_id: span for span in spans}
         occurrence_claims = resolve_claim_occurrences(claims, evidence, source_sha256=source_sha)
@@ -2672,11 +2690,15 @@ class SummarizationService:
         # section skeleton contract remains identical to V1. The final source
         # firewall below runs after deterministic post-processing.
         finalized_marked_result = self._finalize_record_text(marked_result, template=template)
+        finalized_marked_result = apply_template_glossary_corrections(
+            finalized_marked_result, tuple(getattr(template, "glossary_corrections", ()))
+        )
         final_firewall_issues = []
         coverage_issue_count = 0
         marker_bounds = []
         marker_integrity_valid = True
         selected_delivery_checked = False
+        finalized_section_slices: dict[str, str] = {}
         for plan in plans:
             start_marker, end_marker = marker_pairs[plan.section_id]
             start_at = finalized_marked_result.find(start_marker)
@@ -2698,12 +2720,27 @@ class SummarizationService:
                 section_slice = ""
             else:
                 section_slice = finalized_marked_result[start_at + len(start_marker):end_at].strip()
+            finalized_section_slices[plan.section_id] = section_slice
             final_snapshot = fidelity_firewall(plan, section_slice, by_id, evidence,
                                                selected_claim_id=selected_claim_id,
                                                relation_metadata=section_relations[plan.section_id])
             coverage_issue_count += len(set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids))
             if not final_snapshot.accepted:
                 coverage_issue_count += len(final_snapshot.coverage_issues)
+            required_ids = set(plan.required_claim_ids)
+            decisive_required_issues = (
+                (set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids))
+                | (set(final_snapshot.relation_issues) & required_ids)
+                | (set(final_snapshot.polarity_issues) & required_ids)
+                | (set(final_snapshot.condition_issues) & required_ids)
+                | (set(final_snapshot.attribution_issues) & required_ids)
+                | (set(final_snapshot.numeric_issues) & required_ids)
+                | (set(final_snapshot.date_issues) & required_ids)
+                | (set(final_snapshot.entity_issues) & required_ids)
+                | (set(final_snapshot.source_tag_issues) & required_ids)
+            )
+            if decisive_required_issues or plan.coverage_issues:
+                final_firewall_issues.append(f"required-coverage:{plan.section_id}")
             if selected_claim_id and selected_claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
                 expected = RelationMetadata.model_validate(selected_target_relation)
                 relation = section_relations[plan.section_id].get(selected_claim_id)
@@ -2717,12 +2754,29 @@ class SummarizationService:
                     final_firewall_issues.append(f"selected-target:{plan.section_id}")
         if selected_claim_id and not selected_delivery_checked:
             final_firewall_issues.append("selected-target:not-delivered")
-        if final_firewall_issues:
-            raise LocalPipelineV2Error("V2 final assembly failed source-alignment firewall")
         result = finalized_marked_result
         for start_marker, end_marker in marker_pairs.values():
             result = result.replace(start_marker, "").replace(end_marker, "")
         result = result.strip()
+        if unsupported_high_risk_additions(source_transcript, result):
+            final_firewall_issues.append("unsupported-high-risk-addition")
+        if unknown_source_tag_references(result, evidence):
+            final_firewall_issues.append("unanchored-source-tag")
+        required_relation_texts: dict[str, str] = {}
+        for plan in plans:
+            for claim_id in plan.required_claim_ids:
+                claim = by_id.get(claim_id)
+                if claim is not None and claim.subject and claim.predicate and claim.object:
+                    relation_text = f"{claim.subject}{claim.predicate}{claim.object}"
+                    required_relation_texts.setdefault(relation_text, claim_id)
+        duplicated_required = [
+            claim_id for relation_text, claim_id in required_relation_texts.items()
+            if sum(bool(section.count(relation_text)) for section in finalized_section_slices.values()) > 1
+        ]
+        if duplicated_required:
+            final_firewall_issues.append("required-cross-section-duplicate")
+        if final_firewall_issues:
+            raise LocalPipelineV2Error("V2 final assembly failed source-alignment firewall")
         duplicate_ids = cross_section_claim_duplicates(plans)
         template_terms = tuple(dict.fromkeys(
             (*[term for plan in plans for term in plan.required_terms],

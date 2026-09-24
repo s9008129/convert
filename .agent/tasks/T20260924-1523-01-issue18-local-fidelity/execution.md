@@ -636,3 +636,63 @@ the repaired code without editing attempt07.
 
   Existing scoped C1/C9 target-spec, Gemma environment, and C10/C14 evaluator
   blockers remain unchanged.
+
+## Stage 04 implementation — approved Plan R13
+
+### Identity and pre-mutation state
+
+- TASK_ID: `T20260924-1523-01-issue18-local-fidelity`
+- PLAN_REVISION: 13; PLAN SHA-256: `ea0334db6c32294f26fdcf7b22db52c376b9cc03e98dd3214cb011f6ac56f900`
+- Review: attempt 12 returned `PLAN_APPROVED` for the same plan SHA.
+- Handoff SHA-256: `b2df3b9fbb296d35e0277d3663f895d01c264e954633a0b5f8d3546e8b2dadba`
+- Branch/HEAD: `issue-18-first-divergence-diagnostic` / `35e98a29f63c155e25454b494c5d21436529aa28` (no commit created in this Stage04 run).
+- The timestamped, path-classified W0 snapshot is `evidence/stage04-w0-20260924T203258Z.md`, SHA-256 `866a2bd45d8c9a41d09400e4fbfc235e55486341e2f2b48350509502757c3404`. All pre-existing dirty paths were approved task plan/handoff/review/archive evidence; product code was clean before this implementation. Safety branches were verified as ancestors of HEAD, and the pre-R12 safety branch equals HEAD.
+- PR #19 was rechecked OPEN/Draft, base `main`, correct head. It remains Draft; no push or PR edit was made before Stage05.
+- Runtime recheck at W0: Qwen 3.8 27B was loaded; Gemma remained not-loaded. No model call was made in this Stage04 run.
+
+### Implemented CORE repairs
+
+- Final post-finalizer assembled bytes now reject decisive mapped-required coverage/relation/source-tag failures, selected-target delivery failure, source-inventory candidate omissions, unresolvable citation IDs, confirmed unsupported exact high-risk additions, and required claims duplicated across sections. Optional/ambiguous signals remain non-gating. Novelty checks are intentionally exact and conservative; equivalent date/number formatting and same-stem legal-suffix aliases are not vetoed.
+- Required source tags must appear on the claim-bearing clause and refer to validated evidence spans. Independent claim occurrences can use distinct validated span references; no tag is synthesized.
+- Extraction generation/runtime failures are classified separately and fail without schema repair. Only strict JSON/schema validation failure receives one schema-only repair; repair generation/schema failure terminates without another attempt.
+- Runtime profile sampling/selection rejects repeats below 3, repeated run IDs, missing IDs/dimensions, non-finite/out-of-range scores, and malformed error counts. It no longer imputes missing dimensions as zero. This is profile/acceptance eligibility only, not a per-record gate.
+- Exact template-owned glossary mappings are applied deterministically and idempotently after the existing finalizer, before final-byte validation. No broad/global term substitution was introduced.
+- Tests use synthetic content; no raw meeting source, prompts, or model output were added to tracked files.
+
+### Verification evidence
+
+| Check | Result | Evidence / notes |
+|---|---|---|
+| C1 selected-target source→delivery E2E | `BLOCKED` / `AUTHORITY_REQUIRED` | Stage05 must freshly verify designated source identity/hash, unique occurrence, and raw-derived relation before any acceptance call. No Qwen call was made. |
+| C2 synthetic A–I and live V2 regressions | `PASS` | `DATA_DIR=/tmp/issue18-stage04-data uv run pytest -q tests/test_local_pipeline_v2.py` — 74 passed. Includes fail-first/post-fix finalizer, novelty, citation, schema retry, and profile-eligibility contracts. |
+| C3 cloud non-regression | `PASS` | Pre and post: `DATA_DIR=/tmp/issue18-stage04-cloud-final uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"` — 13 passed, 41 deselected. The initial no-override collection failed because logger default `/app/data/logs` was read-only; using task-local `/tmp` DATA_DIR resolved the environment-only issue. |
+| C4 privacy | `PASS` | Reviewed changed paths and executed a suppressed sensitive-pattern scan over product/test diff; no matches. New tests are synthetic; no Qwen/Gemma outputs or source payloads exist in the diff. |
+| C5 local V2/task-processor focused integration | `PASS` | `DATA_DIR=/tmp/issue18-stage04-c5 uv run pytest -q tests/test_local_pipeline_v2.py tests/test_task_processor.py` — 92 passed. |
+| C6 repository suite | `PASS` | `DATA_DIR=/tmp/issue18-stage04-final uv run pytest tests/ -q` — 893 passed, 2 skipped. |
+| C7 docs | `PASS` | `bash scripts/check_docs.sh` exited 0; it emitted the same 2 README version warnings noted by prior task evidence. No documentation content was changed in this Stage04 wave. |
+| C8 diff hygiene | `PASS` | `git diff --check` and `python3 -m py_compile backend/services/local_pipeline_v2.py backend/services/summarization.py tests/test_local_pipeline_v2.py` exited 0. |
+| C9 fresh Qwen and Gemma E2E | `BLOCKED` / scoped acceptance | Qwen was loaded but its C1 acceptance call is gated on Stage05 preflight. Gemma was not loaded; do not alter runtime until the Qwen path is complete. |
+| C10 blind Gemma 3 + Qwen 3 vs original unrounded Gemini median | `BLOCKED` / `AUTHORITY_REQUIRED` | Frozen evaluator/rubric and original unrounded baseline remain unavailable. No scores were invented, rounded, or substituted. |
+| C11 cost/context diagnostics | `NOT_RUN` / supporting | Non-gating. |
+| C12 held-out meeting | `NOT_RUN` / best-effort | No approved additional source was supplied. |
+| C13 execution/docs/status fixtures/PR | `INCOMPLETE` | This execution record and W0 evidence are durable; status fixture remains existing task evidence. PR #19 remains Draft and awaits the appropriate post-Stage05 redacted update. |
+| C14 profile selection/repeated evaluator runs | `BLOCKED` / `AUTHORITY_REQUIRED` | Eligibility contracts pass; actual samples require the missing frozen evaluator and complete authoritative dimensions. |
+| C15 final-byte coverage/fidelity/tag/duplicate checks | `PASS` | C2 regressions directly exercise required post-finalizer removal, ungrounded numeric/entity/attribution additions, source-inventory omission, unanchored tags, and final cross-section duplication. |
+| C16 schema/runtime retry classification | `PASS` | Runtime exception has no repair request; malformed JSON has exactly one schema repair (2 generation calls total). |
+| C17 profile evidence eligibility | `PASS` | Repeats<3, replayed run IDs, missing dimensions/run IDs, and out-of-range scores are rejected; missing metrics are not defaulted. |
+
+All waivers: `NOT_ALLOWED` (Plan authority is `NONE`). C9/C10/C14 acceptance blockers do not downgrade the implementation or focused test facts above.
+
+### Current orthogonal status and scoped blockers
+
+```text
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Fresh Stage05 attempt repeats the private source identity/hash, unique-occurrence, and raw-derived relation preflight. If it passes, run Qwen C1 and record its actual result; if inconclusive, keep C1 BLOCKED/AUTHORITY and make no model call. Then address Gemma runtime and frozen evaluator/baseline only within their scoped acceptance items.
+```
+
+C1 is blocked at the Stage05 authority boundary pending that independent preflight; Qwen's loaded state does not prove source mapping. C9 remains unaccepted until the Qwen journey and the separately scoped Gemma run are evidenced. C10/C14 remain blocked only by missing evaluator authority. Implementation is not blocked. No commit, push, Draft PR edit, waiver, or Stage05 acceptance claim is included in this Stage04 snapshot.
