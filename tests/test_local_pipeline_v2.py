@@ -76,6 +76,35 @@ def test_g_overlap_dedupe_and_same_evidence_conflict_are_explicit():
     assert len(conflict.conflicts) == 1
 
 
+@pytest.mark.parametrize("change", (
+    {"direction": "object_to_subject"},
+    {"status": ClaimStatus.AMBIGUOUS},
+    {"uncertainty": "ambiguous"},
+    {"polarity": "negative"},
+    {"condition": "若未核准"},
+))
+def test_ledger_preserves_and_conflicts_semantically_distinct_same_evidence_claims(change):
+    first = _claim("c1", subject="預算", predicate="導致", object="延後",
+                   relation_type="causal", refs=("span-1",), condition="若核准")
+    second = first.model_copy(update={"claim_id": "c2", **change})
+    ledger = consolidate_claims((first, second), source_sha256="a" * 64)
+    assert len(ledger.claims) == 2
+    assert len(ledger.conflicts) == 1
+    assert ledger.conflicts[0].claim_ids == ("c1", "c2")
+    assert ledger.conflicts[0].conflict_type == "same_evidence_semantic_conflict"
+
+
+def test_ledger_flags_reversed_endpoint_assertions_as_conflict():
+    forward = _claim("c1", subject="預算", predicate="導致", object="延後",
+                     relation_type="causal", refs=("span-1",))
+    reverse = _claim("c2", subject="延後", predicate="導致", object="預算",
+                     relation_type="causal", refs=("span-1",))
+    ledger = consolidate_claims((forward, reverse), source_sha256="a" * 64)
+    assert len(ledger.claims) == 2
+    assert len(ledger.conflicts) == 1
+    assert ledger.conflicts[0].conflict_type == "same_evidence_semantic_conflict"
+
+
 def test_h_section_render_is_allow_listed_and_traceable():
     claim = _claim()
     plan = SectionPlan(section_id="s", title="決議", required_claim_ids=(claim.claim_id,))
@@ -188,6 +217,25 @@ def test_firewall_checks_every_required_relation_not_only_selected_claim():
     assert not snapshot.accepted
 
 
+@pytest.mark.parametrize("rendered", (
+    "預算導致延後〔span-1〕，另有紀錄稱預算避免延後。",
+    "預算導致延後〔span-1〕但避免延後。",
+))
+def test_firewall_rejects_competing_same_endpoints_predicate_even_with_valid_expected_clause(rendered):
+    claim = _claim("c1", subject="預算", predicate="導致", object="延後",
+                   relation_type="causal", refs=("span-1",))
+    plan = SectionPlan(section_id="s", title="決議", required_claim_ids=("c1",))
+    evidence = {"span-1": EvidenceSpan.from_source("span-1", "預算導致延後。")}
+    metadata = RelationMetadata(subject=claim.subject, predicate=claim.predicate,
+                                object=claim.object, direction=claim.direction,
+                                polarity=claim.polarity, condition=claim.condition,
+                                relation_type=claim.relation_type)
+    snapshot = fidelity_firewall(plan, rendered, {"c1": claim}, evidence,
+                                 relation_metadata={"c1": metadata})
+    assert snapshot.relation_issues == ("c1",)
+    assert not snapshot.accepted
+
+
 def test_relation_source_order_uses_ordered_offsets_not_reference_sorting():
     left = EvidenceSpan.from_source("left", "預算", start_offset=10, end_offset=12)
     right = EvidenceSpan.from_source("right", "導致延後", start_offset=12, end_offset=16)
@@ -223,7 +271,9 @@ async def test_live_c1_inverted_predicate_is_rejected_at_v2_boundary(monkeypatch
         )
 
 
-@pytest.mark.parametrize("candidate_mode", ("inversion", "omission"))
+@pytest.mark.parametrize("candidate_mode", (
+    "inversion", "omission", "competing_predicate", "competing_predicate_no_comma",
+))
 @pytest.mark.asyncio
 async def test_live_c1_unsafe_render_rolls_back_to_source_grounded_baseline(monkeypatch, candidate_mode):
     service = SummarizationService()
@@ -242,7 +292,11 @@ async def test_live_c1_unsafe_render_rolls_back_to_source_grounded_baseline(monk
         relation_metadata = {"c1": {"subject": "預算", "predicate": "避免", "object": "延後",
                                      "direction": "subject_to_object", "polarity": "positive",
                                      "condition": None, "relation_type": "causal"}} if "c1" in ids else {}
-        return json.dumps({"text": "預算避免延後〔span-1〕", "claim_ids": ids,
+        text = {
+            "competing_predicate": "預算導致延後〔span-1〕，另有紀錄稱預算避免延後",
+            "competing_predicate_no_comma": "預算導致延後〔span-1〕但避免延後",
+        }.get(candidate_mode, "預算避免延後〔span-1〕")
+        return json.dumps({"text": text, "claim_ids": ids,
                            "relation_metadata": relation_metadata})
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
     result = await service._summarize_with_local_pipeline_v2("預算導致延後。", "system", template=None)

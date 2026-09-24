@@ -91,8 +91,8 @@ class FactClaim(BaseModel):
     @property
     def fingerprint(self) -> str:
         fields = (self.subject, self.predicate, self.object, self.relation_type.value,
-                  self.polarity, self.condition, self.number, self.unit, self.date,
-                  self.attribution)
+                  self.direction, self.polarity, self.condition, self.number, self.unit,
+                  self.date, self.attribution, self.status.value, self.uncertainty)
         return _hash("\x1f".join("" if v is None else str(v).strip().casefold() for v in fields))
 
 
@@ -234,7 +234,13 @@ def fidelity_firewall(
                 condition=claim.condition, relation_type=claim.relation_type,
             )
             relation_source_ok = relation_is_supported_in_order(claim, source_spans)
-            if not relation_source_ok or meta != expected or not _relation_is_rendered(rendered, expected):
+            relation_render_ok = (
+                _relation_is_rendered(rendered, expected)
+                and _relation_mentions_are_source_supported(
+                    rendered, expected, plan, claims, evidence, relation_metadata or {}
+                )
+            )
+            if not relation_source_ok or meta != expected or not relation_render_ok:
                 relation_issues.append(claim_id)
         if claim.polarity and claim.polarity.casefold() in {"negative", "negated"} and (
             (relation_metadata or {}).get(claim_id) is None
@@ -340,12 +346,57 @@ def consolidate_claims(claims: Iterable[FactClaim], *, source_sha256: str) -> Fa
     for refs, group in by_evidence.items():
         for i, left in enumerate(group):
             for right in group[i + 1:]:
-                if left.subject == right.subject and left.predicate == right.predicate and left.object != right.object:
+                conflict_type = _same_evidence_conflict_type(left, right)
+                if conflict_type:
                     ids = tuple(sorted((left.claim_id, right.claim_id)))
                     conflicts.append(ClaimConflict(conflict_id=_hash("|".join(ids))[:16], claim_ids=ids,
-                                                   evidence_refs=refs, conflict_type="same_evidence_value"))
+                                                   evidence_refs=refs, conflict_type=conflict_type))
     return FactLedger(source_sha256=source_sha256, claims=tuple(sorted(unique.values(), key=lambda c: c.claim_id)),
                       conflicts=tuple(sorted(conflicts, key=lambda c: c.conflict_id)))
+
+
+def _same_evidence_conflict_type(left: FactClaim, right: FactClaim) -> str | None:
+    """Classify incompatible claims over the same evidence without choosing one."""
+    norm = lambda value: "" if value is None else str(value).strip().casefold()
+    # Preserve the established explicit conflict for alternatives sharing the
+    # same subject/predicate but asserting different objects.
+    if (norm(left.subject) == norm(right.subject)
+            and norm(left.predicate) == norm(right.predicate)
+            and norm(left.object) != norm(right.object)):
+        return "same_evidence_value"
+
+    left_ends = frozenset((norm(left.subject), norm(left.object)))
+    right_ends = frozenset((norm(right.subject), norm(right.object)))
+    if len(left_ends) != 2 or left_ends != right_ends:
+        return None
+
+    def directed_ends(claim: FactClaim) -> tuple[str, str]:
+        ends = (norm(claim.subject), norm(claim.object))
+        if claim.direction == "subject_to_object":
+            return ends
+        if claim.direction == "object_to_subject":
+            return ends[1], ends[0]
+        return (f"invalid:{norm(claim.direction)}", *ends[:1])
+
+    differences = []
+    for field, left_value, right_value in (
+        ("predicate", left.predicate, right.predicate),
+        ("relation_type", left.relation_type.value, right.relation_type.value),
+        ("direction", directed_ends(left), directed_ends(right)),
+        ("polarity", left.polarity, right.polarity),
+        ("condition", left.condition, right.condition),
+        ("status", left.status.value, right.status.value),
+        ("uncertainty", left.uncertainty, right.uncertainty),
+        ("number", left.number, right.number),
+        ("unit", left.unit, right.unit),
+        ("date", left.date, right.date),
+        ("attribution", left.attribution, right.attribution),
+    ):
+        if norm(left_value) != norm(right_value):
+            differences.append(field)
+    if differences:
+        return "same_evidence_semantic_conflict"
+    return None
 
 
 def plan_sections(ledger: FactLedger, section_titles: Mapping[str, str] | None = None) -> tuple[SectionPlan, ...]:
@@ -497,6 +548,69 @@ def _relation_is_rendered(text: str, relation: RelationMetadata) -> bool:
         return False
     if relation.polarity.casefold() in {"negative", "negated"} and "否定" not in text:
         return False
+    return True
+
+
+def _relation_mentions_are_source_supported(
+    text: str,
+    relation: RelationMetadata,
+    plan: SectionPlan,
+    claims: Mapping[str, FactClaim],
+    evidence: Mapping[str, EvidenceSpan],
+    relation_metadata: Mapping[str, RelationMetadata],
+) -> bool:
+    """Reject extra same-endpoint relation clauses absent from the typed ledger.
+
+    The text is split at deterministic punctuation boundaries. Every clause
+    that mentions both endpoints must contain a rendered relation whose exact
+    claim and structured metadata are part of this section plan and whose raw
+    evidence supports ordered subject/predicate/object. Merely including the
+    expected clause elsewhere in the section cannot bless an added competing
+    predicate.
+    """
+    target_ends = {relation.subject.strip().casefold(), relation.object.strip().casefold()}
+    supported: list[RelationMetadata] = []
+    for claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
+        claim = claims.get(claim_id)
+        if (claim is None or claim.status != ClaimStatus.ASSERTED
+                or claim.relation_type not in {RelationType.CAUSAL, RelationType.CONDITIONAL}):
+            continue
+        candidate_ends = {claim.subject.strip().casefold(), claim.object.strip().casefold()}
+        spans = [evidence[ref] for ref in claim.evidence_refs if ref in evidence]
+        if (candidate_ends != target_ends or not relation_is_supported_in_order(claim, spans)):
+            continue
+        candidate_metadata = relation_metadata.get(claim_id)
+        expected_metadata = RelationMetadata(
+            subject=claim.subject, predicate=claim.predicate, object=claim.object,
+            direction=claim.direction, polarity=claim.polarity, condition=claim.condition,
+            relation_type=claim.relation_type,
+        )
+        if candidate_metadata == expected_metadata:
+            supported.append(candidate_metadata)
+
+    clauses = re.split(r"[，,；;。！？!?、\n]+", text)
+    contrastive = re.compile(r"然而|不過|但是|可是|反而|而是|但|however|instead|but", re.IGNORECASE)
+    for clause in clauses:
+        if relation.subject not in clause or relation.object not in clause:
+            continue
+        matching = [candidate for candidate in supported if _relation_is_rendered(clause, candidate)]
+        if not matching:
+            return False
+        residual = clause
+        for candidate in matching:
+            residual = residual.replace(
+                f"{candidate.subject}{candidate.predicate}{candidate.object}", "", 1
+            )
+        if relation.subject in residual and relation.object in residual:
+            return False
+        # Chinese and English frequently omit a repeated subject in contrastive
+        # clauses (e.g. “A 導致 B 但避免 B”). If a contrastive continuation
+        # repeats either endpoint without its own source-supported typed clause,
+        # treat it as an unsupported competing relation rather than letting the
+        # valid clause earlier in the sentence launder it.
+        continuations = contrastive.split(residual)[1:]
+        if any(relation.subject in part or relation.object in part for part in continuations):
+            return False
     return True
 
 

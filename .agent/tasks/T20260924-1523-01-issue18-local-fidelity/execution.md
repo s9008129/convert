@@ -296,3 +296,31 @@ NEXT_ACTION: Parent reruns controlled Qwen with raw snapshots explicitly enabled
 - `git diff --check` and `git diff --cached --check`: PASS.
 
 These results supersede the earlier full-suite/docs/diff results for the diagnostics repair wave; no product semantics or plan/handoff files changed.
+
+## Stage 04 R9 repair update — Stage05 attempt05 findings
+
+Date: 2026-09-25. Plan/handoff remain unchanged. Repairs implement the existing R2/R4/R6 ledger and rendered-relation contracts.
+
+### Approved-scope repairs
+
+- `FactClaim.fingerprint` now includes direction, status, and uncertainty in addition to the prior normalized semantic fields, so reverse-direction and AMBIGUOUS variants cannot be silently consolidated into the first claim.
+- Deterministic same-evidence conflict detection now preserves incompatible directed relation, predicate/type, polarity, condition, status, uncertainty, number/unit/date, and attribution variants as explicit `ClaimConflict` records; it does not choose a winner. The established different-object conflict remains explicit.
+- The live fidelity firewall now checks every endpoint-bearing rendered clause against section-planned relation claims whose metadata exactly matches their claim and whose ordered raw evidence supports the subject/predicate/object. A correct expected phrase no longer blesses an added competing predicate. Contrastive continuations that omit a repeated subject but repeat a relation endpoint (e.g. `...但避免延後`) are rejected as unsupported residue without a lexical model or parser recovery.
+- Added ledger tests for direction, status, uncertainty, polarity, condition, and reversed endpoints; added helper and live summarize rollback tests for comma-separated and no-comma competing predicates.
+
+### Verification actually run
+
+- `python3 -m py_compile backend/services/local_pipeline_v2.py backend/services/summarization.py tests/test_local_pipeline_v2.py`: PASS.
+- `DATA_DIR=$(mktemp -d /tmp/convert-stage04-audit.XXXXXX) uv run pytest -q tests/test_local_pipeline_v2.py`: PASS, 47 passed.
+- `DATA_DIR=$(mktemp -d /tmp/convert-stage04-audit.XXXXXX) uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'`: PASS, 13 passed, 41 deselected.
+- `DATA_DIR=$(mktemp -d /tmp/convert-stage04-audit.XXXXXX) uv run pytest tests/ -q`: PASS, 864 passed, 2 skipped (8.76s).
+- `bash scripts/check_docs.sh`: exit 0; the same two README-version warnings remain.
+- `git diff --check` and `git diff --cached --check`: PASS.
+- No model call was made. Parent-reported C9 output-shape observations were not used to alter temperatures, JSON parsing, or failure semantics.
+
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED pending parent-controlled C9 rerun and evaluator-backed quality/profile evidence
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING fresh Stage05 review
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Parent reruns the affected live R9 checks and records a new Stage05 attempt; keep C10/C14 evidence absent/blocked until the frozen evaluator is available.
