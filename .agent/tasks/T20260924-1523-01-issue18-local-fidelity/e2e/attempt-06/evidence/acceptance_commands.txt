@@ -1,0 +1,23 @@
+# Stage05 attempt 06 independent acceptance evidence (no model/cache/raw data)
+# Captured 2026-09-25 Asia/Taipei
+
+git rev-parse HEAD
+# f15117351e45b230180850b625edba91eee75e5b
+
+git status --short
+# clean
+
+sha256sum .agent/tasks/T20260924-1523-01-issue18-local-fidelity/plan.md .agent/tasks/T20260924-1523-01-issue18-local-fidelity/handoff.md .agent/tasks/T20260924-1523-01-issue18-local-fidelity/execution.md
+# plan:     63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+# handoff:  78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+# execution:3398b293051269de03edeaf1be2b3ae8ea3f6a3bec2406b5fef90a7e2525fba4
+
+DATA_DIR=$(mktemp -d /tmp/stage05-round6.XXXXXX) uv run pytest -q tests/test_local_pipeline_v2.py
+# PASS: 47 passed in 0.43s
+
+# Source review:
+# - backend/services/local_pipeline_v2.py FactClaim.fingerprint and consolidate_claims
+# - backend/services/local_pipeline_v2.py _same_evidence_conflict_type
+# - backend/services/local_pipeline_v2.py fidelity_firewall and _relation_mentions_are_source_supported
+# - tests/test_local_pipeline_v2.py R4 semantic conflict and R6 competing-predicate cases
+# No raw transcript, private model output, ignored cache content, or live model endpoint was opened/called.

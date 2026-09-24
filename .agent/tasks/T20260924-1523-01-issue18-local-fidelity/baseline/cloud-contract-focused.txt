@@ -4,3 +4,12 @@ OBSERVED: backend/core/logger.py resolves DATA_DIR=/app/data; mkdir /app/data/lo
 SAFE ENVIRONMENT-LEVEL WORKAROUND (NO PRODUCT SEMANTICS CHANGED): DATA_DIR=/tmp/meetingscribe-test
 WORKAROUND RESULT: 13 passed, 41 deselected in 0.40s (exit 0)
 NOTE: The default runner failure remains a scoped environment blocker; the workaround uses a writable test-only DATA_DIR.
+
+ADDITIONAL R11 PRE-MUTATION CLOUD BASELINE (separate from the prior baseline above)
+TASK_ID: T20260924-1523-01-issue18-local-fidelity
+PLAN_REVISION: 11
+BASELINE: pre-product-mutation
+COMMAND: DATA_DIR=$(mktemp -d /tmp/convert-r11-cloud.XXXXXX) uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"
+EXIT_STATUS: 0
+RESULT: 13 passed, 41 deselected
+REDACTED_OUTPUT: all 13 selected tests passed; no payloads recorded.

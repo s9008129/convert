@@ -348,3 +348,291 @@ Date: 2026-09-25. Stage05 attempt06 report was recorded and preserved. Plan/hand
 - `IMPLEMENTATION_STATUS: BLOCKED` — unfinished R1/R4 behavior cannot safely continue without the planner decisions above.
 - `CORE_ACCEPTANCE_STATUS: BLOCKED`; `REQUIRED_VERIFICATION_STATUS: INCOMPLETE`; `INDEPENDENT_ACCEPTANCE_STATUS: PENDING planner-directed repair and fresh Stage05`; `TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED`.
 - NEXT_ACTION: Stage01 resolves the three semantic mappings, then Stage04 resumes on a fresh approved revision/handoff. Do not inspect or copy raw output into tracked artifacts.
+
+## Stage 04 authoritative status correction — attempt06 plan-premise invalidation
+
+This append-only correction supersedes the `IMPLEMENTATION_STATUS: BLOCKED` and
+`TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED` values in the immediately
+preceding attempt06 follow-up's terminal status block. Those values remain
+preserved above as the original report; they are not the current routing result.
+
+The attempt06 evidence invalidates load-bearing approved R9 premises about
+selected/core identity, required-vs-optional claim mapping, and R4
+same-evidence/conflict identity. Per `workflow-routing.md` §7.7 precedence row
+1, this is a Stage01 replan condition, rather than only an inability to continue
+within an otherwise valid approved contract. This Stage04 record is grounded in
+Plan R9 SHA-256
+`63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67` and its
+matching R9 handoff SHA-256
+`78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71`.
+
+Freshness note: a later Plan R11 draft is now present with SHA-256
+`1ef80c7807d7078981051f740346668a827b20266a39b1f1ebdad081ee3975a2`, marked
+`READY_FOR_REVIEW`; it has not been used as authority for this historical R9
+Stage04 run. This correction does not claim R11 approval or authorize product
+implementation against R11. Stage01 review and, if approved, a fresh matching
+handoff remain prerequisites for resumed implementation.
+
+### Current authoritative Stage 04 status for the attempt06 finding
+
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: ESCALATED
+CORE_ACCEPTANCE_STATUS: BLOCKED
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: REPLAN_REQUIRED
+
+NEXT_ACTION: Stage01 resolves/reviews the replan; Stage04 resumes only after an
+approved current Plan and matching handoff. No product files were edited for
+this status correction.
+
+## Stage 04 implementation — approved Plan R11
+
+Date: 2026-09-25. Startup freshness verified before product edits:
+
+- `TASK_ID: T20260924-1523-01-issue18-local-fidelity`
+- Plan R11 SHA-256: `1ef80c7807d7078981051f740346668a827b20266a39b1f1ebdad081ee3975a`
+- Review attempt10: `PLAN_APPROVED` for that exact plan SHA.
+- Handoff R11 SHA-256: `bc29f344f7066f8e44b6b1dcebedc1da6b140b2c80851c515848a4b707b21fc0`
+- The pre-existing dirty task artifacts were preserved. Stage04 owned only code,
+  tests, the V2 design note, and append-only updates to this execution record.
+  The delegated C13 fixture artifact remains parent-owned and was not edited.
+
+### Implemented approved waves
+
+- Added ephemeral selected-target routing from the actual `TaskProcessor` local
+  call through `SummarizationService` to V2. Target data stays in memory for
+  deterministic binding/final-delivery checks; it is not added to prompts or
+  persisted `TaskInfo`.
+- Added exact raw chunk-origin offsets and unique source-quote occurrence
+  resolution. Missing, invalid, repeated, or mismatched occurrences remain
+  ambiguous; conflicts require validated absolute-interval overlap and typed
+  incompatibility, with no automatic winner.
+- Added trusted source-present requiredness policies and bounded lexical
+  candidate coverage for the four active templates. Unresolved optional claims
+  remain local; unresolved required/selected claims retain their mapped gate.
+- Completed section-by-section allow-listed rendering, deterministic template
+  order assembly, final marker/source checks, and guarded byte-for-byte section
+  rollback. V1 remains the explicit default and V2 has no hidden V1 fallback.
+- Wired occurrence-level entity, relation, polarity, condition, number, date,
+  attribution, source-tag, cross-section duplicate, and template-term checks.
+  Unsupported claims become ambiguous rather than globally vetoing unrelated
+  sections. A bounded numeric equivalence accepts one Chinese digit plus its
+  exact explicit unit only; mismatched values/units remain unresolved.
+- Kept Qwen candidate extraction temperature separate from rendering: Qwen
+  section/render temperature stays at the approved 0.7 baseline. Candidate
+  extraction temperatures are diagnostic-only; they cannot change production
+  settings or be selected without evaluator-backed samples.
+- Updated the local V2 design note with the raw-source, target-routing,
+  requiredness, numeric-equivalence, and profile boundaries.
+
+### Verification and runtime evidence
+
+- `DATA_DIR=/tmp/issue18-stage04-data uv run pytest -q tests/test_local_pipeline_v2.py tests/test_task_processor.py`:
+  PASS, 72 tests.
+- `DATA_DIR=/tmp/issue18-final-cloud uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'`:
+  PASS, 13 passed, 41 deselected; same count as the pre-change baseline.
+- `DATA_DIR=/tmp/issue18-final-full uv run pytest tests/ -q`:
+  PASS, 873 passed, 2 skipped (pre-change baseline: 864 passed, 2 skipped).
+- `python3 -m py_compile` on changed backend modules and tests: PASS.
+- `bash scripts/check_docs.sh`: exit 0; the same two pre-existing README
+  version warnings remain. `git diff --check`: PASS.
+- LM Studio runtime inventory: Qwen `qwen3.8-27b-splash` loaded; Gemma
+  `gemma-4-31b-it-mlx` installed but not loaded. No model load/unload was
+  attempted. Live Qwen requests used the loaded instance and the production
+  0.7 profile.
+- Multiple controlled synthetic Qwen selected-target probes and repeats failed
+  closed when the extraction claim was ambiguous or its quote did not resolve
+  to the exact selected occurrence. TaskProcessor reported summary failure and
+  used its existing transcript-only degradation; relation text seen in that
+  fallback is not counted as a selected-target pass. A first pre-normalization
+  probe exposed an unsupported structured number representation; the bounded
+  same-unit Chinese digit rule was then added and covered synthetically.
+- Diagnostic-only candidate runs used the same synthetic source/target at
+  extraction temperatures 0.3, 0.5, and 0.7 (N=3 each), with render fixed at
+  0.7. All 9 selected-target gates failed closed. No raw response, quote,
+  prompt, or output was retained or recorded in this artifact. No profile score
+  or candidate selection was fabricated.
+- Canonical target resolution was not possible: both allowed ignored transcript
+  copies match the original full input digest `b7b9e5e0...1d9db0`, but exhaustive
+  exact substring SHA checks through 512 characters found no match for the
+  authoritative anchor digest `5eb677f3...30010f`. Filename-only inspection
+  under the current task and those two local cache directories found no
+  separate target-spec file. No source contents were printed or copied. Thus
+  synthetic model probes remain diagnostic only; canonical `C1`/`C9` is
+  `BLOCKED`/not run on the authoritative selected target.
+- Parent's scoped evaluator audit remains controlling: no authoritative frozen
+  rubric/protocol or original unrounded Gemini baseline/sample set is
+  available. `C10` and quality-based `C14` selection remain
+  `BLOCKED/AUTHORITY` with exact label
+  `QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR`.
+- Privacy review found no raw transcript, prompt, model response, private name,
+  or absolute local path added to tracked implementation/evidence. PR #19 was
+  not mutated; it remains Draft per the existing delivery plan.
+
+### Stage 04 status snapshot for independent acceptance
+
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+
+BLOCKERS:
+- `C1/C9` canonical selected-target E2E: `BLOCKED/AUTHORITY` because the
+  supplied anchor digest did not resolve to an exact source substring and no
+  typed target spec was present in the authorized current-task/data filenames.
+- `C9-Gemma`: `BLOCKED/ENVIRONMENT`; runtime lists Gemma as not loaded. No load
+  was attempted.
+- `C10/C14`: `BLOCKED/AUTHORITY` by
+  `QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR`.
+
+NEXT_ACTION: Supply/resolve the authoritative selected-target anchor/spec,
+perform canonical Qwen and Gemma E2E without exposing raw source/output, and
+obtain the frozen evaluator before any C10/C14 scoring or profile selection.
+Stage05 may now preserve and independently audit this snapshot; keep Draft PR
+#19 unpublished and unmerged.
+
+### Anchor-search extension
+
+After the initial status snapshot, the source-anchor check was extended to
+41,616 sentence/paragraph-boundary spans up to 4,096 characters and 248,052
+exact, trimmed, whitespace-normalized, and Unicode-normalized candidate forms.
+Zero candidates matched the authoritative anchor SHA-256. No source text was
+printed. This confirms the canonical selected target still cannot be resolved
+from the authorized local source/anchor pair; the `C1/C9` blocker and all status
+fields above remain unchanged.
+
+### W9 closeout — docs, privacy, and status routing
+
+- Documentation: the V2 design note records the approved selected-target
+  boundary, exact source-occurrence grounding, template requiredness, bounded
+  numeric equivalence, and extraction/render profile separation. The delegated
+  `evidence/status-contract-fixtures.md` is present and remains parent-owned.
+- Privacy: the tracked-diff audit found zero added absolute user paths,
+  API-key-like strings, transcript-cache paths, or raw prompt/model-output dump
+  markers. Raw source and live model payloads remain unretained. The expanded
+  anchor-resolution check recorded counts only (zero matching candidates), not
+  source text or offsets for non-matches.
+- Verification evidence remains as recorded above: focused/full/cloud test
+  suites, Python compilation, docs check, and whitespace check passed; docs
+  check emitted only the same two baseline README-version warnings.
+- `C1`: `CHECK_RESULT: BLOCKED` (`AUTHORITY` / unresolved selected-target
+  specification). The authoritative anchor digest did not match any examined
+  exact or normalized source span, so no typed expected relation can safely be
+  derived. Canonical selected-target C1 was not run. No expected target was
+  inferred from synthetic probes.
+- `C9`: canonical fresh E2E is `CHECK_RESULT: BLOCKED` (`AUTHORITY`) pending
+  the same authoritative selected-target specification. The Gemma-specific C9
+  run is separately `CHECK_RESULT: BLOCKED` (`ENVIRONMENT`) because Gemma was
+  not loaded. Synthetic Qwen nine-run candidate sampling remains diagnostic
+  only and is not a C9 acceptance result. No model loading was attempted.
+- `C10` and `C14`: each `CHECK_RESULT: BLOCKED` (`AUTHORITY`) with exact label
+  `QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR`; no scoring or
+  candidate selection was performed.
+- The Stage04 aggregate follows the Plan R11 row for completed implementation
+  with acceptance blocked and other required evidence available. Its six
+  orthogonal fields are:
+
+  ```text
+  PRIMARY_OUTCOME_STATUS: UNKNOWN
+  IMPLEMENTATION_STATUS: COMPLETE
+  CORE_ACCEPTANCE_STATUS: BLOCKED
+  REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+  INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+  TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+  ```
+
+  These fields do not convert diagnostic synthetic Qwen observations into a
+  canonical PASS/FAIL. Implementation and completed verification evidence
+remain intact; C1/C9 target authority, Gemma environment, and C10/C14
+evaluator authority remain separate scoped blockers. Stage05 must preserve
+this Stage04 snapshot and report any acceptance-phase blocker in its own
+fields. PR #19 remains Draft, unpublished and unmerged.
+
+### Evidence-preservation correction
+
+The pre-existing `baseline/cloud-contract-focused.txt` evidence is preserved
+byte-for-byte as the file prefix (verified against `HEAD`). The R11
+pre-mutation 13-pass run is retained after it as a separate labeled section;
+the detailed W0 record remains in `baseline/w0-stage04-r11-20260924T182410Z.txt`.
+No product code or test files changed for this correction. The status snapshot
+above is unchanged.
+
+### Stage04 bounded repair after independent review attempt07
+
+Stage05 attempt07 reported two mechanical defects within the approved R11
+contract. Attempt07 and the original Stage04 snapshot above are preserved
+unchanged; this section records the repair and current post-repair state.
+
+- Numeric source grounding now checks the entire Arabic numeric token and its
+  exact supplied unit, or the already-approved bounded Chinese single digit
+  plus exact unit. It rejects substring matches, decimal/longer values,
+  different units, mixed Chinese numerals, and explicit quantity modifiers.
+- Occurrence resolution now marks a matching quote in an offsetless evidence
+  span `AMBIGUOUS` immediately because it cannot establish an absolute unique
+  source interval; the scan no longer repeats without advancing.
+- Fail-first numeric boundary test before the product fix: 4 expected-negative
+  cases failed (2 vs 12, 1 vs 10, 1 vs 1.5, and 1 week vs one-and-a-half weeks);
+  the four exact/positive or already-rejected mixed/different-unit cases passed.
+  The offsetless-span regression case was added. A pre-fix runtime timeout probe
+  could not be executed because this shell lacks the `timeout` utility, so no
+  hang is claimed as experimentally observed; the no-advance loop was directly
+  identified in code review. Post-fix test confirms prompt `AMBIGUOUS` result.
+- Post-fix focused verification:
+  `DATA_DIR=/tmp/issue18-p1p2-focused uv run pytest -q tests/test_local_pipeline_v2.py tests/test_task_processor.py` — 81 passed.
+- Post-fix full verification:
+  `DATA_DIR=/tmp/issue18-p1p2-full uv run pytest tests/ -q` — 882 passed, 2 skipped.
+- Cloud focused verification:
+  `DATA_DIR=/tmp/issue18-p1p2-cloud uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'` — 13 passed, 41 deselected.
+- `python3 -m py_compile backend/services/local_pipeline_v2.py tests/test_local_pipeline_v2.py` and `git diff --check` passed. `bash scripts/check_docs.sh` exited 0 with the same two README version warnings recorded in the original Stage04 run.
+- This review repair introduces no semantic-contract or schema change. During repair the current implementation state was `IN_PROGRESS`; after the bounded fixes and verification it is `COMPLETE`, awaiting fresh independent attempt08. The prior immutable Stage04 snapshot remains unchanged. Current scoped status remains:
+
+  ```text
+  PRIMARY_OUTCOME_STATUS: UNKNOWN
+  IMPLEMENTATION_STATUS: COMPLETE
+  CORE_ACCEPTANCE_STATUS: BLOCKED
+  REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+  INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+  TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+  ```
+
+  Existing C1/C9 target-spec, Gemma environment, and C10/C14 evaluator blockers
+  remain exactly as previously scoped. Stage05 should run fresh attempt08 on
+the repaired code without editing attempt07.
+
+### Stage04 freshness follow-up — location-neutral Handoff
+
+- Verified Plan R11 remains SHA-256
+  `1ef80c7807d7078981051f740346668a827b20266a39b1f1ebdad081ee3975a`; Review
+  attempt10 remains `PLAN_APPROVED` for that exact revision/hash. The regenerated
+  current Handoff is SHA-256
+  `09b322244a338f800cc427c939c41143fe1226c27863602277d2a74f1a5731bc` and its
+  `PLAN_SHA256` and `REVIEWED_PLAN_SHA256` both match R11 and attempt10.
+- Stage03 regenerated the same R11 Handoff solely to redact an absolute local
+  project-root path to `.`. This is a location/privacy correction only: no
+  plan, product, or semantic contract changed; no product code or tests changed
+  in this follow-up.
+- The status-contract fixture now cites `workflow-routing.md`, §7 (Status
+  Semantics Contract v2) without an absolute home-directory path; its synthetic
+  cases and status meanings are unchanged.
+- Stage05 attempt08 remains immutable and bound to the prior Handoff SHA-256
+  `bc29f344f7066f8e44b6b1dcebedc1da6b140b2c80851c515848a4b707b21fc0` and the
+  prior Stage04 execution SHA-256
+  `875cebda1a106eab1391d4eabe9cef8c6fb02c4283ac0cfb9ca2189b77e54143`. Do not
+  edit or reuse attempt08 as acceptance for the regenerated Handoff/current
+  execution artifact; a fresh Stage05 attempt09 is required.
+- Current six-field Stage04 status remains exactly:
+
+  ```text
+  PRIMARY_OUTCOME_STATUS: UNKNOWN
+  IMPLEMENTATION_STATUS: COMPLETE
+  CORE_ACCEPTANCE_STATUS: BLOCKED
+  REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+  INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+  TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+  ```
+
+  Existing scoped C1/C9 target-spec, Gemma environment, and C10/C14 evaluator
+  blockers remain unchanged.
