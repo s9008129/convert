@@ -324,3 +324,27 @@ REQUIRED_VERIFICATION_STATUS: INCOMPLETE
 INDEPENDENT_ACCEPTANCE_STATUS: PENDING fresh Stage05 review
 TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
 NEXT_ACTION: Parent reruns the affected live R9 checks and records a new Stage05 attempt; keep C10/C14 evidence absent/blocked until the frozen evaluator is available.
+
+## Stage 04 follow-up — attempt06 invalid-reference/conflict diagnosis
+
+Date: 2026-09-25. Stage05 attempt06 report was recorded and preserved. Plan/handoff identity still matches approved R9; no product-code changes were made in this follow-up.
+
+### W0 and safe evidence
+
+- Branch/HEAD at inspection: `issue-18-first-divergence-diagnostic` / `f15117351e45b230180850b625edba91eee75e5b`. Before this artifact update the worktree only contained the untracked immutable `e2e/attempt-06/` artifact. No reset, stash, cleanup, or model call occurred.
+- Parent-provided safe aggregate: 4 extraction chunks parsed, 87 claims, 7 `same_evidence_value` conflicts, valid refs `span-1..span-4`, 54 claims with valid refs, 33 claims with unknown refs (17 unique); 5/7 conflicts include unknown refs. Failure occurred before `v2.ledger` diagnostics. No raw transcript or model output was read.
+- Plan SHA-256 remains `63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67`; handoff SHA-256 remains `78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71`.
+
+### Escalation and work disposition
+
+- Appended a new attempt06-scoped Stage04 escalation; historical escalation text and all attempt06 evidence remain intact.
+- The current section planner puts every `ASSERTED` claim into `required_claim_ids`; it has no optional/core input mapping and leaves optional IDs empty. The live core selection is inferred as the first causal/conditional assertion, not bound to the diagnostic target claim ID. Downgrading all non-first claims with invalid refs would invent optionality; failing all unknown refs would create a forbidden global veto; using invalid refs as conflict/prompt evidence would violate R1.
+- W3 requires normalized claim/evidence identity and overlap, and the approved guidance says coarse chunk-level `span_id` alone does not prove same evidence. A statement-level anchor/overlap threshold that drives conflict gating is not specified. Stop before changing claim status, requiredness, conflict eligibility, or run gating; Stage01 must resolve selected/core identity, optional-vs-required mapping, and the deterministic source-occurrence conflict rule.
+- The parent-reported response-shape diagnostics remain consistent with possible truncation, but `finish_reason` is unknown. No parser recovery, output-budget increase, prompt semantic change, or temperature change was made.
+
+### Verification and status
+
+- No product code changed, so no tests were run for this stopped repair. `git diff --check` and `git diff --cached --check`: PASS after the task-artifact update.
+- `IMPLEMENTATION_STATUS: BLOCKED` — unfinished R1/R4 behavior cannot safely continue without the planner decisions above.
+- `CORE_ACCEPTANCE_STATUS: BLOCKED`; `REQUIRED_VERIFICATION_STATUS: INCOMPLETE`; `INDEPENDENT_ACCEPTANCE_STATUS: PENDING planner-directed repair and fresh Stage05`; `TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED`.
+- NEXT_ACTION: Stage01 resolves the three semantic mappings, then Stage04 resumes on a fresh approved revision/handoff. Do not inspect or copy raw output into tracked artifacts.
