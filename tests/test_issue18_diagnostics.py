@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
 
 
@@ -101,6 +103,23 @@ def test_ollama_raw_capture_precedes_provider_cleaning(monkeypatch):
     )
     assert collected == [raw]
     assert cleaned != raw
+
+
+def test_diagnostic_runner_rejects_nonignored_root_and_requires_claim_contract(tmp_path, monkeypatch):
+    import subprocess
+
+    from scripts.e2e.diagnose_local_fidelity import assert_gitignored, read_claim_spec
+
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1)
+    )
+    with pytest.raises(RuntimeError, match="not gitignored"):
+        assert_gitignored(tmp_path / "unsafe")
+
+    claim_path = tmp_path / "claim.json"
+    claim_path.write_text('{"claim_id":"c1"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="missing required fields"):
+        read_claim_spec(claim_path)
 
 
 def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypatch, tmp_path):

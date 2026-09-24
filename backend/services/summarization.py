@@ -1818,6 +1818,16 @@ class SummarizationService:
             if include_response:
                 values.update(getattr(self, "_lmstudio_last_response_metadata", {}))
             return {key: value for key, value in values.items() if value is not None}
+
+        def diagnostic_chat_input(system_message: str, user_message: str) -> str:
+            return json.dumps(
+                [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message},
+                ],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         plan = self._build_local_context_plan(
             transcript, system_prompt, template=template,
             context_window_tokens=context_tokens,
@@ -1849,18 +1859,20 @@ class SummarizationService:
             progress = 68.0 + ((chunk_index - 1) / max(total_chunks, 1)) * 12.0
             self._emit_progress(progress_callback, progress, f"萃取逐字稿重點 {chunk_index}/{total_chunks}...")
             stage = f"extraction.chunk.{chunk_index}"
+            extraction_system = self._local_extraction_prompt(template)
+            extraction_message = self._build_chunk_extraction_message(chunk, chunk_index, total_chunks)
             if diagnostic_recorder is not None:
                 diagnostic_recorder.record(
                     f"{stage}.input",
-                    input_text=chunk,
+                    input_text=diagnostic_chat_input(extraction_system, extraction_message),
                     source_branch="transcript_chunk",
                     metadata=diagnostic_generation_metadata(0.1),
                 )
             raw_outputs: list[str] = []
             notes = await self._generate_with_local_engine(
                 engine,
-                self._local_extraction_prompt(template),
-                self._build_chunk_extraction_message(chunk, chunk_index, total_chunks),
+                extraction_system,
+                extraction_message,
                 temperature=0.1,
                 num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                 context_window_tokens=context_tokens,
@@ -1912,7 +1924,7 @@ class SummarizationService:
         final_message = self._build_summary_from_notes_message(merged_notes, template=template)
         if diagnostic_recorder is not None:
             diagnostic_recorder.record(
-                "final.input", input_text=final_message, source_branch="notes_only",
+                "final.input", input_text=diagnostic_chat_input(system_prompt, final_message), source_branch="notes_only",
                 metadata=diagnostic_generation_metadata(0.2),
             )
         raw_outputs = []
@@ -1962,7 +1974,8 @@ class SummarizationService:
             refinement_message = self._build_refinement_message(summary, merged_notes, issues, template=template)
             if diagnostic_recorder is not None:
                 diagnostic_recorder.record(
-                    f"refinement.round.{attempts}.input", input_text=refinement_message,
+                    f"refinement.round.{attempts}.input",
+                    input_text=diagnostic_chat_input(system_prompt, refinement_message),
                     source_branch="notes_only",
                     metadata=diagnostic_generation_metadata(0.15),
                 )
@@ -2534,6 +2547,7 @@ class SummarizationService:
             raw_output_collector.append(str(content))
         self._lmstudio_last_response_metadata = {
             "finish_reason": finish_reason,
+            "requested_max_tokens": requested_max_tokens,
             "prompt_tokens": usage_tokens.get("prompt_tokens"),
             "completion_tokens": usage_tokens.get("completion_tokens"),
             "reasoning_tokens": usage_tokens.get("reasoning_tokens"),
@@ -2562,7 +2576,7 @@ class SummarizationService:
         return await self._recover_lmstudio_empty_response(
             client, selection, messages, temperature,
             requested_max_tokens, context_budget, prompt_tokens,
-            reasoning_text, finish_reason, usage_tokens,
+            reasoning_text, finish_reason, usage_tokens, raw_output_collector,
         )
 
     async def _recover_lmstudio_empty_response(
@@ -2577,6 +2591,7 @@ class SummarizationService:
         reasoning_text: Optional[str],
         finish_reason: Optional[str],
         usage_tokens: dict,
+        raw_output_collector: Optional[list[str]] = None,
     ) -> str:
         """空回應的有界 semantic recovery state machine（RC-2 / CHANGE_MAP 2）。
 
@@ -2606,7 +2621,7 @@ class SummarizationService:
             # initial 直接 stop + reasoning + empty → 一次同 cap replay（總計兩次）。
             return await self._replay_lmstudio_stop_empty(
                 client, selection, messages, temperature,
-                initial_max_tokens, finish_reason,
+                initial_max_tokens, finish_reason, raw_output_collector,
             )
 
         if finish_reason != "length":
@@ -2649,6 +2664,7 @@ class SummarizationService:
             raw_output_collector.append(str(growth_content))
         self._lmstudio_last_response_metadata = {
             "finish_reason": growth_finish_reason,
+            "requested_max_tokens": retry_cap,
             "prompt_tokens": growth_usage.get("prompt_tokens"),
             "completion_tokens": growth_usage.get("completion_tokens"),
             "reasoning_tokens": growth_usage.get("reasoning_tokens"),
@@ -2668,7 +2684,7 @@ class SummarizationService:
             # growth retry 停止於 reasoning-only 空回應 → 一次同 cap stop replay。
             return await self._replay_lmstudio_stop_empty(
                 client, selection, messages, temperature,
-                retry_cap, growth_finish_reason,
+                retry_cap, growth_finish_reason, raw_output_collector,
             )
 
         # growth retry 再度 length+empty、無 reasoning 或其他 finish reason：
@@ -2712,6 +2728,7 @@ class SummarizationService:
         temperature: float,
         replay_max_tokens: int,
         stop_finish_reason: Optional[str],
+        raw_output_collector: Optional[list[str]] = None,
     ) -> str:
         """``stop + reasoning + empty content`` 的最終同 cap replay：恰好一次。
 
@@ -2735,6 +2752,7 @@ class SummarizationService:
             raw_output_collector.append(str(replay_content))
         self._lmstudio_last_response_metadata = {
             "finish_reason": replay_finish_reason,
+            "requested_max_tokens": replay_max_tokens,
             "prompt_tokens": replay_usage.get("prompt_tokens"),
             "completion_tokens": replay_usage.get("completion_tokens"),
             "reasoning_tokens": replay_usage.get("reasoning_tokens"),
