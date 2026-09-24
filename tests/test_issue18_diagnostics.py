@@ -122,6 +122,73 @@ def test_diagnostic_runner_rejects_nonignored_root_and_requires_claim_contract(t
         read_claim_spec(claim_path)
 
 
+def test_claim_stage_evidence_is_hash_linked_and_contains_only_categories():
+    from scripts.e2e.write_claim_stage_evidence import build_evidence
+
+    claim = {
+        "claim_id": "safe-claim-id",
+        "claim_type": "attribution",
+        "source_anchor": "00:06:56; transcript speaker index 3",
+        "expected_relation": "private semantic description",
+    }
+    manifest = {
+        "run_id": "safe-run-id",
+        "metadata": {"claim_id": "safe-claim-id"},
+        "events": [
+            {"sequence": 2, "stage_id": "extraction.chunk.1.raw", "input_sha256": "a" * 64, "output_sha256": "b" * 64},
+            {"sequence": 3, "stage_id": "final.raw", "input_sha256": "c" * 64, "output_sha256": "d" * 64},
+            {"sequence": 4, "stage_id": "selection.final", "input_sha256": "e" * 64, "output_sha256": "f" * 64},
+        ],
+    }
+    evidence = build_evidence(manifest, claim, [
+        {"stage_id": "selection.final", "status": "MISSING"},
+        {"stage_id": "final.raw", "status": "MISSING"},
+        {"stage_id": "extraction.chunk.1.raw", "status": "DISTORTED"},
+        {"stage_id": "source", "status": "CORRECT"},
+    ])
+
+    assert evidence["first_divergence_stage"] == "extraction.chunk.1.raw"
+    assert evidence["final_delivery_status"] == "MISSING"
+    assert evidence["stages"][1]["output_sha256"] == "b" * 64
+    assert "private semantic description" not in json.dumps(evidence)
+
+    with pytest.raises(ValueError, match="selection.final"):
+        build_evidence(manifest, claim, [
+            {"stage_id": "source", "status": "CORRECT"},
+            {"stage_id": "extraction.chunk.1.raw", "status": "DISTORTED"},
+        ])
+
+    duplicated_manifest = {**manifest, "events": manifest["events"] + [manifest["events"][0]]}
+    with pytest.raises(ValueError, match="unique"):
+        build_evidence(duplicated_manifest, claim, [
+            {"stage_id": "source", "status": "CORRECT"},
+            {"stage_id": "selection.final", "status": "MISSING"},
+        ])
+
+    expanded_manifest = {**manifest, "events": manifest["events"] + [
+        {"sequence": 5, "stage_id": "final.cleaned", "input_sha256": "1" * 64, "output_sha256": "2" * 64},
+    ]}
+    with pytest.raises(ValueError, match="omit required"):
+        build_evidence(expanded_manifest, claim, [
+            {"stage_id": "source", "status": "CORRECT"},
+            {"stage_id": "extraction.chunk.1.raw", "status": "DISTORTED"},
+            {"stage_id": "final.raw", "status": "MISSING"},
+            {"stage_id": "selection.final", "status": "MISSING"},
+        ])
+
+    duplicate_sequence = {**manifest, "events": [
+        *manifest["events"],
+        {"sequence": 4, "stage_id": "final.cleaned", "output_sha256": "1" * 64},
+    ]}
+    with pytest.raises(ValueError, match="sequences must be unique"):
+        build_evidence(duplicate_sequence, claim, [
+            {"stage_id": "source", "status": "CORRECT"},
+            {"stage_id": "extraction.chunk.1.raw", "status": "DISTORTED"},
+            {"stage_id": "final.raw", "status": "MISSING"},
+            {"stage_id": "selection.final", "status": "MISSING"},
+        ])
+
+
 def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock, Mock
 
