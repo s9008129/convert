@@ -194,6 +194,12 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
     assert anchored_relation in chunks[1], "重疊塊應保留原因→結果方向與來源錨點"
     assert all(service._estimate_tokens(chunk) <= 35 for chunk in chunks)
 
+    source_evidence_chunks = service._deduplicate_chunk_source_overlaps(chunks, overlap_line_limit=2)
+    source_evidence = "\n".join(source_evidence_chunks)
+    assert source_evidence.count(anchored_relation) == 1
+    assert "方案甲使管線乙外露" in source_evidence
+    assert "管線乙使方案甲外露" not in source_evidence
+
 
 def test_validate_summary_quality_flags_missing_sections_and_actions():
     service = SummarizationService()

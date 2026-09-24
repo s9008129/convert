@@ -322,7 +322,7 @@ def test_local_source_grounding_uses_complete_ranked_excerpt_or_explicit_notes_f
         source_chunks=["unrelated source " * 20, "[00:06:56] 發言者3：內稽前整理物品。"],
         system_prompt="system",
         relevance_text=message,
-        context_window_tokens=200,
+        context_window_tokens=320,
         output_budget_tokens=16,
     )
     assert branch == "notes_plus_source_excerpt"
@@ -342,6 +342,30 @@ def test_local_source_grounding_uses_complete_ranked_excerpt_or_explicit_notes_f
     assert fallback == "notes"
     assert branch == "notes_only"
     assert excerpt_count == 0
+
+
+def test_local_source_grounding_prioritizes_source_before_notes_when_transcript_fits():
+    from backend.services.summarization import SummarizationService
+
+    service = SummarizationService()
+    source_claim = "[00:00:02] 乙：方案甲使管線乙外露。"
+    transcript = f"前段\n{source_claim}\n後段"
+    notes = "萃取筆記：專案甲與管線乙需要核對。"
+    message, branch, excerpt_count = service._resolve_local_source_grounding_message(
+        notes,
+        transcript=transcript,
+        source_chunks=[transcript],
+        system_prompt="system",
+        relevance_text=notes,
+        context_window_tokens=32000,
+        output_budget_tokens=100,
+    )
+
+    assert branch == "notes_plus_transcript"
+    assert excerpt_count == 0
+    assert message.index("### 來源資料") < message.index("### 萃取筆記與整理要求")
+    assert message.index(source_claim) < message.index(notes)
+    assert "若筆記遺漏" in message
 
 
 def test_local_extraction_request_pairs_relation_contract_with_source_anchor(monkeypatch):
