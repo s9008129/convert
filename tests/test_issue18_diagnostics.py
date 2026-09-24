@@ -241,6 +241,8 @@ def test_pipeline_trace_covers_required_stage_order_and_neutral_default(monkeypa
         expected_branch = (
             "transcript_chunk"
             if event["stage_id"].startswith("extraction.")
+            else "notes_plus_chunk_evidence"
+            if event["stage_id"].startswith("consolidation.")
             else "notes_plus_transcript"
             if event["stage_id"].startswith(("final.", "refinement."))
             else "notes_only"
@@ -342,12 +344,44 @@ def test_local_source_grounding_uses_complete_ranked_excerpt_or_explicit_notes_f
     assert excerpt_count == 0
 
 
-def test_local_extraction_contract_preserves_relation_direction_and_source_anchor():
+def test_local_extraction_request_pairs_relation_contract_with_source_anchor(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
     from backend.core.templates import get_template
-    from backend.services.summarization import SummarizationService
+    from backend.services.summarization import LocalContextPlan, SummarizationService
 
     service = SummarizationService()
-    local_prompt = service._local_extraction_prompt(get_template("section_meeting"))
+    template = get_template("section_meeting")
+    source_claim = "[00:34:38] 專案甲使管線乙必須外露。"
+    extraction_notes = "萃取筆記：因果方向及時間戳已保留。"
+    final_record = "會議名稱：測試\n\n一、議題\n1. 已確認項目。"
+    generator = AsyncMock(side_effect=[extraction_notes, final_record])
+    plan = LocalContextPlan(
+        context_window_tokens=32000,
+        estimated_transcript_tokens=100,
+        chunk_input_budget_tokens=8000,
+        merge_input_budget_tokens=8000,
+        merge_visible_target_tokens=4096,
+        merge_provider_output_tokens=3072,
+        needs_chunking=False,
+        estimated_chunk_count=1,
+    )
+    monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
+    monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=32000))
+    monkeypatch.setattr(service, "_build_local_context_plan", Mock(return_value=plan))
+    monkeypatch.setattr(service, "_split_transcript_into_chunks", Mock(return_value=[source_claim]))
+    monkeypatch.setattr(service, "_validate_summary_quality", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_generate_with_local_engine", generator)
+
+    result = __import__("asyncio").run(
+        service._summarize_with_local_pipeline(
+            source_claim,
+            "system prompt",
+            template=template,
+        )
+    )
+    assert result
+    extraction_system, extraction_message = generator.await_args_list[0].args[1:3]
     cloud_prompt = service._cloud_extraction_prompt(get_template("section_meeting"))
 
     for required_rule in (
@@ -356,5 +390,71 @@ def test_local_extraction_contract_preserves_relation_direction_and_source_ancho
         "來源時間戳",
         "不得用常識補推論",
     ):
-        assert required_rule in local_prompt, f"local extraction contract missing: {required_rule}"
+        assert required_rule in extraction_system, f"local extraction contract missing: {required_rule}"
+    assert source_claim in extraction_message
+    assert "若整理筆記與原文不一致，以原文修正關係方向" in service.LOCAL_NOTES_MERGE_PROMPT
+    assert "本段原文依據" in service._build_summary_from_notes_message(extraction_notes, template)
     assert "不得用常識補推論" not in cloud_prompt
+
+
+def test_local_source_evidence_reaches_consolidation_after_distorted_extraction(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from backend.core.templates import get_template
+    from backend.services.summarization import LocalContextPlan, SummarizationService
+
+    service = SummarizationService()
+    template = get_template("section_meeting")
+    source_claim = "[00:34:38] 專案甲使管線乙必須外露。"
+    distorted_notes = "# 萃取筆記\n\n- 討論專案甲、管線乙。"
+    final_record = "會議名稱：測試\n\n一、議題\n1. 已確認項目。"
+    generator = AsyncMock(side_effect=[distorted_notes, final_record])
+    merge = AsyncMock(return_value=distorted_notes)
+    plan = LocalContextPlan(
+        context_window_tokens=32000,
+        estimated_transcript_tokens=100,
+        chunk_input_budget_tokens=8000,
+        merge_input_budget_tokens=8000,
+        merge_visible_target_tokens=4096,
+        merge_provider_output_tokens=3072,
+        needs_chunking=False,
+        estimated_chunk_count=1,
+    )
+    monkeypatch.setattr(service, "_select_local_engine", AsyncMock(return_value="ollama"))
+    monkeypatch.setattr(service, "_effective_context_tokens", Mock(return_value=32000))
+    monkeypatch.setattr(service, "_build_local_context_plan", Mock(return_value=plan))
+    monkeypatch.setattr(service, "_split_transcript_into_chunks", Mock(return_value=[source_claim]))
+    monkeypatch.setattr(service, "_merge_notes_until_fit", merge)
+    monkeypatch.setattr(service, "_validate_summary_quality", Mock(return_value=[]))
+    monkeypatch.setattr(service, "_generate_with_local_engine", generator)
+
+    result = __import__("asyncio").run(
+        service._summarize_with_local_pipeline(
+            source_claim,
+            "system prompt",
+            template=template,
+        )
+    )
+
+    assert result
+    merge_input_notes = merge.await_args.args[1]
+    assert source_claim in merge_input_notes[0]
+    assert distorted_notes in merge_input_notes[0]
+
+
+def test_local_source_evidence_deduplicates_overlap_without_inventing_or_flipping_claims():
+    from backend.services.summarization import SummarizationService
+
+    source_claim = "[00:00:02] 乙：方案甲使管線乙外露。"
+    first = f"前段內容\n{source_claim}"
+    second = f"{source_claim}\n後段內容"
+
+    evidence_chunks = SummarizationService._deduplicate_chunk_source_overlaps(
+        [first, second], overlap_line_limit=1
+    )
+    combined_evidence = "\n".join(evidence_chunks)
+
+    assert combined_evidence.count(source_claim) == 1
+    assert "方案甲使管線乙外露" in combined_evidence
+    assert "管線乙使方案甲外露" not in combined_evidence
+    assert "未提及的新增因果" not in combined_evidence

@@ -194,6 +194,13 @@ class SummarizationService:
 - 重疊分段中的相同語句只代表同一來源事實；不得將重複片段改寫成相反或新增的關係。
 - 逐字稿未明確支持的關係不得推補；方向或來源不清楚時標記「（待確認）」，不得用常識補推論。"""
 
+    LOCAL_SOURCE_EVIDENCE_MERGE_PROMPT = """
+
+來源依據規則：
+- 每段筆記尾端的「本段原文依據」是對應逐字稿的原文，不是模型整理出的事實；若整理筆記與原文不一致，以原文修正關係方向、主客體、否定範圍及時間。
+- 原文依據中的重疊行已去重；同一來源事實只保留一次，不可因分段重疊產生相反或重複的關係。
+- 只整理原文直接支持的內容；原文未支持的關係不得補推，無法判定時標記「（待確認）」。"""
+
     # v4.3.3：雲端萃取在本地規則之上追加「豐富度」規則。
     # 根因：雲端模型對長輸入有強烈壓縮傾向，單句帶過實質討論；
     # 本地提示詞聚焦待辦完整性即可（豐富度由分塊結構保證），
@@ -213,7 +220,7 @@ class SummarizationService:
 - 若資訊互相矛盾，請保留在「待確認資訊」。
 - 仍然使用原本的「# 萃取筆記」Markdown 結構輸出。
 - 不要寫成最終會議記錄。
-- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
+- 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence.""" + LOCAL_SOURCE_EVIDENCE_MERGE_PROMPT
 
     # T20260827-1127-01 RC-1：合併後 notes 的可見收斂目標（final-stage fit）。
     # 這是「orchestration 可見輸出」契約，與 provider completion cap 是不同
@@ -1156,6 +1163,36 @@ class SummarizationService:
 逐字稿內容：
 {chunk}"""
 
+    @staticmethod
+    def _deduplicate_chunk_source_overlaps(chunks: list[str], overlap_line_limit: int) -> list[str]:
+        """Remove only exact adjacent suffix/prefix source-line overlap."""
+        unique_chunks: list[str] = []
+        previous_lines: list[str] = []
+        overlap_limit = max(1, int(overlap_line_limit))
+        for chunk in chunks:
+            lines = [line.strip() for line in chunk.splitlines() if line.strip()]
+            max_overlap = min(overlap_limit, len(previous_lines), max(0, len(lines) - 1))
+            overlap = 0
+            for candidate in range(max_overlap, 0, -1):
+                if previous_lines[-candidate:] == lines[:candidate]:
+                    overlap = candidate
+                    break
+            unique_lines = lines[overlap:]
+            unique_chunks.append("\n".join(unique_lines))
+            previous_lines.extend(unique_lines)
+        return unique_chunks
+
+    @staticmethod
+    def _attach_local_source_evidence(notes: str, source_lines: str, chunk_index: int) -> str:
+        """Pair extracted notes with exact source lines for later reconciliation."""
+        evidence = source_lines.strip()
+        if not evidence:
+            return notes
+        return (
+            f"{notes.rstrip()}\n\n## 第 {chunk_index} 段本段原文依據（供核對）\n"
+            f"{evidence}"
+        )
+
     def _build_notes_merge_message(
         self,
         notes_group: list[str],
@@ -1210,6 +1247,7 @@ class SummarizationService:
 - 所有明確待辦都必須出現在待辦事項表格中
 - 不要把多個不同待辦合併成單一籠統項目；可分列追蹤者請拆成多列
 - 若資訊不足，請標示「（待確認）」或「逐字稿未提及」
+- 筆記中的「本段原文依據」是來源證據；若它與整理筆記矛盾，以原文修正關係方向、主客體、否定範圍及時間，只納入原文支持的事實
 - 只輸出最終 Markdown，不要附加說明
 - 全文必須使用繁體中文（台灣用語），不要輸出簡體中文或任何 <think> / <thought> / <details> / XML / HTML 標籤{self._template_generation_extra(template)}
 
@@ -1937,6 +1975,9 @@ class SummarizationService:
 
         extracted_notes: list[str] = []
         total_chunks = len(chunks)
+        source_evidence_chunks = self._deduplicate_chunk_source_overlaps(
+            chunks, settings.LOCAL_LLM_CHUNK_OVERLAP_LINES
+        )
         extraction_started = time.monotonic()
         for chunk_index, chunk in enumerate(chunks, start=1):
             progress = 68.0 + ((chunk_index - 1) / max(total_chunks, 1)) * 12.0
@@ -1977,12 +2018,17 @@ class SummarizationService:
                     output_text=cleaned_notes,
                     source_branch="transcript_chunk",
                 )
-            extracted_notes.append(cleaned_notes)
+            extracted_notes.append(
+                self._attach_local_source_evidence(
+                    cleaned_notes, source_evidence_chunks[chunk_index - 1], chunk_index
+                )
+            )
 
         extraction_duration = time.monotonic() - extraction_started
         if diagnostic_recorder is not None:
             diagnostic_recorder.record(
-                "consolidation.input", input_text="\n\n".join(extracted_notes), source_branch="notes_only"
+                "consolidation.input", input_text="\n\n".join(extracted_notes),
+                source_branch="notes_plus_chunk_evidence",
             )
         merged_notes = await self._merge_notes_until_fit(
             engine,
@@ -1998,7 +2044,7 @@ class SummarizationService:
         if diagnostic_recorder is not None:
             diagnostic_recorder.record(
                 "consolidation.output", input_text="\n\n".join(extracted_notes),
-                output_text=merged_notes, source_branch="notes_only",
+                output_text=merged_notes, source_branch="notes_plus_chunk_evidence",
                 metadata={"merge_rounds": self._merge_rounds_used},
             )
 
