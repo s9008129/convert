@@ -14,7 +14,7 @@ import math
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -373,8 +373,8 @@ class RecoveryFactPayload(BaseModel):
     predicate: str = Field(min_length=1)
     object: str = Field(min_length=1)
     relation_type: RelationType = RelationType.FACT
-    direction: str = "subject_to_object"
-    polarity: str = "positive"
+    direction: Literal["subject_to_object", "object_to_subject"] = "subject_to_object"
+    polarity: Literal["positive", "negative"] = "positive"
     condition: str | None = None
     evidence_quote: str = Field(min_length=1)
 
