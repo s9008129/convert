@@ -202,24 +202,41 @@ async def main() -> int:
         }
 
     results = []
-    for model in MODELS:
-        results.append(await _run_model(model, transcript, facts, args.template))
+    failed = False
     cloud_ref = summary.get("historical_cloud_coverage") or {}
     cloud_all = cloud_ref.get("coverage_all")
     cloud_core = cloud_ref.get("coverage_core")
-    if cloud_all and cloud_core:
-        for result in results:
-            result["coverage_vs_cloud_ratio"] = round(
-                result["coverage_ratio"] / cloud_all, 6
-            )
-            result["core_coverage_vs_cloud_ratio"] = round(
-                result["core_coverage_ratio"] / cloud_core, 6
-            )
-    summary["models"] = results
 
+    # Isolate model failures. A Gemma failure must never erase the Qwen result
+    # (or vice versa); every model emits its privacy-safe metrics immediately.
+    for model in MODELS:
+        try:
+            result = await _run_model(model, transcript, facts, args.template)
+            if cloud_all and cloud_core:
+                result["coverage_vs_cloud_ratio"] = round(
+                    result["coverage_ratio"] / cloud_all, 6
+                )
+                result["core_coverage_vs_cloud_ratio"] = round(
+                    result["core_coverage_ratio"] / cloud_core, 6
+                )
+        except Exception as exc:  # noqa: BLE001 - diagnostic must continue peer model
+            failed = True
+            result = {
+                "model": model,
+                "status": "FAIL",
+                "error_class": type(exc).__name__,
+            }
+        results.append(result)
+        print(
+            "REAL_DIAGNOSTIC_MODEL "
+            + json.dumps(result, ensure_ascii=False, sort_keys=True),
+            flush=True,
+        )
+
+    summary["models"] = results
     print("REAL_DIAGNOSTIC " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
-    print("OPENROUTER_REAL_DIAGNOSTIC=PASS")
-    return 0
+    print("OPENROUTER_REAL_DIAGNOSTIC=" + ("FAIL" if failed else "PASS"))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
