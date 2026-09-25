@@ -499,7 +499,13 @@ def consolidate_claims(
             unique[claim.fingerprint] = claim
             continue
         merged_refs = tuple(dict.fromkeys((*prior.evidence_refs, *claim.evidence_refs)))
-        unique[claim.fingerprint] = prior.model_copy(update={"evidence_refs": merged_refs})
+        def evidence_rank(item: FactClaim) -> tuple[int, int]:
+            resolved = int(
+                item.resolved_start_offset is not None and item.resolved_end_offset is not None
+            )
+            return resolved, len(item.evidence_quote or "")
+        preferred = max((prior, claim), key=evidence_rank)
+        unique[claim.fingerprint] = preferred.model_copy(update={"evidence_refs": merged_refs})
     valid_claims = [claim for claim in unique.values()
                     if claim.status == ClaimStatus.ASSERTED
                     and (claim.uncertainty or "").casefold() not in {"unknown", "ambiguous"}
@@ -670,27 +676,12 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
             assigned[match["id"]].append(claim.claim_id)
     plans: list[SectionPlan] = []
     if raw_source is not None:
-        # Relation/negation cues remain hard: silently dropping "A 導致 B" or
-        # "沒有/不得" changes meaning. Generic numbers/dates/speaker labels stay
-        # observable but do not force incidental chatter into the minutes.
-        material_kinds = set(policy.source_present_cues) | {"relation"}
-        for kind, start, end in inventory_source_candidates(template.id, raw_source):
-            # Keep generic number/date/relation/speaker candidates as diagnostics,
-            # but only trusted template-owned cues may become required coverage
-            # vetoes. This separates observability from materiality.
-            if kind not in material_kinds:
-                continue
-            covered = any(
-                claim.status == ClaimStatus.ASSERTED
-                and claim.resolved_start_offset is not None
-                and claim.resolved_end_offset is not None
-                and claim.resolved_start_offset <= start and end <= claim.resolved_end_offset
-                for claim in ledger.claims
-            )
-            if not covered:
-                target_spec = _candidate_section_for(template.id, kind, body_specs, first_body)
-                if target_spec is not None:
-                    coverage_issues[target_spec["id"]].append(f"{kind}@{start}:{end}")
+        for kind, start, end in uncovered_material_candidates(
+            template.id, raw_source, ledger.claims
+        ):
+            target_spec = _candidate_section_for(template.id, kind, body_specs, first_body)
+            if target_spec is not None:
+                coverage_issues[target_spec["id"]].append(f"{kind}@{start}:{end}")
     for order, spec in enumerate(specs):
         ids = tuple(assigned[spec["id"]])
         required_ids = tuple(
@@ -758,6 +749,46 @@ def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tupl
     ):
         candidates.extend((kind, match.start(), match.end()) for match in pattern.finditer(raw_source))
     return tuple(sorted(set(candidates), key=lambda item: (item[1], item[2], item[0])))
+
+
+def material_source_candidates(
+    template_id: str, raw_source: str
+) -> tuple[tuple[str, int, int], ...]:
+    """Return source cues that are material enough to require grounded coverage.
+
+    Template-owned decision/action cues plus relation/negation cues are hard.
+    Generic numbers, dates and speaker labels stay observable but do not force
+    incidental conversation into the formal minutes.
+    """
+    policy = template_claim_policy(template_id)
+    material_kinds = set(policy.source_present_cues) | {"relation"}
+    return tuple(
+        candidate for candidate in inventory_source_candidates(template_id, raw_source)
+        if candidate[0] in material_kinds
+    )
+
+
+def uncovered_material_candidates(
+    template_id: str,
+    raw_source: str,
+    claims: Iterable[FactClaim],
+) -> tuple[tuple[str, int, int], ...]:
+    """Find material source cues not covered by one exact asserted occurrence."""
+    asserted = tuple(
+        claim for claim in claims
+        if claim.status == ClaimStatus.ASSERTED
+        and claim.resolved_start_offset is not None
+        and claim.resolved_end_offset is not None
+    )
+    missing = []
+    for kind, start, end in material_source_candidates(template_id, raw_source):
+        if any(
+            claim.resolved_start_offset <= start and end <= claim.resolved_end_offset
+            for claim in asserted
+        ):
+            continue
+        missing.append((kind, start, end))
+    return tuple(missing)
 
 
 def _candidate_section_for(template_id: str, kind: str,
