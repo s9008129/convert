@@ -988,7 +988,7 @@ async def test_live_final_bytes_reject_omitted_source_inventory_candidates(monke
 
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
     with pytest.raises(LocalPipelineV2Error, match="final assembly"):
-        await service._summarize_with_local_pipeline_v2("預算因此延後。", "system")
+        await service._summarize_with_local_pipeline_v2("主席決議延後。", "system")
 
 
 @pytest.mark.asyncio
@@ -1273,8 +1273,8 @@ async def test_v2_consumes_only_safely_aligned_corrected_view_while_grounding_ra
         return json.dumps({"text": "安全的測試段落", "claim_ids": [], "relation_metadata": {}})
 
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
-    raw = "預算導致延後。"
-    corrected = "預算 導致 延後。"
+    raw = "主席決議延後。"
+    corrected = "主席 決議 延後。"
     with pytest.raises(LocalPipelineV2Error, match="final assembly"):
         await service._summarize_with_local_pipeline_v2(
             corrected, "system", template=get_template("general"), raw_source_transcript=raw,
