@@ -3915,9 +3915,11 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 # that ignores response_format/json_schema.
                 extra_body["provider"] = {"require_parameters": True}
             if disable_reasoning and settings.LOCAL_LLM_DISABLE_THINKING:
-                # Match the production LM Studio non-thinking contract as closely
-                # as the routed OpenRouter backend supports.
-                extra_body["reasoning_effort"] = "none"
+                # OpenRouter's provider-neutral reasoning control. This is
+                # semantically the closest validation equivalent to the Mac
+                # runtime's thinking-off contract and prevents Gemma reasoning
+                # tokens from consuming the structured-output completion budget.
+                extra_body["reasoning"] = {"enabled": False}
             if extra_body:
                 kwargs["extra_body"] = extra_body
             return await client.chat.completions.create(**kwargs)
@@ -3930,7 +3932,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 raise
             if runtime_control_rejection_callback:
                 runtime_control_rejection_callback("reasoning")
-            log.warning("OpenRouter routed provider rejected reasoning_effort; retrying once without it")
+            log.warning("OpenRouter routed provider rejected reasoning control; retrying once without it")
             return await _create(disable_reasoning=False)
 
     async def _summarize_with_openrouter(
