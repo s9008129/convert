@@ -665,7 +665,13 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
             assigned[match["id"]].append(claim.claim_id)
     plans: list[SectionPlan] = []
     if raw_source is not None:
+        material_kinds = set(policy.source_present_cues)
         for kind, start, end in inventory_source_candidates(template.id, raw_source):
+            # Keep generic number/date/relation/speaker candidates as diagnostics,
+            # but only trusted template-owned cues may become required coverage
+            # vetoes. This separates observability from materiality.
+            if kind not in material_kinds:
+                continue
             covered = any(
                 claim.status == ClaimStatus.ASSERTED
                 and claim.resolved_start_offset is not None
@@ -735,12 +741,14 @@ def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tupl
         for kind, pattern in _TEMPLATE_CANDIDATES[template_id]
         for match in pattern.finditer(raw_source)
     ]
-    # Generic numbers, dates, relation words and speaker labels are common in
-    # long conversational meetings and are not material merely because they
-    # exist. Turning every occurrence into a required coverage item produced
-    # verbose minutes and false fail-closed vetoes. Template-owned cues define
-    # completeness; generated high-risk facts remain independently checked by
-    # unsupported_high_risk_additions().
+    for kind, pattern in (
+        ("numeric", re.compile(r"(?<!\\d)\\d+(?:\\.\\d+)?")),
+        ("numeric", re.compile(r"[零〇一二兩两三四五六七八九](?=[週周年月日天時时小時小时分鐘分钟秒件人個个位項项次份萬元元])")),
+        ("date", re.compile(r"(?:\\d{2,4}年\\d{1,2}月\\d{1,2}日|\\d{1,4}[./-]\\d{1,2}[./-]\\d{1,2})")),
+        ("relation", re.compile(r"因而|因此|導致|造成|使得|若|如果|除非|未|不|無|沒有")),
+        ("speaker", re.compile(r"(?:發言者\\d+|Speaker\\s*\\d+)\\s*[:：]")),
+    ):
+        candidates.extend((kind, match.start(), match.end()) for match in pattern.finditer(raw_source))
     return tuple(sorted(set(candidates), key=lambda item: (item[1], item[2], item[0])))
 
 
