@@ -252,6 +252,31 @@ def test_material_cue_outside_bounded_statement_stays_uncovered():
     assert "決議" in kinds
 
 
+def test_bounded_recovery_window_keeps_target_and_caps_context():
+    raw = ("前文" * 120) + "，主席決議由資訊科負責盤點系統權限，期限為10月15日。" + ("後文" * 120)
+    target = raw.index("期限")
+    window = local_v2._bounded_statement_window(
+        raw, target, target + len("期限"), max_chars=320
+    )
+    assert window is not None
+    start, end = window
+    assert end - start <= 320
+    assert "期限" in raw[start:end]
+    assert "後文" not in raw[start:end]
+
+
+def test_recovery_fact_schema_bounds_claim_array():
+    schema = SummarizationService._v2_fact_response_format(
+        fact_payload=True, max_claims=3
+    )
+    claims = schema["json_schema"]["schema"]["properties"]["claims"]
+    assert claims["maxItems"] == 3
+    with pytest.raises(ValueError):
+        SummarizationService._v2_fact_response_format(
+            fact_payload=True, max_claims=0
+        )
+
+
 def test_occurrence_resolution_returns_ambiguous_for_offsetless_span():
     raw = "甲導致乙"
     digest = hashlib.sha256(raw.encode()).hexdigest()
