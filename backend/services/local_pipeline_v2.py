@@ -768,12 +768,60 @@ def material_source_candidates(
     )
 
 
+def _bounded_statement_window(
+    raw_source: str, start: int, end: int, *, max_chars: int = 320
+) -> tuple[int, int] | None:
+    """Return a small punctuation/newline-delimited source window.
+
+    This window is evidence context, not a new semantic assertion. It lets a
+    narrowly quoted claim cover adjacent trusted cues such as "決議…負責…期限"
+    when they are demonstrably in the same short source statement, while
+    refusing long ASR runs where sentence boundaries are unavailable.
+    """
+    if start < 0 or end <= start or end > len(raw_source):
+        return None
+    boundaries = "\n。！？!?；;"
+    left = max(raw_source.rfind(char, 0, start) for char in boundaries) + 1
+    right_candidates = [
+        pos for char in boundaries
+        if (pos := raw_source.find(char, end)) >= 0
+    ]
+    right = min(right_candidates) + 1 if right_candidates else len(raw_source)
+    while left < right and raw_source[left].isspace():
+        left += 1
+    while right > left and raw_source[right - 1].isspace():
+        right -= 1
+    if right - left > max_chars:
+        return None
+    return left, right
+
+
+def _claim_covers_material_candidate(
+    raw_source: str,
+    claim: FactClaim,
+    candidate_start: int,
+    candidate_end: int,
+) -> bool:
+    """Accept exact coverage or same-short-statement source coverage."""
+    assert claim.resolved_start_offset is not None
+    assert claim.resolved_end_offset is not None
+    if claim.resolved_start_offset <= candidate_start and candidate_end <= claim.resolved_end_offset:
+        return True
+    claim_window = _bounded_statement_window(
+        raw_source, claim.resolved_start_offset, claim.resolved_end_offset
+    )
+    candidate_window = _bounded_statement_window(
+        raw_source, candidate_start, candidate_end
+    )
+    return claim_window is not None and claim_window == candidate_window
+
+
 def uncovered_material_candidates(
     template_id: str,
     raw_source: str,
     claims: Iterable[FactClaim],
 ) -> tuple[tuple[str, int, int], ...]:
-    """Find material source cues not covered by one exact asserted occurrence."""
+    """Find material source cues not covered by one grounded asserted claim."""
     asserted = tuple(
         claim for claim in claims
         if claim.status == ClaimStatus.ASSERTED
@@ -783,7 +831,7 @@ def uncovered_material_candidates(
     missing = []
     for kind, start, end in material_source_candidates(template_id, raw_source):
         if any(
-            claim.resolved_start_offset <= start and end <= claim.resolved_end_offset
+            _claim_covers_material_candidate(raw_source, claim, start, end)
             for claim in asserted
         ):
             continue
