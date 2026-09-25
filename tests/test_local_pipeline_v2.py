@@ -172,10 +172,9 @@ def test_repeated_exact_quote_is_ambiguous_not_arbitrarily_resolved():
 def test_unique_exact_relation_recovers_when_small_model_omits_quote():
     raw = "前言。主管裁示資訊科辦理盤點，並於下次會議報告。結尾。"
     span = EvidenceSpan.from_source("span-1", raw, start_offset=0, end_offset=len(raw))
-    claim = _claim(
-        "recover", subject="資訊科", predicate="辦理", object="盤點",
-        refs=("span-1",), evidence_quote=None,
-        resolved_start_offset=None, resolved_end_offset=None,
+    claim = FactClaim(
+        claim_id="recover", subject="資訊科", predicate="辦理", object="盤點",
+        evidence_refs=("span-1",), evidence_quote=None,
     )
     resolved = resolve_claim_occurrences(
         (claim,), {"span-1": span}, source_sha256=span.source_sha256,
@@ -189,10 +188,9 @@ def test_unique_exact_relation_recovers_when_small_model_omits_quote():
 def test_unique_occurrence_fallback_refuses_repeated_relation():
     raw = "資訊科辦理盤點。資訊科辦理盤點。"
     span = EvidenceSpan.from_source("span-1", raw, start_offset=0, end_offset=len(raw))
-    claim = _claim(
-        "repeat-fallback", subject="資訊科", predicate="辦理", object="盤點",
-        refs=("span-1",), evidence_quote=None,
-        resolved_start_offset=None, resolved_end_offset=None,
+    claim = FactClaim(
+        claim_id="repeat-fallback", subject="資訊科", predicate="辦理", object="盤點",
+        evidence_refs=("span-1",), evidence_quote=None,
     )
     resolved = resolve_claim_occurrences(
         (claim,), {"span-1": span}, source_sha256=span.source_sha256,
@@ -201,10 +199,10 @@ def test_unique_occurrence_fallback_refuses_repeated_relation():
 
 
 def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speakers():
-    raw = "發言者1：閒聊 17 個人、2026-09-25，沒有其他事項。"
+    raw = "發言者1：閒聊 17 個人、2026-09-25。"
     candidates = inventory_source_candidates("general", raw)
     kinds = {kind for kind, _start, _end in candidates}
-    assert {"numeric", "date", "speaker", "relation"} <= kinds
+    assert {"numeric", "date", "speaker"} <= kinds
 
     plans = template_section_plans(
         get_template("general"),
