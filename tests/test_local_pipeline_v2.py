@@ -21,7 +21,7 @@ from backend.services.local_pipeline_v2 import (
     template_section_plans, RelationMetadata, relation_is_supported_in_order,
     select_profile_candidate, sample_candidate_profiles,
     resolve_claim_occurrences,
-    template_claim_policy, inventory_source_candidates,
+    template_claim_policy, inventory_source_candidates, uncovered_material_candidates,
     cross_section_claim_duplicates, validate_template_terms,
     _number_value_supported,
 )
@@ -211,6 +211,38 @@ def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speaker
         raw_source=raw,
     )
     assert not any(plan.coverage_issues for plan in plans)
+
+
+def test_material_cues_in_same_short_statement_are_covered_by_grounded_claim():
+    raw = "主席決議由資訊科負責盤點系統權限，期限為10月15日。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    span = EvidenceSpan(
+        span_id="span-1", raw_text=raw, start_offset=0, end_offset=len(raw),
+        source_sha256=digest,
+    )
+    quote = "資訊科負責盤點系統權限"
+    start = raw.index(quote)
+    claim = FactClaim(
+        claim_id="c1", subject="資訊科", predicate="負責", object="盤點系統權限",
+        evidence_refs=("span-1",), evidence_quote=quote,
+        resolved_start_offset=start, resolved_end_offset=start + len(quote),
+    )
+    missing = uncovered_material_candidates("general", raw, (claim,))
+    assert missing == ()
+
+
+def test_material_cue_outside_bounded_statement_stays_uncovered():
+    raw = "資訊科負責盤點。" + ("其他說明" * 100) + "主席決議另案處理。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    quote = "資訊科負責盤點"
+    claim = FactClaim(
+        claim_id="c1", subject="資訊科", predicate="負責", object="盤點",
+        evidence_refs=("span-1",), evidence_quote=quote,
+        resolved_start_offset=0, resolved_end_offset=len(quote),
+    )
+    missing = uncovered_material_candidates("general", raw, (claim,))
+    kinds = [kind for kind, _start, _end in missing]
+    assert "決議" in kinds
 
 
 def test_occurrence_resolution_returns_ambiguous_for_offsetless_span():
