@@ -213,13 +213,9 @@ def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speaker
     assert not any(plan.coverage_issues for plan in plans)
 
 
-def test_material_cues_in_same_short_statement_are_covered_by_grounded_claim():
+def test_material_cues_share_only_a_bounded_clause_not_the_next_clause():
     raw = "主席決議由資訊科負責盤點系統權限，期限為10月15日。"
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    span = EvidenceSpan(
-        span_id="span-1", raw_text=raw, start_offset=0, end_offset=len(raw),
-        source_sha256=digest,
-    )
     quote = "資訊科負責盤點系統權限"
     start = raw.index(quote)
     claim = FactClaim(
@@ -228,7 +224,18 @@ def test_material_cues_in_same_short_statement_are_covered_by_grounded_claim():
         resolved_start_offset=start, resolved_end_offset=start + len(quote),
     )
     missing = uncovered_material_candidates("general", raw, (claim,))
-    assert missing == ()
+    assert [kind for kind, _start, _end in missing] == ["期限"]
+
+    deadline_quote = "期限為10月15日"
+    deadline_start = raw.index(deadline_quote)
+    deadline = FactClaim(
+        claim_id="c2", subject="期限", predicate="為", object="10月15日",
+        relation_type="temporal",
+        evidence_refs=("span-1",), evidence_quote=deadline_quote,
+        resolved_start_offset=deadline_start,
+        resolved_end_offset=deadline_start + len(deadline_quote),
+    )
+    assert uncovered_material_candidates("general", raw, (claim, deadline)) == ()
 
 
 def test_material_cue_outside_bounded_statement_stays_uncovered():
