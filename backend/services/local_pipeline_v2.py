@@ -297,12 +297,20 @@ def fidelity_firewall(
             or "否定" not in rendered
         ):
             polarity_issues.append(claim_id)
-        if claim.condition and (
-            (relation_metadata or {}).get(claim_id) is None
-            or (relation_metadata or {})[claim_id].condition != claim.condition
-            or claim.condition not in rendered
-        ):
-            condition_issues.append(claim_id)
+        if claim.condition:
+            if claim.relation_type in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
+                meta = (relation_metadata or {}).get(claim_id)
+                if (
+                    meta is None
+                    or meta.condition != claim.condition
+                    or claim.condition not in rendered
+                ):
+                    condition_issues.append(claim_id)
+            elif claim.condition not in rendered:
+                # Non-causal/conditional claims (for example temporal facts)
+                # have no relation_metadata contract. Preserve their condition
+                # in user-visible text without requiring impossible metadata.
+                condition_issues.append(claim_id)
         if claim.attribution and (claim.attribution not in source or claim.attribution not in rendered):
             attribution_issues.append(claim_id)
     return base.model_copy(update={
