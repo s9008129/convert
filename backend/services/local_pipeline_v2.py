@@ -1032,18 +1032,46 @@ def _relation_mentions_are_source_supported(
 
     clauses = re.split(r"[，,；;。！？!?、\n]+", text)
     contrastive = re.compile(r"然而|不過|但是|可是|反而|而是|但|however|instead|but", re.IGNORECASE)
+    # Mere co-mention of the two endpoints is not a second relation assertion.
+    # Small models often add a harmless label/restatement such as
+    # “A 與 B 均列入說明” after the exact grounded relation. Treat only a
+    # nontrivial lexical bridge between the endpoints as an unsupported
+    # competing predicate. This keeps the firewall fail-closed for
+    # “A 避免 B” while avoiding false positives on “A 與 B”.
+    safe_bridge = re.compile(
+        r"^(?:\s|[:：()（）\[\]【】]|與|及|和|暨|或|以及|、|/|／|等|相關)*$"
+    )
+
+    def has_assertive_bridge(clause: str) -> bool:
+        for subject_match in re.finditer(re.escape(relation.subject), clause):
+            for object_match in re.finditer(re.escape(relation.object), clause):
+                if subject_match.end() <= object_match.start():
+                    bridge = clause[subject_match.end():object_match.start()]
+                elif object_match.end() <= subject_match.start():
+                    bridge = clause[object_match.end():subject_match.start()]
+                else:
+                    continue
+                bridge = re.sub(r"〔[^〕]*〕", "", bridge)
+                if not safe_bridge.fullmatch(bridge):
+                    return True
+        return False
+
     for clause in clauses:
         if relation.subject not in clause or relation.object not in clause:
             continue
         matching = [candidate for candidate in supported if _relation_is_rendered(clause, candidate)]
         if not matching:
-            return False
+            if has_assertive_bridge(clause):
+                return False
+            continue
         residual = clause
         for candidate in matching:
+            # Remove every repetition of an already validated exact relation.
+            # Repetition is a usability concern, not a new semantic predicate.
             residual = residual.replace(
-                f"{candidate.subject}{candidate.predicate}{candidate.object}", "", 1
+                f"{candidate.subject}{candidate.predicate}{candidate.object}", ""
             )
-        if relation.subject in residual and relation.object in residual:
+        if relation.subject in residual and relation.object in residual and has_assertive_bridge(residual):
             return False
         # Chinese and English frequently omit a repeated subject in contrastive
         # clauses (e.g. “A 導致 B 但避免 B”). If a contrastive continuation
