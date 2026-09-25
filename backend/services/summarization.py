@@ -2813,6 +2813,10 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                     recovery_parsed = parse_fact_payload(
                         recovery_raw, source_sha256=source_sha
                     )
+                    if len(recovery_parsed.claims) > max_claims:
+                        raise FactPayloadValidationError(
+                            "V2 recovery exceeded bounded claim count"
+                        )
                 except FactPayloadValidationError:
                     # Exactly one schema-only repair remains allowed. The repair
                     # uses the same bounded window/schema, with a modestly larger
@@ -2842,6 +2846,10 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         recovery_parsed = parse_fact_payload(
                             recovery_raw, source_sha256=source_sha
                         )
+                        if len(recovery_parsed.claims) > max_claims:
+                            raise FactPayloadValidationError(
+                                "V2 recovery exceeded bounded claim count"
+                            )
                     except FactPayloadValidationError as recovery_schema_error:
                         raise LocalPipelineV2Error(
                             f"V2 material coverage recovery failed schema validation "
