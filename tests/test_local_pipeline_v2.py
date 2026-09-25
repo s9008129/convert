@@ -1055,8 +1055,8 @@ async def test_qwen_live_v2_uses_w7_production_baseline_temperature(monkeypatch)
     await service._summarize_with_local_pipeline_v2("短來源", "system", template=get_template("general"))
     extraction = [(temperature, system) for is_extraction, temperature, system in calls if is_extraction]
     rendering = [(temperature, system) for is_extraction, temperature, system in calls if not is_extraction]
-    assert extraction and {temperature for temperature, _ in extraction} == {0.7}
-    assert rendering and {temperature for temperature, _ in rendering} == {0.7}
+    assert extraction and {temperature for temperature, _ in extraction} == {0.2}
+    assert rendering and {temperature for temperature, _ in rendering} == {0.35}
     assert all(system == service.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT for _, system in extraction)
     assert all(system == service.LOCAL_V2_SECTION_SYSTEM_PROMPT for _, system in rendering)
 
@@ -1081,12 +1081,12 @@ async def test_qwen_candidate_temperature_varies_extraction_only(monkeypatch):
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
     await service._summarize_with_local_pipeline_v2(
         "短來源", "system", template=get_template("general"),
-        extraction_temperature_candidate=0.3,
+        extraction_temperature_candidate=0.1,
     )
     extraction = [temperature for is_extraction, temperature in observed if is_extraction]
     rendering = [temperature for is_extraction, temperature in observed if not is_extraction]
-    assert extraction and set(extraction) == {0.3}
-    assert rendering and set(rendering) == {0.7}
+    assert extraction and set(extraction) == {0.1}
+    assert rendering and set(rendering) == {0.35}
 
 
 @pytest.mark.asyncio
@@ -1114,8 +1114,9 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     )
     assert extraction_calls == 2
     repair = next(event for event in recorder.events if event["stage_id"] == "v2.extraction.chunk.1.repair")
-    assert repair["temperature"] == 0.2
-    assert temperatures and set(temperatures) == {0.2}
+    assert repair["temperature"] == 0.0
+    assert 0.2 in temperatures
+    assert 0.0 in temperatures
 
 
 @pytest.mark.parametrize("snapshots_enabled", (False, True))
