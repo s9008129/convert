@@ -19,11 +19,6 @@ jobs:
     timeout-minutes: 45
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      LOCAL_LLM_PROVIDER: openrouter
-      LOCAL_PIPELINE_VERSION: v2
-      LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
-      LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
-      LOCAL_LLM_DISABLE_THINKING: "true"
       DATA_DIR: ${{ github.workspace }}/data
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +53,12 @@ jobs:
             scripts/e2e/run_openrouter_v2_smoke.py
 
       - name: Live production-V2 smoke through OpenRouter
+        env:
+          LOCAL_LLM_PROVIDER: openrouter
+          LOCAL_PIPELINE_VERSION: v2
+          LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
+          LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
+          LOCAL_LLM_DISABLE_THINKING: "true"
         run: |
           test -n "${OPENROUTER_API_KEY:-}"
           uv run --frozen python scripts/e2e/run_openrouter_v2_smoke.py
