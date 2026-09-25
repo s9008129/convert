@@ -2384,7 +2384,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             template_section_plans, cross_section_claim_duplicates,
             validate_template_terms, RelationMetadata,
             bind_selected_claim_target, SelectedClaimTarget, resolve_claim_occurrences,
-            uncovered_material_candidates,
+            uncovered_material_candidates, _bounded_statement_window,
             unsupported_high_risk_additions, unknown_source_tag_references,
             apply_template_glossary_corrections,
         )
@@ -2688,9 +2688,16 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 len(missing_material),
                 ",".join(sorted(kind for kind, _start, _end in missing_material)),
             )
-            recovery_by_span: dict[str, list[tuple[str, int, int]]] = {}
+            # Group missing cues by a small deterministic raw-source statement
+            # window instead of resending the entire extraction chunk. This keeps
+            # recovery focused and prevents 27B/31B models from expanding a
+            # five-cue repair into thousands of tokens.
+            recovery_groups: dict[
+                tuple[str, int, int], list[tuple[str, int, int]]
+            ] = {}
+            span_by_id = {span.span_id: span for span in spans}
             for candidate in missing_material:
-                kind, start, end = candidate
+                _kind, start, end = candidate
                 containing = next(
                     (
                         span for span in spans
@@ -2701,39 +2708,79 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                     ),
                     None,
                 )
-                if containing is not None:
-                    recovery_by_span.setdefault(containing.span_id, []).append(candidate)
+                if containing is None:
+                    continue
+                span_origin = containing.start_offset or 0
+                local_start = start - span_origin
+                local_end = end - span_origin
+                window = _bounded_statement_window(
+                    containing.raw_text, local_start, local_end, max_chars=320
+                )
+                if window is None:
+                    # Long ASR runs can lack punctuation. Fall back to a fixed
+                    # candidate-centred raw slice; exact cue bytes always remain
+                    # inside the window and provenance still resolves against the
+                    # original span.
+                    width = 320
+                    cue_width = max(1, local_end - local_start)
+                    left = max(0, local_start - max(0, (width - cue_width) // 2))
+                    right = min(len(containing.raw_text), left + width)
+                    left = max(0, right - width)
+                    window = (left, right)
+                recovery_groups.setdefault(
+                    (containing.span_id, window[0], window[1]), []
+                ).append(candidate)
 
             recovered_claims = []
-            span_by_id = {span.span_id: span for span in spans}
-            for recovery_index, (span_id, candidates) in enumerate(
-                recovery_by_span.items(), start=1
-            ):
+            for recovery_index, (
+                (span_id, window_start, window_end), candidates
+            ) in enumerate(recovery_groups.items(), start=1):
                 span = span_by_id[span_id]
-                relative_targets = [
-                    {
-                        "kind": kind,
-                        "start": start - (span.start_offset or 0),
-                        "end": end - (span.start_offset or 0),
-                    }
-                    for kind, start, end in candidates
-                ]
-                recovery_message = (
-                    "MATERIAL COVERAGE RECOVERY. The first extraction omitted one or more "
-                    "trusted meeting-record cues. Re-read the SAME raw source chunk and return "
-                    "ONLY additional source-grounded claims needed to cover the listed intervals. "
-                    "Do not repeat unrelated facts. For every listed interval, evidence_quote "
-                    "must include the exact source characters at that interval and the directly "
-                    "related fact. Return ONLY the normal strict claims JSON shape.\n"
-                    f"EVIDENCE_REF: {span_id}\n"
-                    f"MISSING_CUE_INTERVALS: {json.dumps(relative_targets, ensure_ascii=False)}\n"
-                    f"RAW EVIDENCE SOURCE CHUNK:\n{span.raw_text}"
-                )
-                if span.corrected_text:
-                    recovery_message += (
-                        "\nCORRECTED COMPREHENSION VIEW (not evidence; all quotes and offsets "
-                        "must come from raw source):\n" + span.corrected_text
+                span_origin = span.start_offset or 0
+                window_text = span.raw_text[window_start:window_end]
+                relative_targets = []
+                cue_texts = []
+                for kind, start, end in candidates:
+                    cue_start = start - span_origin - window_start
+                    cue_end = end - span_origin - window_start
+                    cue_text = window_text[cue_start:cue_end]
+                    cue_texts.append(cue_text)
+                    relative_targets.append(
+                        {
+                            "kind": kind,
+                            "start": cue_start,
+                            "end": cue_end,
+                            "cue": cue_text,
+                        }
                     )
+
+                max_claims = max(1, min(len(candidates), 4))
+                recovery_temperature = min(extraction_temperature, 0.2)
+                recovery_output_tokens = min(
+                    settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                    max(768, 384 * max_claims),
+                )
+                recovery_response_format = (
+                    self._v2_fact_response_format(
+                        fact_payload=True, max_claims=max_claims
+                    )
+                    if capability == "SUPPORTED"
+                    else None
+                )
+                recovery_message = (
+                    "MATERIAL COVERAGE RECOVERY. Extract only the fact(s) needed "
+                    "to cover the listed missing cues from this SMALL raw-source "
+                    "window. Do not summarize the meeting and do not repeat "
+                    "unrelated facts. evidence_refs must contain only the supplied "
+                    "EVIDENCE_REF. evidence_quote must be an exact substring of "
+                    "RAW EVIDENCE WINDOW and must include at least one listed cue. "
+                    "Set evidence_start_offset and evidence_end_offset to null; "
+                    "the server resolves the exact occurrence. Return at most "
+                    f"{max_claims} claims and output only the strict claims JSON.\n"
+                    f"EVIDENCE_REF: {span_id}\n"
+                    f"MISSING_CUES: {json.dumps(relative_targets, ensure_ascii=False)}\n"
+                    f"RAW EVIDENCE WINDOW:\n{window_text}"
+                )
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
                         f"v2.recovery.chunk.{recovery_index}.input",
@@ -2741,7 +2788,8 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         source_branch="material_coverage_recovery",
                         metadata={
                             "validation_issue_count": len(candidates),
-                            "temperature": extraction_temperature,
+                            "temperature": recovery_temperature,
+                            "requested_max_tokens": recovery_output_tokens,
                         },
                     )
                 try:
@@ -2749,32 +2797,41 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         engine,
                         self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
                         recovery_message,
-                        temperature=extraction_temperature,
-                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        temperature=recovery_temperature,
+                        num_predict=recovery_output_tokens,
                         context_window_tokens=context_tokens,
                         lmstudio_selection=selection,
                         runtime_profile=profile,
                         runtime_control_rejection_callback=report_runtime_control_rejection,
-                        response_format=native_response_format,
+                        response_format=recovery_response_format,
                     )
                     recovery_parsed = parse_fact_payload(
                         recovery_raw, source_sha256=source_sha
                     )
                 except FactPayloadValidationError:
+                    # Exactly one schema-only repair remains allowed. The repair
+                    # uses the same bounded window/schema, with a modestly larger
+                    # completion budget in case the first response ended at the
+                    # JSON boundary.
+                    repair_output_tokens = min(
+                        settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        max(1024, min(2048, recovery_output_tokens * 2)),
+                    )
                     repair_message = recovery_message + (
-                        "\nSCHEMA REPAIR: keep the same facts and source quotes; output valid JSON only."
+                        "\nSCHEMA REPAIR: preserve the same bounded facts and exact "
+                        "source quotes; emit one complete valid JSON object only."
                     )
                     recovery_raw = await self._generate_with_local_engine(
                         engine,
                         self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
                         repair_message,
-                        temperature=extraction_temperature,
-                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        temperature=0.0,
+                        num_predict=repair_output_tokens,
                         context_window_tokens=context_tokens,
                         lmstudio_selection=selection,
                         runtime_profile=profile,
                         runtime_control_rejection_callback=report_runtime_control_rejection,
-                        response_format=native_response_format,
+                        response_format=recovery_response_format,
                     )
                     try:
                         recovery_parsed = parse_fact_payload(
@@ -2782,19 +2839,30 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         )
                     except FactPayloadValidationError as recovery_schema_error:
                         raise LocalPipelineV2Error(
-                            f"V2 material coverage recovery failed schema validation (chunk {recovery_index})"
+                            f"V2 material coverage recovery failed schema validation "
+                            f"(window {recovery_index})"
                         ) from recovery_schema_error
                 except Exception as recovery_error:
                     raise LocalPipelineV2Error(
-                        f"V2 material coverage recovery generation failed (chunk {recovery_index})"
+                        f"V2 material coverage recovery generation failed "
+                        f"(window {recovery_index})"
                     ) from recovery_error
 
-                # Server owns recovery IDs so repeated small-model IDs cannot
-                # collide with primary extraction IDs across chunks.
+                # Server owns recovery IDs. Admit only claims that stay bound to
+                # this exact evidence span and quote at least one requested cue.
                 for item_index, claim in enumerate(recovery_parsed.claims, start=1):
+                    if tuple(claim.evidence_refs) != (span_id,):
+                        continue
+                    quote = claim.evidence_quote or ""
+                    if not any(cue and cue in quote for cue in cue_texts):
+                        continue
                     recovered_claims.append(
                         claim.model_copy(
-                            update={"claim_id": f"recovery-{recovery_index}-{item_index}"}
+                            update={
+                                "claim_id": (
+                                    f"recovery-{recovery_index}-{item_index}"
+                                )
+                            }
                         )
                     )
                 if diagnostic_recorder:
@@ -2803,7 +2871,10 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         output_text=recovery_raw,
                         source_branch="material_coverage_recovery",
                         status="parsed",
-                        metadata={"validation_issue_count": len(candidates)},
+                        metadata={
+                            "validation_issue_count": len(candidates),
+                            "requested_max_tokens": recovery_output_tokens,
+                        },
                     )
 
             if recovered_claims:
