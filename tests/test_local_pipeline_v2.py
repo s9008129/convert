@@ -322,6 +322,39 @@ def test_minimal_recovery_payload_binds_server_owned_provenance():
     assert claims[0].date is None
 
 
+def test_minimal_recovery_payload_ignores_only_blank_placeholder_claim():
+    digest = hashlib.sha256("甲導致乙".encode()).hexdigest()
+    valid = {
+        "subject": "甲", "predicate": "導致", "object": "乙",
+        "relation_type": "causal", "direction": "subject_to_object",
+        "polarity": "positive", "condition": None, "evidence_quote": "甲導致乙",
+    }
+    blank = {
+        "subject": "", "predicate": "", "object": "",
+        "relation_type": "fact", "direction": "subject_to_object",
+        "polarity": "positive", "condition": None, "evidence_quote": "",
+    }
+    claims = parse_recovery_fact_payload(
+        {"claims": [valid, blank]},
+        source_sha256=digest,
+        evidence_ref="span-1",
+        max_claims=2,
+        claim_id_prefix="chunk-8",
+    )
+    assert len(claims) == 1
+    assert claims[0].subject == "甲"
+
+    malformed = {**valid, "direction": "sideways"}
+    with pytest.raises(local_v2.FactPayloadValidationError):
+        parse_recovery_fact_payload(
+            {"claims": [malformed]},
+            source_sha256=digest,
+            evidence_ref="span-1",
+            max_claims=1,
+            claim_id_prefix="chunk-8",
+        )
+
+
 def test_minimal_recovery_payload_rejects_extra_fields_and_overflow():
     digest = hashlib.sha256("甲導致乙".encode()).hexdigest()
     base = {
