@@ -86,13 +86,10 @@ jobs:
           # These historical source/checklist files stay in RUNNER_TEMP and are
           # never copied into the working tree or uploaded as artifacts.
           git fetch --no-tags --depth=1 origin \
-            fix/local-lmstudio-record-quality \
-            fix/qwen-local-quality-parity
-          git show FETCH_HEAD:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
-            > "$RUNNER_TEMP/fact_checklist.json" || {
-              git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
-                > "$RUNNER_TEMP/fact_checklist.json"
-            }
+            fix/local-lmstudio-record-quality:refs/remotes/origin/fix/local-lmstudio-record-quality \
+            fix/qwen-local-quality-parity:refs/remotes/origin/fix/qwen-local-quality-parity
+          git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
+            > "$RUNNER_TEMP/fact_checklist.json"
           git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/transcript.txt \
             > "$RUNNER_TEMP/transcript.txt"
           git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record.md \
