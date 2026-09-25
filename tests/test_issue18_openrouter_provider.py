@@ -74,7 +74,7 @@ async def test_openrouter_request_is_model_sticky_and_disables_reasoning(monkeyp
     assert captured["model"] == "google/gemma-4-31b-it"
     assert captured["temperature"] == 0.1
     assert captured["top_p"] == 0.9
-    assert captured["extra_body"] == {"reasoning": {"enabled": False}}
+    assert captured["extra_body"] == {"reasoning_effort": "none"}
 
 
 @pytest.mark.asyncio
