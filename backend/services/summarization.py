@@ -2991,6 +2991,12 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         if duplicated_required:
             final_firewall_issues.append("required-cross-section-duplicate")
         if final_firewall_issues:
+            # Privacy-safe diagnostics only: issue classes / section ids, never
+            # source text, prompt text, or model output.
+            log.warning(
+                "V2 final assembly rejected by source-alignment firewall: {}",
+                ",".join(str(issue) for issue in final_firewall_issues),
+            )
             raise LocalPipelineV2Error("V2 final assembly failed source-alignment firewall")
         duplicate_ids = cross_section_claim_duplicates(plans)
         template_terms = tuple(dict.fromkeys(
