@@ -822,9 +822,16 @@ def uncovered_material_candidates(
     claims: Iterable[FactClaim],
 ) -> tuple[tuple[str, int, int], ...]:
     """Find material source cues not covered by one grounded asserted claim."""
-    asserted = tuple(
+    # Recovery is for omitted recall, not for re-adjudicating an already
+    # grounded conflict. A claim that is scoped AMBIGUOUS/CONFLICTED but still
+    # has an exact resolved source occurrence represents the cue and must not
+    # trigger a second model pass that could silently pick a winner. Claims
+    # whose occurrence could not be resolved remain eligible for recovery.
+    represented = tuple(
         claim for claim in claims
-        if claim.status == ClaimStatus.ASSERTED
+        if claim.status in {
+            ClaimStatus.ASSERTED, ClaimStatus.AMBIGUOUS, ClaimStatus.CONFLICTED
+        }
         and claim.resolved_start_offset is not None
         and claim.resolved_end_offset is not None
     )
@@ -832,7 +839,7 @@ def uncovered_material_candidates(
     for kind, start, end in material_source_candidates(template_id, raw_source):
         if any(
             _claim_covers_material_candidate(raw_source, claim, start, end)
-            for claim in asserted
+            for claim in represented
         ):
             continue
         missing.append((kind, start, end))
