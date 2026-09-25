@@ -50,7 +50,8 @@ jobs:
             backend/core/config.py \
             backend/services/local_pipeline_v2.py \
             backend/services/summarization.py \
-            scripts/e2e/run_openrouter_v2_smoke.py
+            scripts/e2e/run_openrouter_v2_smoke.py \
+            scripts/e2e/run_openrouter_v2_real_diagnostic.py
 
       - name: Full repository regression suite
         run: uv run --frozen pytest tests/ -q
@@ -70,3 +71,35 @@ jobs:
         run: |
           test -n "${OPENROUTER_API_KEY:-}"
           uv run --frozen python scripts/e2e/run_openrouter_v2_smoke.py
+
+      - name: Privacy-safe real-meeting diagnostic
+        env:
+          LOCAL_LLM_PROVIDER: openrouter
+          LOCAL_PIPELINE_VERSION: v2
+          LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
+          LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
+          LOCAL_LLM_DISABLE_THINKING: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${OPENROUTER_API_KEY:-}"
+          # These historical source/checklist files stay in RUNNER_TEMP and are
+          # never copied into the working tree or uploaded as artifacts.
+          git fetch --no-tags --depth=1 origin \
+            fix/local-lmstudio-record-quality \
+            fix/qwen-local-quality-parity
+          git show FETCH_HEAD:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
+            > "$RUNNER_TEMP/fact_checklist.json" || {
+              git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
+                > "$RUNNER_TEMP/fact_checklist.json"
+            }
+          git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/transcript.txt \
+            > "$RUNNER_TEMP/transcript.txt"
+          git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record.md \
+            > "$RUNNER_TEMP/baseline_record.md"
+          uv run --frozen python scripts/e2e/run_openrouter_v2_real_diagnostic.py \
+            --transcript "$RUNNER_TEMP/transcript.txt" \
+            --checklist "$RUNNER_TEMP/fact_checklist.json" \
+            --baseline-record "$RUNNER_TEMP/baseline_record.md" \
+            --template section_meeting
+          rm -f "$RUNNER_TEMP/transcript.txt" "$RUNNER_TEMP/fact_checklist.json" "$RUNNER_TEMP/baseline_record.md"
