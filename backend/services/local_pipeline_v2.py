@@ -352,6 +352,66 @@ class FactPayloadValidationError(ValueError):
     """Model output was generated but failed strict JSON/schema validation."""
 
 
+class RecoveryFactPayload(BaseModel):
+    """Minimal schema for one targeted material-coverage recovery fact.
+
+    Recovery deliberately omits server-owned IDs/references/status/offsets and
+    non-essential enrichment fields. This keeps 27B/31B structured completions
+    small; the server binds provenance after validation.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1)
+    relation_type: RelationType = RelationType.FACT
+    direction: str = "subject_to_object"
+    polarity: str = "positive"
+    condition: str | None = None
+    evidence_quote: str = Field(min_length=1)
+
+
+class RecoveryFactEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    claims: tuple[RecoveryFactPayload, ...] = ()
+
+
+def parse_recovery_fact_payload(
+    payload: str | Mapping[str, Any],
+    *,
+    source_sha256: str,
+    evidence_ref: str,
+    max_claims: int,
+    claim_id_prefix: str,
+) -> tuple[FactClaim, ...]:
+    """Validate minimal recovery JSON and bind server-owned provenance."""
+
+    if max_claims < 1:
+        raise FactPayloadValidationError("V2 recovery max_claims must be >= 1")
+    try:
+        value = json.loads(payload) if isinstance(payload, str) else dict(payload)
+        envelope = RecoveryFactEnvelope.model_validate(value)
+    except (TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+        raise FactPayloadValidationError("V2 recovery returned invalid minimal JSON") from exc
+    if len(envelope.claims) > max_claims:
+        raise FactPayloadValidationError("V2 recovery exceeded bounded claim count")
+    return tuple(
+        FactClaim(
+            claim_id=f"{claim_id_prefix}-{index}",
+            subject=item.subject,
+            predicate=item.predicate,
+            object=item.object,
+            relation_type=item.relation_type,
+            direction=item.direction,
+            polarity=item.polarity,
+            condition=item.condition,
+            evidence_refs=(evidence_ref,),
+            evidence_quote=item.evidence_quote,
+        )
+        for index, item in enumerate(envelope.claims, start=1)
+    )
+
+
 @dataclass(frozen=True)
 class NativeSchemaProbeResult:
     """Normalized capability plus a safe operational classification, never raw error text."""
