@@ -33,6 +33,7 @@ from backend.core.config import settings  # noqa: E402
 from backend.models.schemas import ProcessingMode  # noqa: E402
 from backend.services.local_pipeline_v2 import unsupported_high_risk_additions  # noqa: E402
 from backend.services.summarization import SummarizationService  # noqa: E402
+from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder  # noqa: E402
 
 
 MODELS = ("google/gemma-4-31b-it", "qwen/qwen3.8-27b")
@@ -133,6 +134,41 @@ def _metrics(record: str, transcript: str, facts: list[dict[str, Any]]) -> dict[
     }
 
 
+def _pipeline_metrics(recorder: LocalPipelineDiagnosticRecorder) -> dict[str, Any]:
+    events = recorder.events
+    extraction = [
+        event for event in events
+        if event.get("stage_id", "").startswith("v2.extraction.chunk.")
+        and event.get("stage_id", "").endswith(".outcome")
+        and event.get("status") == "parsed"
+    ]
+    patch_terminal = [
+        event for event in events
+        if re.fullmatch(r"v2\.patch\.[^.]+", str(event.get("stage_id", "")))
+    ]
+    final = next(
+        (event for event in reversed(events)
+         if event.get("stage_id") == "v2.coverage.final"),
+        {},
+    )
+    evidence_resolution = next(
+        (event for event in reversed(events)
+         if event.get("stage_id") == "v2.evidence-resolution"),
+        {},
+    )
+    return {
+        "extraction_chunk_count": len(extraction),
+        "extraction_claim_count": sum(int(event.get("claim_count", 0)) for event in extraction),
+        "resolved_claim_count": int(evidence_resolution.get("resolved_count", 0)),
+        "ambiguous_claim_count": int(evidence_resolution.get("ambiguous_count", 0)),
+        "patch_accepted_count": sum(event.get("status") == "accepted" for event in patch_terminal),
+        "patch_rolled_back_count": sum(event.get("status") == "rolled_back" for event in patch_terminal),
+        "planned_sections": int(final.get("planned_sections", 0)),
+        "required_claim_count": int(final.get("required_claim_count", 0)),
+        "coverage_issue_count": int(final.get("coverage_issue_count", 0)),
+    }
+
+
 async def _run_model(
     model: str,
     transcript: str,
@@ -141,22 +177,32 @@ async def _run_model(
 ) -> dict[str, Any]:
     settings.OPENROUTER_MODEL = model
     service = SummarizationService()
+    recorder = LocalPipelineDiagnosticRecorder(
+        run_id="issue18-real-meeting-diagnostic"
+    )
     try:
         record = await service.summarize(
             transcript,
             mode=ProcessingMode.LOCAL,
             template_id=template_id,
+            diagnostic_recorder=recorder,
         )
         result = {
             "model": model,
             "status": "PASS",
             **_metrics(record, transcript, facts),
+            "pipeline": _pipeline_metrics(recorder),
         }
-        # The product V2 final firewall already fails closed on unsupported
-        # high-risk additions. Keep the diagnostic equally strict.
         if result["unsupported_high_risk_count"] != 0:
             raise RuntimeError("privacy-safe diagnostic found unsupported high-risk additions")
         return result
+    except Exception as exc:  # noqa: BLE001 - peer model must still run
+        return {
+            "model": model,
+            "status": "FAIL",
+            "error_class": type(exc).__name__,
+            "pipeline": _pipeline_metrics(recorder),
+        }
     finally:
         await service.close()
 
@@ -210,22 +256,16 @@ async def main() -> int:
     # Isolate model failures. A Gemma failure must never erase the Qwen result
     # (or vice versa); every model emits its privacy-safe metrics immediately.
     for model in MODELS:
-        try:
-            result = await _run_model(model, transcript, facts, args.template)
-            if cloud_all and cloud_core:
-                result["coverage_vs_cloud_ratio"] = round(
-                    result["coverage_ratio"] / cloud_all, 6
-                )
-                result["core_coverage_vs_cloud_ratio"] = round(
-                    result["core_coverage_ratio"] / cloud_core, 6
-                )
-        except Exception as exc:  # noqa: BLE001 - diagnostic must continue peer model
+        result = await _run_model(model, transcript, facts, args.template)
+        if result.get("status") != "PASS":
             failed = True
-            result = {
-                "model": model,
-                "status": "FAIL",
-                "error_class": type(exc).__name__,
-            }
+        elif cloud_all and cloud_core:
+            result["coverage_vs_cloud_ratio"] = round(
+                result["coverage_ratio"] / cloud_all, 6
+            )
+            result["core_coverage_vs_cloud_ratio"] = round(
+                result["core_coverage_ratio"] / cloud_core, 6
+            )
         results.append(result)
         print(
             "REAL_DIAGNOSTIC_MODEL "
