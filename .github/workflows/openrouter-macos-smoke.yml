@@ -1,0 +1,81 @@
+name: OpenRouter macOS model smoke
+
+on:
+  push:
+    branches:
+      - ci/openrouter-model-smoke-20260925
+
+jobs:
+  openrouter-smoke:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - name: Verify secret is available
+        shell: bash
+        run: |
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "OPENROUTER_API_KEY is missing"
+            exit 1
+          fi
+          echo "OPENROUTER_API_KEY is present (value masked by GitHub)"
+
+      - name: Call Qwen 3.8 27B and Gemma 4 31B
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          endpoint = "https://openrouter.ai/api/v1/chat/completions"
+          api_key = os.environ["OPENROUTER_API_KEY"]
+          models = [
+              "qwen/qwen3.8-27b",
+              "google/gemma-4-31b-it",
+          ]
+
+          for model in models:
+              payload = {
+                  "model": model,
+                  "messages": [
+                      {
+                          "role": "user",
+                          "content": "這是 API 連通測試。請只回覆：CONNECTED",
+                      }
+                  ],
+                  "temperature": 0,
+                  "max_tokens": 16,
+              }
+              req = urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(payload).encode("utf-8"),
+                  headers={
+                      "Authorization": f"Bearer {api_key}",
+                      "Content-Type": "application/json",
+                      "HTTP-Referer": "https://github.com/s9008129/convert",
+                      "X-Title": "convert OpenRouter macOS smoke",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=180) as resp:
+                      body = json.loads(resp.read().decode("utf-8"))
+                      content = body["choices"][0]["message"].get("content", "")
+                      response_model = body.get("model", "")
+                      print(f"MODEL={model}")
+                      print(f"HTTP={resp.status}")
+                      print(f"RESPONSE_MODEL={response_model}")
+                      print(f"CONTENT={content[:200]!r}")
+                      print("---")
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", "replace")
+                  print(f"MODEL={model}")
+                  print(f"HTTP={exc.code}")
+                  print(f"ERROR={detail[:1000]}")
+                  raise
+
+          print("OPENROUTER_SMOKE=PASS")
+          PY
