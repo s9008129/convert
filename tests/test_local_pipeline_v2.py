@@ -691,6 +691,48 @@ def test_relation_order_accepts_later_valid_occurrence_when_object_appears_earli
     assert relation_is_supported_in_order(claim, (span,))
 
 
+def test_clause_relation_match_does_not_require_condition_in_same_clause():
+    raw = "因整合測試尚未完成，整合測試尚未完成導致正式上線延後。"
+    claim = FactClaim(
+        claim_id="c1",
+        subject="整合測試尚未完成",
+        predicate="導致",
+        object="正式上線延後",
+        relation_type="causal",
+        condition="因整合測試尚未完成",
+        evidence_refs=("span-1",),
+        evidence_quote=raw[:-1],
+        resolved_start_offset=0,
+        resolved_end_offset=len(raw) - 1,
+    )
+    evidence = {
+        "span-1": EvidenceSpan.from_source(
+            "span-1", raw, start_offset=0, end_offset=len(raw)
+        )
+    }
+    plan = SectionPlan(
+        section_id="s", title="決議", required_claim_ids=("c1",)
+    )
+    metadata = {
+        "c1": RelationMetadata(
+            subject=claim.subject,
+            predicate=claim.predicate,
+            object=claim.object,
+            direction=claim.direction,
+            polarity=claim.polarity,
+            condition=claim.condition,
+            relation_type=claim.relation_type,
+        )
+    }
+    rendered = "因整合測試尚未完成，整合測試尚未完成導致正式上線延後〔span-1〕"
+    snapshot = fidelity_firewall(
+        plan, rendered, {"c1": claim}, evidence, relation_metadata=metadata
+    )
+    assert snapshot.relation_issues == ()
+    assert snapshot.condition_issues == ()
+    assert snapshot.accepted
+
+
 def test_relation_firewall_allows_benign_endpoint_comention_after_grounded_relation():
     raw = "預算導致延後。"
     claim = FactClaim(
