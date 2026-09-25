@@ -750,11 +750,11 @@ def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tupl
         for match in pattern.finditer(raw_source)
     ]
     for kind, pattern in (
-        ("numeric", re.compile(r"(?<!\\d)\\d+(?:\\.\\d+)?")),
+        ("numeric", re.compile(r"(?<!\d)\d+(?:\.\d+)?")),
         ("numeric", re.compile(r"[零〇一二兩两三四五六七八九](?=[週周年月日天時时小時小时分鐘分钟秒件人個个位項项次份萬元元])")),
-        ("date", re.compile(r"(?:\\d{2,4}年\\d{1,2}月\\d{1,2}日|\\d{1,4}[./-]\\d{1,2}[./-]\\d{1,2})")),
+        ("date", re.compile(r"(?:\d{2,4}年\d{1,2}月\d{1,2}日|\d{1,4}[./-]\d{1,2}[./-]\d{1,2})")),
         ("relation", re.compile(r"因而|因此|導致|造成|使得|若|如果|除非|未|不|無|沒有")),
-        ("speaker", re.compile(r"(?:發言者\\d+|Speaker\\s*\\d+)\\s*[:：]")),
+        ("speaker", re.compile(r"(?:發言者\d+|Speaker\s*\d+)\s*[:：]")),
     ):
         candidates.extend((kind, match.start(), match.end()) for match in pattern.finditer(raw_source))
     return tuple(sorted(set(candidates), key=lambda item: (item[1], item[2], item[0])))
