@@ -2375,7 +2375,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         """
         from backend.services.local_pipeline_v2 import (
             FactPayloadValidationError, LocalPipelineV2Error, build_evidence_spans, consolidate_claims,
-            parse_fact_payload, render_section, assemble_sections, ClaimStatus,
+            parse_fact_payload, parse_recovery_fact_payload, render_section, assemble_sections, ClaimStatus,
             align_whitespace_only_corrected_chunks, classify_native_schema_probe,
             fidelity_firewall, parse_section_render_payload,
             guarded_section_patch, ModelRuntimeProfile,
@@ -2766,9 +2766,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                     2048,
                 )
                 recovery_response_format = (
-                    self._v2_fact_response_format(
-                        fact_payload=True, max_claims=max_claims
-                    )
+                    self._v2_recovery_response_format(max_claims=max_claims)
                     if capability == "SUPPORTED"
                     else None
                 )
@@ -2779,9 +2777,13 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                     "unrelated facts. evidence_refs must contain only the supplied "
                     "EVIDENCE_REF. evidence_quote must be an exact substring of "
                     "RAW EVIDENCE WINDOW and must include at least one listed cue. "
-                    "Set evidence_start_offset and evidence_end_offset to null; "
-                    "the server resolves the exact occurrence. Return at most "
-                    f"{max_claims} claims and output only the strict claims JSON.\n"
+                    "Return at most "
+                    f"{max_claims} claims. Each claim contains ONLY subject, "
+                    "predicate, object, relation_type, direction, polarity, "
+                    "condition, evidence_quote. Do not emit claim IDs, evidence "
+                    "refs, status, uncertainty, offsets, numbers, units, dates, "
+                    "or attribution fields; the server owns provenance metadata. "
+                    "Output only the strict claims JSON.\n"
                     f"EVIDENCE_REF: {span_id}\n"
                     f"MISSING_CUES: {json.dumps(relative_targets, ensure_ascii=False)}\n"
                     f"RAW EVIDENCE WINDOW:\n{window_text}"
@@ -2810,13 +2812,13 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         runtime_control_rejection_callback=report_runtime_control_rejection,
                         response_format=recovery_response_format,
                     )
-                    recovery_parsed = parse_fact_payload(
-                        recovery_raw, source_sha256=source_sha
+                    recovery_parsed = parse_recovery_fact_payload(
+                        recovery_raw,
+                        source_sha256=source_sha,
+                        evidence_ref=span_id,
+                        max_claims=max_claims,
+                        claim_id_prefix=f"recovery-{recovery_index}",
                     )
-                    if len(recovery_parsed.claims) > max_claims:
-                        raise FactPayloadValidationError(
-                            "V2 recovery exceeded bounded claim count"
-                        )
                 except FactPayloadValidationError:
                     # Exactly one schema-only repair remains allowed. The repair
                     # uses the same bounded window/schema, with a modestly larger
@@ -2843,13 +2845,13 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                         response_format=recovery_response_format,
                     )
                     try:
-                        recovery_parsed = parse_fact_payload(
-                            recovery_raw, source_sha256=source_sha
+                        recovery_parsed = parse_recovery_fact_payload(
+                            recovery_raw,
+                            source_sha256=source_sha,
+                            evidence_ref=span_id,
+                            max_claims=max_claims,
+                            claim_id_prefix=f"recovery-{recovery_index}",
                         )
-                        if len(recovery_parsed.claims) > max_claims:
-                            raise FactPayloadValidationError(
-                                "V2 recovery exceeded bounded claim count"
-                            )
                     except FactPayloadValidationError as recovery_schema_error:
                         raise LocalPipelineV2Error(
                             f"V2 material coverage recovery failed schema validation "
@@ -2863,21 +2865,13 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
 
                 # Server owns recovery IDs. Admit only claims that stay bound to
                 # this exact evidence span and quote at least one requested cue.
-                for item_index, claim in enumerate(recovery_parsed.claims, start=1):
+                for claim in recovery_parsed:
                     if tuple(claim.evidence_refs) != (span_id,):
                         continue
                     quote = claim.evidence_quote or ""
                     if not any(cue and cue in quote for cue in cue_texts):
                         continue
-                    recovered_claims.append(
-                        claim.model_copy(
-                            update={
-                                "claim_id": (
-                                    f"recovery-{recovery_index}-{item_index}"
-                                )
-                            }
-                        )
-                    )
+                    recovered_claims.append(claim)
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
                         f"v2.recovery.chunk.{recovery_index}.outcome",
@@ -3356,6 +3350,56 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         if not isinstance(schema, dict):
             raise ValueError("Ollama native format requires a JSON Schema object")
         return schema
+
+    @staticmethod
+    def _v2_recovery_response_format(*, max_claims: int) -> dict:
+        """Strict minimal schema for targeted material recovery.
+
+        IDs, evidence refs, status and offsets are server-owned and therefore
+        intentionally absent from model output.
+        """
+        if max_claims < 1:
+            raise ValueError("max_claims must be >= 1")
+        claim_properties = {
+            "subject": {"type": "string"},
+            "predicate": {"type": "string"},
+            "object": {"type": "string"},
+            "relation_type": {
+                "type": "string",
+                "enum": ["fact", "causal", "conditional", "temporal"],
+            },
+            "direction": {
+                "type": "string",
+                "enum": ["subject_to_object", "object_to_subject"],
+            },
+            "polarity": {"type": "string", "enum": ["positive", "negative"]},
+            "condition": {"type": ["string", "null"]},
+            "evidence_quote": {"type": "string"},
+        }
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "v2_material_recovery",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "claims": {
+                            "type": "array",
+                            "maxItems": int(max_claims),
+                            "items": {
+                                "type": "object",
+                                "properties": claim_properties,
+                                "required": list(claim_properties),
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["claims"],
+                    "additionalProperties": False,
+                },
+            },
+        }
 
     @staticmethod
     def _v2_section_response_format() -> dict:
