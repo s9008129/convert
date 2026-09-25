@@ -1933,13 +1933,13 @@ async def test_optional_conflict_stays_local_and_unrelated_section_continues(mon
     assert "預算導致提前" not in result
 
 
-@pytest.mark.parametrize(("model_key", "expected_family", "expected_temperature"), (
+@pytest.mark.parametrize(("model_key", "expected_family", "expected_profile_temperature"), (
     ("qwen3.8:27b", "Qwen", 0.7),
     ("gemma4:31b", "Gemma", 1.0),
 ))
 @pytest.mark.asyncio
 async def test_ollama_v2_uses_effective_model_family_for_baseline_temperature(
-    monkeypatch, model_key, expected_family, expected_temperature,
+    monkeypatch, model_key, expected_family, expected_profile_temperature,
 ):
     from backend.services import local_pipeline_v2 as v2
 
@@ -1965,7 +1965,11 @@ async def test_ollama_v2_uses_effective_model_family_for_baseline_temperature(
     assert "合成測試完成" in result
     assert captured
     temperature, profile = captured[0]
-    assert temperature == expected_temperature
+    # Extraction is a deterministic structured task and deliberately uses a
+    # low-entropy call. The runtime profile still records the model-family
+    # baseline preset used by prose-oriented stages.
+    assert temperature == 0.2
+    assert profile.temperature == expected_profile_temperature
     assert profile.family == expected_family
     assert profile.model_key == model_key
     assert "temperature" in profile.supported_controls
