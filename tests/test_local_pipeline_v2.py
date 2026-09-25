@@ -169,6 +169,47 @@ def test_repeated_exact_quote_is_ambiguous_not_arbitrarily_resolved():
     assert resolved.uncertainty == "unresolved_raw_source_occurrence"
 
 
+def test_unique_exact_relation_recovers_when_small_model_omits_quote():
+    raw = "前言。主管裁示資訊科辦理盤點，並於下次會議報告。結尾。"
+    span = EvidenceSpan.from_source("span-1", raw, start_offset=0, end_offset=len(raw))
+    claim = _claim(
+        "recover", subject="資訊科", predicate="辦理", object="盤點",
+        refs=("span-1",), evidence_quote=None,
+        resolved_start_offset=None, resolved_end_offset=None,
+    )
+    resolved = resolve_claim_occurrences(
+        (claim,), {"span-1": span}, source_sha256=span.source_sha256,
+    )[0]
+    assert resolved.status == ClaimStatus.ASSERTED
+    assert resolved.evidence_quote in raw
+    assert resolved.resolved_start_offset is not None
+    assert raw[resolved.resolved_start_offset:resolved.resolved_end_offset] == resolved.evidence_quote
+
+
+def test_unique_occurrence_fallback_refuses_repeated_relation():
+    raw = "資訊科辦理盤點。資訊科辦理盤點。"
+    span = EvidenceSpan.from_source("span-1", raw, start_offset=0, end_offset=len(raw))
+    claim = _claim(
+        "repeat-fallback", subject="資訊科", predicate="辦理", object="盤點",
+        refs=("span-1",), evidence_quote=None,
+        resolved_start_offset=None, resolved_end_offset=None,
+    )
+    resolved = resolve_claim_occurrences(
+        (claim,), {"span-1": span}, source_sha256=span.source_sha256,
+    )[0]
+    assert resolved.status == ClaimStatus.AMBIGUOUS
+
+
+def test_materiality_inventory_does_not_require_incidental_numbers_dates_or_speakers():
+    raw = "發言者1：閒聊 17 個人、2026-09-25。主席裁示資訊科辦理盤點。"
+    candidates = inventory_source_candidates("general", raw)
+    kinds = {kind for kind, _start, _end in candidates}
+    assert "裁示" in kinds
+    assert "numeric" not in kinds
+    assert "date" not in kinds
+    assert "speaker" not in kinds
+
+
 def test_occurrence_resolution_returns_ambiguous_for_offsetless_span():
     raw = "甲導致乙"
     digest = hashlib.sha256(raw.encode()).hexdigest()
@@ -869,18 +910,22 @@ async def test_qwen_live_v2_uses_w7_production_baseline_temperature(monkeypatch)
         model_identifier="qwen3.8-27b", provider="lmstudio", loaded_instance_id="instance-1",
         context_length=8192,
     )
-    temperatures = []
+    calls = []
 
-    async def generation(_engine, _system, message, **kwargs):
-        temperatures.append(kwargs["temperature"])
+    async def generation(_engine, call_system, message, **kwargs):
+        calls.append(("SOURCE CHUNK" in message, kwargs["temperature"], call_system))
         if "SOURCE CHUNK" in message:
             return json.dumps({"claims": []})
         return json.dumps({"text": "section", "claim_ids": [], "relation_metadata": {}})
 
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
     await service._summarize_with_local_pipeline_v2("短來源", "system", template=get_template("general"))
-    assert temperatures
-    assert set(temperatures) == {0.7}
+    extraction = [(temperature, system) for is_extraction, temperature, system in calls if is_extraction]
+    rendering = [(temperature, system) for is_extraction, temperature, system in calls if not is_extraction]
+    assert extraction and {temperature for temperature, _ in extraction} == {0.1}
+    assert rendering and {temperature for temperature, _ in rendering} == {0.2}
+    assert all(system == service.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT for _, system in extraction)
+    assert all(system == service.LOCAL_V2_SECTION_SYSTEM_PROMPT for _, system in rendering)
 
 
 @pytest.mark.asyncio
@@ -908,7 +953,7 @@ async def test_qwen_candidate_temperature_varies_extraction_only(monkeypatch):
     extraction = [temperature for is_extraction, temperature in observed if is_extraction]
     rendering = [temperature for is_extraction, temperature in observed if not is_extraction]
     assert extraction and set(extraction) == {0.3}
-    assert rendering and set(rendering) == {0.7}
+    assert rendering and set(rendering) == {0.2}
 
 
 @pytest.mark.asyncio
@@ -936,8 +981,9 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     )
     assert extraction_calls == 2
     repair = next(event for event in recorder.events if event["stage_id"] == "v2.extraction.chunk.1.repair")
-    assert repair["temperature"] == 0.2
-    assert temperatures and set(temperatures) == {0.2}
+    assert repair["temperature"] == 0.1
+    assert 0.1 in temperatures
+    assert 0.2 in temperatures
 
 
 @pytest.mark.parametrize("snapshots_enabled", (False, True))
@@ -1043,9 +1089,11 @@ async def test_live_v2_uses_immutable_raw_source_when_corrected_view_is_unaligne
     assert "temperature" not in profile_event
     extraction_events = [event for event in recorder.events if event["stage_id"].startswith("v2.extraction.chunk.") and event["stage_id"].endswith(".input")]
     section_events = [event for event in recorder.events if event["stage_id"].startswith("v2.section.") and event["stage_id"].endswith(".input")]
-    assert extraction_events and all(event["temperature"] == 0.2 for event in extraction_events)
+    assert extraction_events and all(event["temperature"] == 0.1 for event in extraction_events)
     assert section_events and all(event["temperature"] == 0.2 for event in section_events)
-    assert captured_temperatures and {value for value, _ in captured_temperatures} == {0.2}
+    assert captured_temperatures
+    assert {value for value, is_extraction in captured_temperatures if is_extraction} == {0.1}
+    assert {value for value, is_extraction in captured_temperatures if not is_extraction} == {0.2}
 
 
 @pytest.mark.asyncio
@@ -1396,7 +1444,7 @@ async def test_profile_sampler_runs_only_observed_valid_profiles_and_selector_is
     samples = await sample_candidate_profiles(candidates, run_sample, repeats=3)
     assert len(calls) == 9
     selected = select_profile_candidate(candidates, samples)
-    assert selected.temperature == 0.7
+    assert selected.temperature == 0.3
 
 
 @pytest.mark.asyncio
@@ -1754,8 +1802,8 @@ async def test_optional_conflict_stays_local_and_unrelated_section_continues(mon
 
 
 @pytest.mark.parametrize(("model_key", "expected_family", "expected_temperature"), (
-    ("qwen3.8:27b", "Qwen", 0.7),
-    ("gemma4:31b", "Gemma", 1.0),
+    ("qwen3.8:27b", "Qwen", 0.1),
+    ("gemma4:31b", "Gemma", 0.1),
 ))
 @pytest.mark.asyncio
 async def test_ollama_v2_uses_effective_model_family_for_baseline_temperature(
