@@ -595,7 +595,7 @@ def test_chinese_single_digit_plus_unit_is_losslessly_grounded_and_rendered():
 
 
 def test_temporal_condition_requires_text_but_not_relation_metadata():
-    raw = "完成驗證後再上線。"
+    raw = "完成驗證後，系統上線正式環境。"
     claim = FactClaim(
         claim_id="c1",
         subject="系統",
