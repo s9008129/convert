@@ -3310,6 +3310,24 @@ class SummarizationService:
                 | (set(final_snapshot.source_tag_issues) & required_ids)
             )
             if decisive_required_issues or plan.coverage_issues:
+                # Privacy-safe root-cause telemetry: opaque claim IDs/counts only,
+                # never source/model text.
+                log.warning(
+                    "V2 final section rejected: section={}, missing_required={}, "
+                    "relation={}, polarity={}, condition={}, attribution={}, "
+                    "numeric={}, date={}, entity={}, source_tag={}, coverage_issues={}",
+                    plan.section_id,
+                    len(set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids)),
+                    len(set(final_snapshot.relation_issues) & required_ids),
+                    len(set(final_snapshot.polarity_issues) & required_ids),
+                    len(set(final_snapshot.condition_issues) & required_ids),
+                    len(set(final_snapshot.attribution_issues) & required_ids),
+                    len(set(final_snapshot.numeric_issues) & required_ids),
+                    len(set(final_snapshot.date_issues) & required_ids),
+                    len(set(final_snapshot.entity_issues) & required_ids),
+                    len(set(final_snapshot.source_tag_issues) & required_ids),
+                    len(plan.coverage_issues),
+                )
                 final_firewall_issues.append(f"required-coverage:{plan.section_id}")
             if selected_claim_id and selected_claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
                 expected = RelationMetadata.model_validate(selected_target_relation)
