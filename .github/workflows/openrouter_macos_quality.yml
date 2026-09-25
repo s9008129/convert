@@ -52,6 +52,14 @@ jobs:
             backend/services/summarization.py \
             scripts/e2e/run_openrouter_v2_smoke.py
 
+      - name: Full repository regression suite
+        run: uv run --frozen pytest tests/ -q
+
+      - name: Repository hygiene
+        run: |
+          git diff --check
+          bash scripts/check_docs.sh
+
       - name: Live production-V2 smoke through OpenRouter
         env:
           LOCAL_LLM_PROVIDER: openrouter
