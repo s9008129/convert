@@ -3802,7 +3802,10 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             if response_format is not None:
                 kwargs["response_format"] = response_format
             if disable_reasoning and settings.LOCAL_LLM_DISABLE_THINKING:
-                kwargs["extra_body"] = {"reasoning": {"enabled": False}}
+                # Match the production LM Studio contract exactly. OpenRouter's
+                # OpenAI-compatible API accepts reasoning_effort as a shorthand,
+                # so this validates the same non-thinking mode used on the Mac.
+                kwargs["extra_body"] = {"reasoning_effort": "none"}
             return await client.chat.completions.create(**kwargs)
 
         try:
@@ -3813,7 +3816,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 raise
             if runtime_control_rejection_callback:
                 runtime_control_rejection_callback("reasoning")
-            log.warning("OpenRouter routed provider rejected reasoning control; retrying once without it")
+            log.warning("OpenRouter routed provider rejected reasoning_effort; retrying once without it")
             return await _create(disable_reasoning=False)
 
     async def _summarize_with_openrouter(
