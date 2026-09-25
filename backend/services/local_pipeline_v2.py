@@ -783,9 +783,21 @@ _TEMPLATE_CANDIDATES: Mapping[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
     for template_id, cues in _TEMPLATE_CUES.items()
 }
 
+# Observation vocabulary and fail-closed completeness vocabulary are not the
+# same thing.  "指示" is useful to observe in section-meeting diagnostics, but
+# it is too generic to make every occurrence a hard missing-fact veto (for
+# example, an anaphoric phrase such as "這是現場指示的" can merely refer back
+# to a fact already captured in the previous clause).
+_TEMPLATE_REQUIRED_CUES: Mapping[str, tuple[str, ...]] = {
+    **_TEMPLATE_CUES,
+    "section_meeting": tuple(
+        cue for cue in _TEMPLATE_CUES["section_meeting"] if cue != "指示"
+    ),
+}
+
 
 def template_claim_policy(template_id: str) -> TemplateClaimPolicy:
-    cues = _TEMPLATE_CUES.get(template_id)
+    cues = _TEMPLATE_REQUIRED_CUES.get(template_id)
     if cues is None:
         raise ValueError(f"no trusted template claim policy for {template_id}")
     return TemplateClaimPolicy(template_id=template_id, source_present_cues=cues)
