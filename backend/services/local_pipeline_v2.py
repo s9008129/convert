@@ -1017,6 +1017,7 @@ def _relation_mentions_are_source_supported(
     claims: Mapping[str, FactClaim],
     evidence: Mapping[str, EvidenceSpan],
     relation_metadata: Mapping[str, RelationMetadata],
+    diagnostics: dict[str, int] | None = None,
 ) -> bool:
     """Reject extra same-endpoint relation clauses absent from the typed ledger.
 
@@ -1047,6 +1048,16 @@ def _relation_mentions_are_source_supported(
         if candidate_metadata == expected_metadata:
             supported.append(candidate_metadata)
 
+    if diagnostics is not None:
+        diagnostics.update({
+            "supported_count": len(supported),
+            "clauses_with_both": 0,
+            "matching_clause_count": 0,
+            "assertive_without_matching": 0,
+            "residual_assertive": 0,
+            "contrastive_assertive": 0,
+        })
+
     clauses = re.split(r"[，,；;。！？!?、\n]+", text)
     contrastive = re.compile(r"然而|不過|但是|可是|反而|而是|但|however|instead|but", re.IGNORECASE)
     # Mere co-mention of the two endpoints is not a second relation assertion.
@@ -1076,11 +1087,17 @@ def _relation_mentions_are_source_supported(
     for clause in clauses:
         if relation.subject not in clause or relation.object not in clause:
             continue
+        if diagnostics is not None:
+            diagnostics["clauses_with_both"] += 1
         matching = [candidate for candidate in supported if _relation_is_rendered(clause, candidate)]
         if not matching:
             if has_assertive_bridge(clause):
+                if diagnostics is not None:
+                    diagnostics["assertive_without_matching"] += 1
                 return False
             continue
+        if diagnostics is not None:
+            diagnostics["matching_clause_count"] += 1
         residual = clause
         for candidate in matching:
             # Remove every repetition of an already validated exact relation.
@@ -1089,6 +1106,8 @@ def _relation_mentions_are_source_supported(
                 f"{candidate.subject}{candidate.predicate}{candidate.object}", ""
             )
         if relation.subject in residual and relation.object in residual and has_assertive_bridge(residual):
+            if diagnostics is not None:
+                diagnostics["residual_assertive"] += 1
             return False
         # Chinese and English frequently omit a repeated subject in
         # contrastive continuations. Endpoint repetition by itself is not a new
@@ -1108,6 +1127,8 @@ def _relation_mentions_are_source_supported(
             and any(marker in part for marker in predicate_markers)
             for part in continuations
         ):
+            if diagnostics is not None:
+                diagnostics["contrastive_assertive"] += 1
             return False
     return True
 
