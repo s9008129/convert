@@ -13,7 +13,7 @@ from backend.services.local_pipeline_v2 import (
     ClaimStatus, EvidenceSpan, FactClaim, FactLedger, LocalPipelineV2Error,
     QualityPolicy, SectionPlan, assemble_sections, build_evidence_spans,
     consolidate_claims, explicit_pipeline_version, guarded_section_patch,
-    parse_fact_payload, plan_sections, render_section, snapshot_section,
+    parse_fact_payload, parse_recovery_fact_payload, plan_sections, render_section, snapshot_section,
     fidelity_firewall,
     candidate_runtime_profiles, summarize_profile_samples, template_section_titles,
     validate_runtime_profile, ModelRuntimeProfile, parse_section_render_payload,
@@ -266,14 +266,64 @@ def test_bounded_recovery_window_keeps_target_and_caps_context():
 
 
 def test_recovery_fact_schema_bounds_claim_array():
-    schema = SummarizationService._v2_fact_response_format(
-        fact_payload=True, max_claims=3
-    )
+    schema = SummarizationService._v2_recovery_response_format(max_claims=3)
     claims = schema["json_schema"]["schema"]["properties"]["claims"]
     assert claims["maxItems"] == 3
+    assert set(claims["items"]["properties"]) == {
+        "subject", "predicate", "object", "relation_type",
+        "direction", "polarity", "condition", "evidence_quote",
+    }
     with pytest.raises(ValueError):
-        SummarizationService._v2_fact_response_format(
-            fact_payload=True, max_claims=0
+        SummarizationService._v2_recovery_response_format(max_claims=0)
+
+
+def test_minimal_recovery_payload_binds_server_owned_provenance():
+    digest = hashlib.sha256("甲導致乙".encode()).hexdigest()
+    payload = json.dumps({
+        "claims": [{
+            "subject": "甲",
+            "predicate": "導致",
+            "object": "乙",
+            "relation_type": "causal",
+            "direction": "subject_to_object",
+            "polarity": "positive",
+            "condition": None,
+            "evidence_quote": "甲導致乙",
+        }]
+    })
+    claims = parse_recovery_fact_payload(
+        payload,
+        source_sha256=digest,
+        evidence_ref="span-7",
+        max_claims=1,
+        claim_id_prefix="recovery-2",
+    )
+    assert len(claims) == 1
+    assert claims[0].claim_id == "recovery-2-1"
+    assert claims[0].evidence_refs == ("span-7",)
+    assert claims[0].relation_type.value == "causal"
+    assert claims[0].number is None
+    assert claims[0].date is None
+
+
+def test_minimal_recovery_payload_rejects_extra_fields_and_overflow():
+    digest = hashlib.sha256("甲導致乙".encode()).hexdigest()
+    base = {
+        "subject": "甲", "predicate": "導致", "object": "乙",
+        "relation_type": "causal", "direction": "subject_to_object",
+        "polarity": "positive", "condition": None, "evidence_quote": "甲導致乙",
+    }
+    with pytest.raises(local_v2.FactPayloadValidationError):
+        parse_recovery_fact_payload(
+            {"claims": [{**base, "claim_id": "model-owned"}]},
+            source_sha256=digest, evidence_ref="span-1",
+            max_claims=1, claim_id_prefix="recovery-1",
+        )
+    with pytest.raises(local_v2.FactPayloadValidationError):
+        parse_recovery_fact_payload(
+            {"claims": [base, base]},
+            source_sha256=digest, evidence_ref="span-1",
+            max_claims=1, claim_id_prefix="recovery-1",
         )
 
 
