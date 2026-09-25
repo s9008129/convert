@@ -3511,9 +3511,9 @@ class SummarizationService:
         if max_claims < 1:
             raise ValueError("max_claims must be >= 1")
         claim_properties = {
-            "subject": {"type": "string"},
-            "predicate": {"type": "string"},
-            "object": {"type": "string"},
+            "subject": {"type": "string", "minLength": 1},
+            "predicate": {"type": "string", "minLength": 1},
+            "object": {"type": "string", "minLength": 1},
             "relation_type": {
                 "type": "string",
                 "enum": ["fact", "causal", "conditional", "temporal"],
@@ -3524,7 +3524,7 @@ class SummarizationService:
             },
             "polarity": {"type": "string", "enum": ["positive", "negative"]},
             "condition": {"type": ["string", "null"]},
-            "evidence_quote": {"type": "string"},
+            "evidence_quote": {"type": "string", "minLength": 1},
         }
         return {
             "type": "json_schema",
