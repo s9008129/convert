@@ -2384,6 +2384,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             template_section_plans, cross_section_claim_duplicates,
             validate_template_terms, RelationMetadata,
             bind_selected_claim_target, SelectedClaimTarget, resolve_claim_occurrences,
+            uncovered_material_candidates,
             unsupported_high_risk_additions, unknown_source_tag_references,
             apply_template_glossary_corrections,
         )
@@ -2666,6 +2667,183 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                           "source_mismatch_claim_count": source_mismatch_count},
             )
         ledger = ledger.model_copy(update={"claims": grounded_claims})
+
+        # Small-model recall recovery: run at most one targeted extraction per
+        # affected source chunk when a trusted material cue has no grounded
+        # asserted claim. This is not a free-form refinement pass: the same raw
+        # span, same schema, same source firewall, and exact cue offsets remain
+        # authoritative. Generic chatter/numbers/dates do not trigger it.
+        missing_material = uncovered_material_candidates(
+            template.id, source_transcript, ledger.claims
+        )
+        if missing_material:
+            recovery_by_span: dict[str, list[tuple[str, int, int]]] = {}
+            for candidate in missing_material:
+                kind, start, end = candidate
+                containing = next(
+                    (
+                        span for span in spans
+                        if span.start_offset is not None
+                        and span.end_offset is not None
+                        and span.start_offset <= start
+                        and end <= span.end_offset
+                    ),
+                    None,
+                )
+                if containing is not None:
+                    recovery_by_span.setdefault(containing.span_id, []).append(candidate)
+
+            recovered_claims = []
+            span_by_id = {span.span_id: span for span in spans}
+            for recovery_index, (span_id, candidates) in enumerate(
+                recovery_by_span.items(), start=1
+            ):
+                span = span_by_id[span_id]
+                relative_targets = [
+                    {
+                        "kind": kind,
+                        "start": start - (span.start_offset or 0),
+                        "end": end - (span.start_offset or 0),
+                    }
+                    for kind, start, end in candidates
+                ]
+                recovery_message = (
+                    "MATERIAL COVERAGE RECOVERY. The first extraction omitted one or more "
+                    "trusted meeting-record cues. Re-read the SAME raw source chunk and return "
+                    "ONLY additional source-grounded claims needed to cover the listed intervals. "
+                    "Do not repeat unrelated facts. For every listed interval, evidence_quote "
+                    "must include the exact source characters at that interval and the directly "
+                    "related fact. Return ONLY the normal strict claims JSON shape.\n"
+                    f"EVIDENCE_REF: {span_id}\n"
+                    f"MISSING_CUE_INTERVALS: {json.dumps(relative_targets, ensure_ascii=False)}\n"
+                    f"RAW EVIDENCE SOURCE CHUNK:\n{span.raw_text}"
+                )
+                if span.corrected_text:
+                    recovery_message += (
+                        "\nCORRECTED COMPREHENSION VIEW (not evidence; all quotes and offsets "
+                        "must come from raw source):\n" + span.corrected_text
+                    )
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.recovery.chunk.{recovery_index}.input",
+                        input_text=recovery_message,
+                        source_branch="material_coverage_recovery",
+                        metadata={
+                            "validation_issue_count": len(candidates),
+                            "temperature": extraction_temperature,
+                        },
+                    )
+                try:
+                    recovery_raw = await self._generate_with_local_engine(
+                        engine,
+                        self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
+                        recovery_message,
+                        temperature=extraction_temperature,
+                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        context_window_tokens=context_tokens,
+                        lmstudio_selection=selection,
+                        runtime_profile=profile,
+                        runtime_control_rejection_callback=report_runtime_control_rejection,
+                        response_format=native_response_format,
+                    )
+                    recovery_parsed = parse_fact_payload(
+                        recovery_raw, source_sha256=source_sha
+                    )
+                except FactPayloadValidationError:
+                    repair_message = recovery_message + (
+                        "\nSCHEMA REPAIR: keep the same facts and source quotes; output valid JSON only."
+                    )
+                    recovery_raw = await self._generate_with_local_engine(
+                        engine,
+                        self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
+                        repair_message,
+                        temperature=extraction_temperature,
+                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        context_window_tokens=context_tokens,
+                        lmstudio_selection=selection,
+                        runtime_profile=profile,
+                        runtime_control_rejection_callback=report_runtime_control_rejection,
+                        response_format=native_response_format,
+                    )
+                    try:
+                        recovery_parsed = parse_fact_payload(
+                            recovery_raw, source_sha256=source_sha
+                        )
+                    except FactPayloadValidationError as recovery_schema_error:
+                        raise LocalPipelineV2Error(
+                            f"V2 material coverage recovery failed schema validation (chunk {recovery_index})"
+                        ) from recovery_schema_error
+                except Exception as recovery_error:
+                    raise LocalPipelineV2Error(
+                        f"V2 material coverage recovery generation failed (chunk {recovery_index})"
+                    ) from recovery_error
+
+                # Server owns recovery IDs so repeated small-model IDs cannot
+                # collide with primary extraction IDs across chunks.
+                for item_index, claim in enumerate(recovery_parsed.claims, start=1):
+                    recovered_claims.append(
+                        claim.model_copy(
+                            update={"claim_id": f"recovery-{recovery_index}-{item_index}"}
+                        )
+                    )
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.recovery.chunk.{recovery_index}.outcome",
+                        output_text=recovery_raw,
+                        source_branch="material_coverage_recovery",
+                        status="parsed",
+                        metadata={"validation_issue_count": len(candidates)},
+                    )
+
+            if recovered_claims:
+                resolved_recovery = resolve_claim_occurrences(
+                    recovered_claims, evidence, source_sha256=source_sha
+                )
+                combined = (*ledger.claims, *resolved_recovery)
+                recovered_ledger = consolidate_claims(
+                    combined, source_sha256=source_sha, evidence=evidence
+                )
+                recovery_conflicted_ids = {
+                    claim_id
+                    for conflict in recovered_ledger.conflicts
+                    for claim_id in conflict.claim_ids
+                }
+                if recovery_conflicted_ids:
+                    recovered_ledger = recovered_ledger.model_copy(
+                        update={
+                            "claims": tuple(
+                                claim.model_copy(
+                                    update={
+                                        "status": ClaimStatus.AMBIGUOUS,
+                                        "uncertainty": claim.uncertainty
+                                        or "same_evidence_conflict",
+                                    }
+                                )
+                                if claim.claim_id in recovery_conflicted_ids
+                                else claim
+                                for claim in recovered_ledger.claims
+                            )
+                        }
+                    )
+                grounded_recovery = validate_asserted_claims_against_source(
+                    recovered_ledger.claims, evidence
+                )
+                ledger = recovered_ledger.model_copy(
+                    update={"claims": grounded_recovery}
+                )
+
+            remaining_material = uncovered_material_candidates(
+                template.id, source_transcript, ledger.claims
+            )
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    "v2.recovery.material-coverage",
+                    status="recovered" if not remaining_material else "incomplete",
+                    metadata={
+                        "validation_issue_count": len(remaining_material),
+                    },
+                )
+
         plans = template_section_plans(template, ledger, evidence, raw_source=source_transcript)
         by_id = {claim.claim_id: claim for claim in ledger.claims}
 
