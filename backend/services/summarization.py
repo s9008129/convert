@@ -2756,9 +2756,14 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
 
                 max_claims = max(1, min(len(candidates), 4))
                 recovery_temperature = min(extraction_temperature, 0.2)
+                # One strict FactClaim object carries many nullable fields; Gemma
+                # can legitimately need >768 tokens even for one claim. Give the
+                # first bounded attempt enough room to finish once, while still
+                # keeping recovery far below the normal 4K completion budget.
                 recovery_output_tokens = min(
                     settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                    max(768, 384 * max_claims),
+                    max(1280, 512 * max_claims),
+                    2048,
                 )
                 recovery_response_format = (
                     self._v2_fact_response_format(
@@ -3902,13 +3907,19 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             }
             if "top_p" in profile_controls:
                 kwargs["top_p"] = profile_controls["top_p"]
+            extra_body = {}
             if response_format is not None:
                 kwargs["response_format"] = response_format
+                # OpenRouter explicitly recommends require_parameters for
+                # structured outputs so routing cannot silently choose a backend
+                # that ignores response_format/json_schema.
+                extra_body["provider"] = {"require_parameters": True}
             if disable_reasoning and settings.LOCAL_LLM_DISABLE_THINKING:
-                # Match the production LM Studio contract exactly. OpenRouter's
-                # OpenAI-compatible API accepts reasoning_effort as a shorthand,
-                # so this validates the same non-thinking mode used on the Mac.
-                kwargs["extra_body"] = {"reasoning_effort": "none"}
+                # Match the production LM Studio non-thinking contract as closely
+                # as the routed OpenRouter backend supports.
+                extra_body["reasoning_effort"] = "none"
+            if extra_body:
+                kwargs["extra_body"] = extra_body
             return await client.chat.completions.create(**kwargs)
 
         try:
