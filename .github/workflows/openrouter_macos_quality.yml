@@ -24,6 +24,7 @@ jobs:
       LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
       LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
       LOCAL_LLM_DISABLE_THINKING: "true"
+      DATA_DIR: ${{ github.workspace }}/data
     steps:
       - uses: actions/checkout@v4
 
