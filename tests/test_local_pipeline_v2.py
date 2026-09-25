@@ -199,10 +199,11 @@ def test_unique_occurrence_fallback_refuses_repeated_relation():
 
 
 def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speakers():
-    raw = "發言者1：閒聊 17 個人、2026-09-25。"
+    raw = "發言者1：閒聊 17 個人、2026-09-25，沒有其他事項；如果需要再說明。"
     candidates = inventory_source_candidates("general", raw)
     kinds = {kind for kind, _start, _end in candidates}
-    assert {"numeric", "date", "speaker"} <= kinds
+    assert {"numeric", "date", "speaker", "relation"} <= kinds
+    assert uncovered_material_candidates("general", raw, ()) == ()
 
     plans = template_section_plans(
         get_template("general"),
@@ -211,6 +212,13 @@ def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speaker
         raw_source=raw,
     )
     assert not any(plan.coverage_issues for plan in plans)
+
+
+def test_material_recovery_uses_template_cue_not_every_relation_token():
+    raw = "主席決議因整合測試尚未完成，導致正式上線延後。其他人表示沒有補充。"
+    missing = uncovered_material_candidates("general", raw, ())
+    kinds = [kind for kind, _start, _end in missing]
+    assert kinds == ["決議"]
 
 
 def test_material_cues_share_only_a_bounded_clause_not_the_next_clause():
