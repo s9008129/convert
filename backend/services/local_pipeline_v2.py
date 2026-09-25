@@ -392,17 +392,47 @@ def parse_recovery_fact_payload(
     max_claims: int,
     claim_id_prefix: str,
 ) -> tuple[FactClaim, ...]:
-    """Validate minimal recovery JSON and bind server-owned provenance."""
+    """Validate compact fact JSON and bind server-owned provenance.
+
+    Some structured-output providers occasionally append one empty placeholder
+    object to an otherwise valid bounded claims array. A blank required text
+    field cannot become a factual claim and is safe to ignore. Every other
+    schema defect remains fail-closed.
+    """
 
     if max_claims < 1:
         raise FactPayloadValidationError("V2 recovery max_claims must be >= 1")
     try:
         value = json.loads(payload) if isinstance(payload, str) else dict(payload)
-        envelope = RecoveryFactEnvelope.model_validate(value)
-    except (TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise FactPayloadValidationError("V2 recovery returned invalid minimal JSON") from exc
-    if len(envelope.claims) > max_claims:
+    if not isinstance(value, Mapping) or set(value) != {"claims"}:
+        raise FactPayloadValidationError("V2 recovery returned invalid minimal JSON")
+    raw_claims = value.get("claims")
+    if not isinstance(raw_claims, (list, tuple)):
+        raise FactPayloadValidationError("V2 recovery returned invalid minimal JSON")
+    if len(raw_claims) > max_claims:
         raise FactPayloadValidationError("V2 recovery exceeded bounded claim count")
+
+    parsed: list[RecoveryFactPayload] = []
+    required_text_fields = {"subject", "predicate", "object", "evidence_quote"}
+    for raw_item in raw_claims:
+        try:
+            parsed.append(RecoveryFactPayload.model_validate(raw_item))
+        except ValidationError as exc:
+            errors = exc.errors()
+            blank_placeholder_only = bool(errors) and all(
+                error.get("type") == "string_too_short"
+                and error.get("loc")
+                and error["loc"][0] in required_text_fields
+                for error in errors
+            )
+            if blank_placeholder_only:
+                continue
+            raise FactPayloadValidationError(
+                "V2 recovery returned invalid minimal JSON"
+            ) from exc
+
     return tuple(
         FactClaim(
             claim_id=f"{claim_id_prefix}-{index}",
@@ -416,7 +446,7 @@ def parse_recovery_fact_payload(
             evidence_refs=(evidence_ref,),
             evidence_quote=item.evidence_quote,
         )
-        for index, item in enumerate(envelope.claims, start=1)
+        for index, item in enumerate(parsed, start=1)
     )
 
 
