@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -37,13 +38,36 @@ from backend.services.summarization import SummarizationService  # noqa: E402
 MODELS = ("google/gemma-4-31b-it", "qwen/qwen3.8-27b")
 _ITEM_PREFIX = re.compile(r"^\s*(?:[-*]|\d+[.、]|[（(]\d+[)）])\s*")
 _NON_WORD = re.compile(r"[^\w\u3400-\u4dbf\u4e00-\u9fff]+")
+_KEEP_COVERAGE = re.compile(
+    "[^0-9A-Za-z"
+    "\\u3400-\\u4dbf"
+    "\\u4e00-\\u9fff"
+    "\\uf900-\\ufaff"
+    "\\U00020000-\\U0003ffff"
+    "]"
+)
+
+try:
+    from opencc import OpenCC
+
+    _OPENCC = OpenCC("s2twp")
+except Exception:  # pragma: no cover - CI has the locked dependency
+    _OPENCC = None
+
+
+def _normalize_coverage(text: str) -> str:
+    value = unicodedata.normalize("NFKC", text or "").casefold()
+    if _OPENCC is not None:
+        value = _OPENCC.convert(value)
+    value = re.sub(r"\\s+", "", value)
+    return _KEEP_COVERAGE.sub("", value)
 
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _fact_covered(record: str, fact: dict[str, Any]) -> bool:
+def _fact_covered(record_norm: str, fact: dict[str, Any]) -> bool:
     probes = fact.get("probes") or []
     for probe in probes:
         if isinstance(probe, str):
@@ -52,15 +76,17 @@ def _fact_covered(record: str, fact: dict[str, Any]) -> bool:
             terms = [str(term) for term in probe if str(term)]
         else:
             continue
-        if terms and all(term in record for term in terms):
+        normalized_terms = [_normalize_coverage(term) for term in terms]
+        if normalized_terms and all(term and term in record_norm for term in normalized_terms):
             return True
     return False
 
 
 def _coverage(record: str, facts: list[dict[str, Any]]) -> dict[str, Any]:
+    record_norm = _normalize_coverage(record)
     core = [fact for fact in facts if fact.get("tier") == "core"]
-    covered_all = sum(_fact_covered(record, fact) for fact in facts)
-    covered_core = sum(_fact_covered(record, fact) for fact in core)
+    covered_all = sum(_fact_covered(record_norm, fact) for fact in facts)
+    covered_core = sum(_fact_covered(record_norm, fact) for fact in core)
     return {
         "facts_total": len(facts),
         "facts_covered": covered_all,
@@ -140,6 +166,7 @@ async def main() -> int:
     parser.add_argument("--transcript", type=Path, required=True)
     parser.add_argument("--checklist", type=Path, required=True)
     parser.add_argument("--baseline-record", type=Path)
+    parser.add_argument("--cloud-coverage", type=Path)
     parser.add_argument("--template", default="section_meeting")
     args = parser.parse_args()
 
@@ -162,10 +189,32 @@ async def main() -> int:
     if args.baseline_record is not None:
         baseline = args.baseline_record.read_text(encoding="utf-8")
         summary["historical_baseline"] = _metrics(baseline, transcript, facts)
+    if args.cloud_coverage is not None:
+        cloud = json.loads(args.cloud_coverage.read_text(encoding="utf-8"))
+        summary["historical_cloud_coverage"] = {
+            "metric_version": cloud.get("metric_version"),
+            "coverage_all": cloud.get("coverage_all"),
+            "coverage_core": cloud.get("coverage_core"),
+            "covered_total": cloud.get("covered_total"),
+            "covered_core": cloud.get("covered_core"),
+            "fact_total": cloud.get("fact_total"),
+            "fact_core_total": cloud.get("fact_core_total"),
+        }
 
     results = []
     for model in MODELS:
         results.append(await _run_model(model, transcript, facts, args.template))
+    cloud_ref = summary.get("historical_cloud_coverage") or {}
+    cloud_all = cloud_ref.get("coverage_all")
+    cloud_core = cloud_ref.get("coverage_core")
+    if cloud_all and cloud_core:
+        for result in results:
+            result["coverage_vs_cloud_ratio"] = round(
+                result["coverage_ratio"] / cloud_all, 6
+            )
+            result["core_coverage_vs_cloud_ratio"] = round(
+                result["core_coverage_ratio"] / cloud_core, 6
+            )
     summary["models"] = results
 
     print("REAL_DIAGNOSTIC " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
