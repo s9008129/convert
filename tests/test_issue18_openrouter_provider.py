@@ -77,7 +77,7 @@ async def test_openrouter_request_is_model_sticky_and_disables_reasoning(monkeyp
     assert captured["top_p"] == 0.9
     assert captured["extra_body"] == {
         "provider": {"require_parameters": True},
-        "reasoning_effort": "none",
+        "reasoning": {"enabled": False},
     }
 
 
