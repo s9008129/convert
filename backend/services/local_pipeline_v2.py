@@ -1007,9 +1007,18 @@ def claim_occurrence_spans(claim: FactClaim, evidence: Mapping[str, EvidenceSpan
     )]
 
 
+def _relation_core_is_rendered(text: str, relation: RelationMetadata) -> bool:
+    """Check the exact typed subject→predicate→object bytes only.
+
+    Clause-level competing-relation detection must not require a condition to
+    live in the same punctuation-delimited clause. Conditions and polarity are
+    validated independently by the fidelity firewall.
+    """
+    return f"{relation.subject}{relation.predicate}{relation.object}" in text
+
+
 def _relation_is_rendered(text: str, relation: RelationMetadata) -> bool:
-    expected = f"{relation.subject}{relation.predicate}{relation.object}"
-    if expected not in text:
+    if not _relation_core_is_rendered(text, relation):
         return False
     if relation.condition and relation.condition not in text:
         return False
@@ -1097,7 +1106,10 @@ def _relation_mentions_are_source_supported(
             continue
         if diagnostics is not None:
             diagnostics["clauses_with_both"] += 1
-        matching = [candidate for candidate in supported if _relation_is_rendered(clause, candidate)]
+        matching = [
+            candidate for candidate in supported
+            if _relation_core_is_rendered(clause, candidate)
+        ]
         if not matching:
             if has_assertive_bridge(clause):
                 if diagnostics is not None:
