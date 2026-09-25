@@ -949,21 +949,38 @@ def relation_is_supported_in_order(claim: FactClaim, spans: Sequence[EvidenceSpa
     if all(offset is not None for offset in offsets) and offsets != sorted(offsets):
         return False
     tokens = (claim.subject, claim.predicate, claim.object)
-    positions: list[int] = []
+    positions: list[list[int]] = []
     for token in tokens:
-        occurrences = [span.start_offset + pos for span in spans
-                       if span.start_offset is not None
-                       for pos in [span.raw_text.find(token)] if pos >= 0]
-        if not occurrences and len(spans) == 1 and spans[0].start_offset is None:
-            local = spans[0].raw_text.find(token)
-            occurrences = [local] if local >= 0 else []
-        positions.append(min(occurrences) if occurrences else -1)
-    if any(position < 0 for position in positions):
+        occurrences: list[int] = []
+        for span in spans:
+            if span.start_offset is None:
+                if len(spans) != 1:
+                    continue
+                base = 0
+            else:
+                base = span.start_offset
+            occurrences.extend(
+                base + match.start()
+                for match in re.finditer(re.escape(token), span.raw_text)
+            )
+        positions.append(sorted(set(occurrences)))
+    if any(not token_positions for token_positions in positions):
         return False
+    subject_positions, predicate_positions, object_positions = positions
     if claim.direction == "subject_to_object":
-        return positions[0] < positions[1] < positions[2]
+        return any(
+            subject_at < predicate_at < object_at
+            for subject_at in subject_positions
+            for predicate_at in predicate_positions
+            for object_at in object_positions
+        )
     if claim.direction == "object_to_subject":
-        return positions[2] < positions[1] < positions[0]
+        return any(
+            object_at < predicate_at < subject_at
+            for subject_at in subject_positions
+            for predicate_at in predicate_positions
+            for object_at in object_positions
+        )
     return False
 
 
