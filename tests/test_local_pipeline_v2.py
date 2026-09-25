@@ -610,6 +610,40 @@ def test_core_relation_metadata_requires_exact_claim_and_predicate():
         validate_relation_metadata(plan, {"c1": claim}, {"c1": expected.model_copy(update={"direction": "object_to_subject"})})
 
 
+def test_relation_firewall_allows_benign_endpoint_comention_after_grounded_relation():
+    raw = "預算導致延後。"
+    claim = FactClaim(
+        claim_id="c1", subject="預算", predicate="導致", object="延後",
+        relation_type="causal", evidence_refs=("span-1",),
+        evidence_quote="預算導致延後",
+        resolved_start_offset=0, resolved_end_offset=len("預算導致延後"),
+    )
+    evidence = {
+        "span-1": EvidenceSpan.from_source(
+            "span-1", raw, start_offset=0, end_offset=len(raw)
+        )
+    }
+    plan = SectionPlan(
+        section_id="s", title="決議", required_claim_ids=("c1",)
+    )
+    metadata = {
+        "c1": RelationMetadata(
+            subject="預算", predicate="導致", object="延後",
+            direction="subject_to_object", polarity="positive",
+            condition=None, relation_type="causal",
+        )
+    }
+    snapshot = fidelity_firewall(
+        plan,
+        "預算導致延後〔span-1〕；補充：預算與延後均列入說明",
+        {"c1": claim},
+        evidence,
+        relation_metadata=metadata,
+    )
+    assert snapshot.relation_issues == ()
+    assert snapshot.accepted
+
+
 def test_firewall_checks_every_required_relation_not_only_selected_claim():
     c1 = _claim("c1", subject="預算", predicate="導致", object="延後",
                 relation_type="causal", refs=("span-1",))
