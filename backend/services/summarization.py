@@ -3330,6 +3330,16 @@ class SummarizationService:
                         relation_type=issue_claim.relation_type,
                     )
                     occurrence_spans = claim_occurrence_spans(issue_claim, evidence)
+                    mention_diag: dict[str, int] = {}
+                    mention_supported = _relation_mentions_are_source_supported(
+                        section_slice,
+                        expected_meta,
+                        plan,
+                        by_id,
+                        evidence,
+                        section_relations[plan.section_id],
+                        diagnostics=mention_diag,
+                    )
                     relation_diag.append({
                         "subject_present": issue_claim.subject in section_slice,
                         "predicate_present": issue_claim.predicate in section_slice,
@@ -3345,14 +3355,8 @@ class SummarizationService:
                         "render_exact_supported": _relation_is_rendered(
                             section_slice, expected_meta
                         ),
-                        "all_endpoint_mentions_supported": _relation_mentions_are_source_supported(
-                            section_slice,
-                            expected_meta,
-                            plan,
-                            by_id,
-                            evidence,
-                            section_relations[plan.section_id],
-                        ),
+                        "all_endpoint_mentions_supported": mention_supported,
+                        "mention_diag": mention_diag,
                         "occurrence_span_count": len(occurrence_spans),
                     })
                 log.warning(
