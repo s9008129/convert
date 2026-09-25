@@ -814,14 +814,21 @@ def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tupl
 def material_source_candidates(
     template_id: str, raw_source: str
 ) -> tuple[tuple[str, int, int], ...]:
-    """Return source cues that are material enough to require grounded coverage.
+    """Return source cues that are material enough to require completeness recovery.
 
-    Template-owned decision/action cues plus relation/negation cues are hard.
-    Generic numbers, dates and speaker labels stay observable but do not force
-    incidental conversation into the formal minutes.
+    Only template-owned decision/action cues can create a *completeness* veto.
+    Generic relation/negation tokens are intentionally diagnostic-only: spoken
+    meetings contain hundreds of ordinary "不/沒有/未/如果" occurrences, and
+    treating every one as a required fact turns the recovery pass into a second
+    full-transcript extraction.
+
+    Relation, polarity and condition fidelity are still fail-closed for every
+    claim that enters the ledger/render path via validate_asserted_claims_against_source
+    and fidelity_firewall. This separates "did we omit a required agenda fact?"
+    from "did we distort a relation we chose to report?".
     """
     policy = template_claim_policy(template_id)
-    material_kinds = set(policy.source_present_cues) | {"relation"}
+    material_kinds = set(policy.source_present_cues)
     return tuple(
         candidate for candidate in inventory_source_candidates(template_id, raw_source)
         if candidate[0] in material_kinds
