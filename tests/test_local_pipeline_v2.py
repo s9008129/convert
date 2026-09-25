@@ -922,8 +922,8 @@ async def test_qwen_live_v2_uses_w7_production_baseline_temperature(monkeypatch)
     await service._summarize_with_local_pipeline_v2("短來源", "system", template=get_template("general"))
     extraction = [(temperature, system) for is_extraction, temperature, system in calls if is_extraction]
     rendering = [(temperature, system) for is_extraction, temperature, system in calls if not is_extraction]
-    assert extraction and {temperature for temperature, _ in extraction} == {0.1}
-    assert rendering and {temperature for temperature, _ in rendering} == {0.2}
+    assert extraction and {temperature for temperature, _ in extraction} == {0.7}
+    assert rendering and {temperature for temperature, _ in rendering} == {0.7}
     assert all(system == service.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT for _, system in extraction)
     assert all(system == service.LOCAL_V2_SECTION_SYSTEM_PROMPT for _, system in rendering)
 
@@ -953,7 +953,7 @@ async def test_qwen_candidate_temperature_varies_extraction_only(monkeypatch):
     extraction = [temperature for is_extraction, temperature in observed if is_extraction]
     rendering = [temperature for is_extraction, temperature in observed if not is_extraction]
     assert extraction and set(extraction) == {0.3}
-    assert rendering and set(rendering) == {0.2}
+    assert rendering and set(rendering) == {0.7}
 
 
 @pytest.mark.asyncio
@@ -981,9 +981,8 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     )
     assert extraction_calls == 2
     repair = next(event for event in recorder.events if event["stage_id"] == "v2.extraction.chunk.1.repair")
-    assert repair["temperature"] == 0.1
-    assert 0.1 in temperatures
-    assert 0.2 in temperatures
+    assert repair["temperature"] == 0.2
+    assert temperatures and set(temperatures) == {0.2}
 
 
 @pytest.mark.parametrize("snapshots_enabled", (False, True))
@@ -1089,11 +1088,9 @@ async def test_live_v2_uses_immutable_raw_source_when_corrected_view_is_unaligne
     assert "temperature" not in profile_event
     extraction_events = [event for event in recorder.events if event["stage_id"].startswith("v2.extraction.chunk.") and event["stage_id"].endswith(".input")]
     section_events = [event for event in recorder.events if event["stage_id"].startswith("v2.section.") and event["stage_id"].endswith(".input")]
-    assert extraction_events and all(event["temperature"] == 0.1 for event in extraction_events)
+    assert extraction_events and all(event["temperature"] == 0.2 for event in extraction_events)
     assert section_events and all(event["temperature"] == 0.2 for event in section_events)
-    assert captured_temperatures
-    assert {value for value, is_extraction in captured_temperatures if is_extraction} == {0.1}
-    assert {value for value, is_extraction in captured_temperatures if not is_extraction} == {0.2}
+    assert captured_temperatures and {value for value, _ in captured_temperatures} == {0.2}
 
 
 @pytest.mark.asyncio
@@ -1444,7 +1441,7 @@ async def test_profile_sampler_runs_only_observed_valid_profiles_and_selector_is
     samples = await sample_candidate_profiles(candidates, run_sample, repeats=3)
     assert len(calls) == 9
     selected = select_profile_candidate(candidates, samples)
-    assert selected.temperature == 0.3
+    assert selected.temperature == 0.7
 
 
 @pytest.mark.asyncio
@@ -1802,8 +1799,8 @@ async def test_optional_conflict_stays_local_and_unrelated_section_continues(mon
 
 
 @pytest.mark.parametrize(("model_key", "expected_family", "expected_temperature"), (
-    ("qwen3.8:27b", "Qwen", 0.1),
-    ("gemma4:31b", "Gemma", 0.1),
+    ("qwen3.8:27b", "Qwen", 0.7),
+    ("gemma4:31b", "Gemma", 1.0),
 ))
 @pytest.mark.asyncio
 async def test_ollama_v2_uses_effective_model_family_for_baseline_temperature(
