@@ -200,14 +200,19 @@ def test_unique_occurrence_fallback_refuses_repeated_relation():
     assert resolved.status == ClaimStatus.AMBIGUOUS
 
 
-def test_materiality_inventory_does_not_require_incidental_numbers_dates_or_speakers():
-    raw = "發言者1：閒聊 17 個人、2026-09-25。主席裁示資訊科辦理盤點。"
+def test_materiality_gate_ignores_incidental_numbers_dates_relations_and_speakers():
+    raw = "發言者1：閒聊 17 個人、2026-09-25，沒有其他事項。"
     candidates = inventory_source_candidates("general", raw)
     kinds = {kind for kind, _start, _end in candidates}
-    assert "裁示" in kinds
-    assert "numeric" not in kinds
-    assert "date" not in kinds
-    assert "speaker" not in kinds
+    assert {"numeric", "date", "speaker", "relation"} <= kinds
+
+    plans = template_section_plans(
+        get_template("general"),
+        FactLedger(source_sha256=hashlib.sha256(raw.encode()).hexdigest(), claims=()),
+        evidence={},
+        raw_source=raw,
+    )
+    assert not any(plan.coverage_issues for plan in plans)
 
 
 def test_occurrence_resolution_returns_ambiguous_for_offsetless_span():
