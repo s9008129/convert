@@ -1090,13 +1090,24 @@ def _relation_mentions_are_source_supported(
             )
         if relation.subject in residual and relation.object in residual and has_assertive_bridge(residual):
             return False
-        # Chinese and English frequently omit a repeated subject in contrastive
-        # clauses (e.g. “A 導致 B 但避免 B”). If a contrastive continuation
-        # repeats either endpoint without its own source-supported typed clause,
-        # treat it as an unsupported competing relation rather than letting the
-        # valid clause earlier in the sentence launder it.
+        # Chinese and English frequently omit a repeated subject in
+        # contrastive continuations. Endpoint repetition by itself is not a new
+        # relation (e.g. “A 導致 B，但 B 需持續追蹤”). Reject only when the
+        # continuation also carries a relation predicate/connective, such as
+        # “A 導致 B 但避免 B”. This preserves fail-closed competing-predicate
+        # detection without treating ordinary follow-up prose as semantic drift.
+        predicate_markers = {
+            candidate.predicate for candidate in supported if candidate.predicate
+        } | {
+            "導致", "造成", "使得", "致使", "引發", "促成",
+            "避免", "防止", "若", "如果", "則", "因此", "因而",
+        }
         continuations = contrastive.split(residual)[1:]
-        if any(relation.subject in part or relation.object in part for part in continuations):
+        if any(
+            (relation.subject in part or relation.object in part)
+            and any(marker in part for marker in predicate_markers)
+            for part in continuations
+        ):
             return False
     return True
 
