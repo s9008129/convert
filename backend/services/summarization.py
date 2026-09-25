@@ -2392,6 +2392,8 @@ class SummarizationService:
             validate_template_terms, RelationMetadata,
             bind_selected_claim_target, SelectedClaimTarget, resolve_claim_occurrences,
             uncovered_material_candidates, _bounded_statement_window,
+            claim_occurrence_spans, relation_is_supported_in_order,
+            _relation_is_rendered, _relation_mentions_are_source_supported,
             unsupported_high_risk_additions, unknown_source_tag_references,
             apply_template_glossary_corrections,
         )
@@ -3327,6 +3329,7 @@ class SummarizationService:
                         condition=issue_claim.condition,
                         relation_type=issue_claim.relation_type,
                     )
+                    occurrence_spans = claim_occurrence_spans(issue_claim, evidence)
                     relation_diag.append({
                         "subject_present": issue_claim.subject in section_slice,
                         "predicate_present": issue_claim.predicate in section_slice,
@@ -3336,6 +3339,21 @@ class SummarizationService:
                             in section_slice
                         ),
                         "metadata_match": issue_meta == expected_meta,
+                        "source_order_supported": relation_is_supported_in_order(
+                            issue_claim, occurrence_spans
+                        ),
+                        "render_exact_supported": _relation_is_rendered(
+                            section_slice, expected_meta
+                        ),
+                        "all_endpoint_mentions_supported": _relation_mentions_are_source_supported(
+                            section_slice,
+                            expected_meta,
+                            plan,
+                            by_id,
+                            evidence,
+                            section_relations[plan.section_id],
+                        ),
+                        "occurrence_span_count": len(occurrence_spans),
                     })
                 log.warning(
                     "V2 final section rejected: section={}, missing_required={}, "
