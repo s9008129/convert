@@ -2539,6 +2539,36 @@ class SummarizationService:
                                                  "corrected_alignment": "whitespace_only" if any(corrected_chunks) else "not_aligned" if raw_source_transcript is not None else "not_applicable"})
         claims: list = []
         max_claims_per_chunk = 18
+
+        def parse_primary_claims(raw_payload: str, *, span_id: str, chunk_index: int):
+            """Accept the compact production schema plus legacy full FactPayload fixtures.
+
+            Native production extraction intentionally uses the compact schema so
+            small models spend tokens on facts instead of nullable metadata. The
+            full FactPayload parser remains a compatibility path for existing
+            adapters/tests and explicit non-native fallback responses. Both paths
+            stay schema-validated; malformed output still receives at most one
+            schema-only repair.
+            """
+            try:
+                return parse_recovery_fact_payload(
+                    raw_payload,
+                    source_sha256=source_sha,
+                    evidence_ref=span_id,
+                    max_claims=max_claims_per_chunk,
+                    claim_id_prefix=f"chunk-{chunk_index}",
+                )
+            except FactPayloadValidationError as compact_error:
+                try:
+                    full = parse_fact_payload(raw_payload, source_sha256=source_sha)
+                except FactPayloadValidationError:
+                    raise compact_error
+                if len(full.claims) > max_claims_per_chunk:
+                    raise FactPayloadValidationError(
+                        "V2 primary extraction exceeded bounded claim count"
+                    ) from compact_error
+                return tuple(full.claims)
+
         primary_response_format = (
             self._v2_recovery_response_format(max_claims=max_claims_per_chunk)
             if capability == "SUPPORTED"
@@ -2606,12 +2636,8 @@ class SummarizationService:
                     status="received",
                 )
             try:
-                parsed_claims = parse_recovery_fact_payload(
-                    raw,
-                    source_sha256=source_sha,
-                    evidence_ref=span.span_id,
-                    max_claims=max_claims_per_chunk,
-                    claim_id_prefix=f"chunk-{index}",
+                parsed_claims = parse_primary_claims(
+                    raw, span_id=span.span_id, chunk_index=index
                 )
             except FactPayloadValidationError as first_error:
                 if diagnostic_recorder:
@@ -2655,12 +2681,8 @@ class SummarizationService:
                             source_branch="transcript_chunk",
                             status="received",
                         )
-                    parsed_claims = parse_recovery_fact_payload(
-                        raw,
-                        source_sha256=source_sha,
-                        evidence_ref=span.span_id,
-                        max_claims=max_claims_per_chunk,
-                        claim_id_prefix=f"chunk-{index}",
+                    parsed_claims = parse_primary_claims(
+                        raw, span_id=span.span_id, chunk_index=index
                     )
                 except FactPayloadValidationError as repair_schema_error:
                     if diagnostic_recorder:
