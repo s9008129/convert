@@ -5054,6 +5054,10 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             await self._lmstudio_client.close()
             self._lmstudio_client = None
             self._lmstudio_client_base_url = None
+        if self._openrouter_client:
+            await self._openrouter_client.close()
+            self._openrouter_client = None
+            self._openrouter_client_base_url = None
 
 
 # 全域摘要服務實例
