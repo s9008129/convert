@@ -2397,7 +2397,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         context_tokens = loaded_context_tokens or self._effective_context_tokens()
         effective_model = (
             selection.model_identifier if selection
-            else self._get_effective_model() if engine == "ollama"
+            else self._get_effective_model() if engine in {"ollama", "openrouter"}
             else ""
         )
         identity = effective_model.casefold()
@@ -2453,7 +2453,7 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         if diagnostic_recorder:
             model_identity = (
                 selection.loaded_instance_id if engine == "lmstudio" and selection
-                else self._get_effective_model() if engine == "ollama"
+                else self._get_effective_model() if engine in {"ollama", "openrouter"}
                 else "unknown"
             )
             diagnostic_recorder.record(
