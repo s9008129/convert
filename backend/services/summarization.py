@@ -2683,6 +2683,11 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
             template.id, source_transcript, ledger.claims
         )
         if missing_material:
+            log.warning(
+                "V2 material coverage recovery needed: count={}, kinds={}",
+                len(missing_material),
+                ",".join(sorted(kind for kind, _start, _end in missing_material)),
+            )
             recovery_by_span: dict[str, list[tuple[str, int, int]]] = {}
             for candidate in missing_material:
                 kind, start, end = candidate
@@ -2840,6 +2845,11 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
 
             remaining_material = uncovered_material_candidates(
                 template.id, source_transcript, ledger.claims
+            )
+            log.warning(
+                "V2 material coverage after recovery: count={}, kinds={}",
+                len(remaining_material),
+                ",".join(sorted(kind for kind, _start, _end in remaining_material)),
             )
             if diagnostic_recorder:
                 diagnostic_recorder.record(
