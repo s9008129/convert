@@ -457,7 +457,7 @@ def classify_native_schema_probe(
     """Classify capability for one backend/model probe without relabeling generic errors."""
     backend_name = backend.strip().casefold()
     identity = model_identity.strip()
-    if (backend_name in {"lmstudio", "ollama"} and identity
+    if (backend_name in {"lmstudio", "ollama", "openrouter"} and identity
             and completed_normally and schema_valid and finish_reason == "stop"):
         return "SUPPORTED"
     if not identity or status_code != 400 or not error_message:
@@ -468,6 +468,11 @@ def classify_native_schema_probe(
             "response_format json_schema is not supported for this model" in message
             or "json_schema response format is not supported for this model" in message
             or "structured output is not supported for this model" in message
+        )
+    elif backend_name == "openrouter":
+        explicit_unsupported = (
+            "json_schema" in message
+            and ("not supported" in message or "unsupported" in message)
         )
     elif backend_name == "ollama":
         # Ollama has no documented stable unsupported-capability code. Only accept
@@ -665,7 +670,10 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
             assigned[match["id"]].append(claim.claim_id)
     plans: list[SectionPlan] = []
     if raw_source is not None:
-        material_kinds = set(policy.source_present_cues)
+        # Relation/negation cues remain hard: silently dropping "A 導致 B" or
+        # "沒有/不得" changes meaning. Generic numbers/dates/speaker labels stay
+        # observable but do not force incidental chatter into the minutes.
+        material_kinds = set(policy.source_present_cues) | {"relation"}
         for kind, start, end in inventory_source_candidates(template.id, raw_source):
             # Keep generic number/date/relation/speaker candidates as diagnostics,
             # but only trusted template-owned cues may become required coverage
