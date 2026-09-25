@@ -3211,8 +3211,15 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         return result
 
     @staticmethod
-    def _v2_fact_response_format(*, fact_payload: bool = False) -> dict:
-        """OpenAI-compatible strict schema for the source-free probe or V2 facts."""
+    def _v2_fact_response_format(
+        *, fact_payload: bool = False, max_claims: Optional[int] = None
+    ) -> dict:
+        """OpenAI-compatible strict schema for source-free probe / V2 facts.
+
+        max_claims is used only by narrow recovery calls so a small model
+        cannot expand a tiny missing-cue repair into an unbounded claims array.
+        Primary extraction deliberately remains unbounded by this knob.
+        """
         if fact_payload:
             nullable_string = {"type": ["string", "null"]}
             nullable_number = {"type": ["number", "null"]}
@@ -3229,10 +3236,25 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 "evidence_quote": nullable_string, "evidence_start_offset": {"type": ["integer", "null"]},
                 "evidence_end_offset": {"type": ["integer", "null"]},
             }
-            schema = {"type": "object", "properties": {
-                "claims": {"type": "array", "items": {"type": "object", "properties": claim_properties,
-                    "required": list(claim_properties), "additionalProperties": False}},
-            }, "required": ["claims"], "additionalProperties": False}
+            claims_schema = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": claim_properties,
+                    "required": list(claim_properties),
+                    "additionalProperties": False,
+                },
+            }
+            if max_claims is not None:
+                if max_claims < 1:
+                    raise ValueError("max_claims must be >= 1")
+                claims_schema["maxItems"] = int(max_claims)
+            schema = {
+                "type": "object",
+                "properties": {"claims": claims_schema},
+                "required": ["claims"],
+                "additionalProperties": False,
+            }
             name = "v2_fact_payload"
         else:
             schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
