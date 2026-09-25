@@ -708,9 +708,9 @@ class TemplateClaimPolicy(BaseModel):
 
 
 _TEMPLATE_CUES: Mapping[str, tuple[str, ...]] = {
-    "general": ("決議", "通過", "交辦", "裁示", "主辦", "協辦", "辦理期程", "各單位意見", "不同意見"),
+    "general": ("決議", "通過", "交辦", "裁示", "主辦", "協辦", "負責", "期限", "截止", "生效", "辦理期程", "各單位意見", "不同意見"),
     "procurement_evaluation": ("法定人數", "迴避", "評選方式", "簡報", "詢答", "廠商", "評選結果", "優勝", "序位", "總評分", "不同意見", "決議", "散會"),
-    "section_meeting": ("交辦", "裁示", "指示", "列管", "解除列管", "繼續列管", "承辦", "期限", "決議"),
+    "section_meeting": ("交辦", "裁示", "指示", "列管", "解除列管", "繼續列管", "承辦", "負責", "期限", "截止", "生效", "決議"),
     "isms_monthly": ("風險", "接受", "降低", "移轉", "避免", "演練", "稽核", "驗證", "排程", "下次會議", "決議", "同意", "確認", "追蹤"),
 }
 _TEMPLATE_CANDIDATES: Mapping[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
@@ -735,14 +735,12 @@ def inventory_source_candidates(template_id: str, raw_source: str) -> tuple[tupl
         for kind, pattern in _TEMPLATE_CANDIDATES[template_id]
         for match in pattern.finditer(raw_source)
     ]
-    for kind, pattern in (
-        ("numeric", re.compile(r"(?<!\d)\d+(?:\.\d+)?")),
-        ("numeric", re.compile(r"[零〇一二兩两三四五六七八九](?=[週周年月日天時时小時小时分鐘分钟秒件人個个位項项次份萬元元])")),
-        ("date", re.compile(r"(?:\d{2,4}年\d{1,2}月\d{1,2}日|\d{1,4}[./-]\d{1,2}[./-]\d{1,2})")),
-        ("relation", re.compile(r"因而|因此|導致|造成|使得|若|如果|除非|未|不|無|沒有")),
-        ("speaker", re.compile(r"(?:發言者\d+|Speaker\s*\d+)\s*[:：]")),
-    ):
-        candidates.extend((kind, match.start(), match.end()) for match in pattern.finditer(raw_source))
+    # Generic numbers, dates, relation words and speaker labels are common in
+    # long conversational meetings and are not material merely because they
+    # exist. Turning every occurrence into a required coverage item produced
+    # verbose minutes and false fail-closed vetoes. Template-owned cues define
+    # completeness; generated high-risk facts remain independently checked by
+    # unsupported_high_risk_additions().
     return tuple(sorted(set(candidates), key=lambda item: (item[1], item[2], item[0])))
 
 
@@ -1059,17 +1057,83 @@ def apply_template_glossary_corrections(text: str, corrections: Sequence[tuple[s
     raise ValueError("template glossary corrections did not converge")
 
 
+def _derive_unique_claim_occurrence(
+    claim: FactClaim, evidence: Mapping[str, EvidenceSpan]
+) -> tuple[str, int, int] | None:
+    """Derive an exact raw quote when a small model fails to copy one correctly.
+
+    This is deliberately exact-only: subject/predicate/object must appear in the
+    declared direction inside one referenced raw span, and the resulting
+    occurrence must be unique. No fuzzy matching or semantic guessing is used.
+    """
+    if not claim.subject or not claim.predicate or not claim.object:
+        return None
+    candidates: set[tuple[int, int, str]] = set()
+    boundary = re.compile(r"[\n。！？!?；;]")
+    for ref in claim.evidence_refs:
+        span = evidence.get(ref)
+        if span is None or span.start_offset is None:
+            continue
+        text = span.raw_text
+        subjects = [m.start() for m in re.finditer(re.escape(claim.subject), text)]
+        predicates = [m.start() for m in re.finditer(re.escape(claim.predicate), text)]
+        objects = [m.start() for m in re.finditer(re.escape(claim.object), text)]
+        for subject_at in subjects:
+            for predicate_at in predicates:
+                for object_at in objects:
+                    if claim.direction == "subject_to_object":
+                        ordered = subject_at < predicate_at < object_at
+                    elif claim.direction == "object_to_subject":
+                        ordered = object_at < predicate_at < subject_at
+                    else:
+                        ordered = False
+                    if not ordered:
+                        continue
+                    left = min(subject_at, predicate_at, object_at)
+                    right = max(
+                        subject_at + len(claim.subject),
+                        predicate_at + len(claim.predicate),
+                        object_at + len(claim.object),
+                    )
+                    if right - left > 600:
+                        continue
+                    before = [m.end() for m in boundary.finditer(text[:left])]
+                    after = boundary.search(text, right)
+                    quote_start = before[-1] if before else 0
+                    quote_end = after.end() if after else len(text)
+                    if quote_end - quote_start > 800:
+                        quote_start, quote_end = left, right
+                    quote = text[quote_start:quote_end].strip()
+                    if not quote:
+                        continue
+                    actual_start = text.find(quote, quote_start, quote_end + 1)
+                    if actual_start < 0:
+                        continue
+                    absolute_start = span.start_offset + actual_start
+                    candidates.add((absolute_start, absolute_start + len(quote), quote))
+    if len(candidates) != 1:
+        return None
+    start, end, quote = next(iter(candidates))
+    return quote, start, end
+
+
 def resolve_claim_occurrences(
     claims: Iterable[FactClaim], evidence: Mapping[str, EvidenceSpan], *, source_sha256: str,
 ) -> tuple[FactClaim, ...]:
-    """Resolve exact model quotes or chunk-relative offsets to unique raw intervals."""
+    """Resolve asserted claims to one exact raw-source occurrence.
+
+    Model-provided exact quotes remain first priority. If the quote is absent,
+    malformed, or duplicated, a deterministic subject/predicate/object fallback
+    may recover only a unique exact occurrence. Otherwise the claim is scoped
+    ambiguous and cannot enter the rendered record.
+    """
     resolved: list[FactClaim] = []
     for claim in claims:
         if claim.status != ClaimStatus.ASSERTED:
             resolved.append(claim)
             continue
         spans = [evidence.get(ref) for ref in claim.evidence_refs]
-        if (not claim.evidence_quote or any(span is None for span in spans)
+        if (any(span is None for span in spans)
                 or any(span.source_sha256 != source_sha256 for span in spans if span is not None)):
             resolved.append(claim.model_copy(update={
                 "status": ClaimStatus.AMBIGUOUS,
@@ -1077,45 +1141,57 @@ def resolve_claim_occurrences(
                 "resolved_start_offset": None, "resolved_end_offset": None,
             }))
             continue
+
         occurrences: set[tuple[int, int]] = set()
         unlocated_occurrence = False
-        for span in spans:
-            assert span is not None
-            if claim.evidence_start_offset is not None:
-                start = claim.evidence_start_offset
-                end = claim.evidence_end_offset
-                if (end is not None and span.start_offset is not None
-                        and span.raw_text[start:end] == claim.evidence_quote):
-                    occurrences.add((span.start_offset + start, span.start_offset + end))
-                    continue
-                # A malformed model locator cannot disable the independent
-                # unique-exact-quote path.
-            cursor = 0
-            while True:
-                local_start = span.raw_text.find(claim.evidence_quote, cursor)
-                if local_start < 0:
+        if claim.evidence_quote:
+            for span in spans:
+                assert span is not None
+                if claim.evidence_start_offset is not None:
+                    local_start = claim.evidence_start_offset
+                    local_end = claim.evidence_end_offset
+                    if (local_end is not None and span.start_offset is not None
+                            and span.raw_text[local_start:local_end] == claim.evidence_quote):
+                        occurrences.add((
+                            span.start_offset + local_start,
+                            span.start_offset + local_end,
+                        ))
+                        continue
+                cursor = 0
+                while True:
+                    local_start = span.raw_text.find(claim.evidence_quote, cursor)
+                    if local_start < 0:
+                        break
+                    if span.start_offset is None:
+                        unlocated_occurrence = True
+                        break
+                    absolute_start = span.start_offset + local_start
+                    occurrences.add((absolute_start, absolute_start + len(claim.evidence_quote)))
+                    cursor = local_start + 1
+                if unlocated_occurrence:
                     break
-                if span.start_offset is None:
-                    # This quote exists, but without the span's origin we cannot
-                    # prove a unique absolute source occurrence.
-                    unlocated_occurrence = True
-                    break
-                start = span.start_offset + local_start
-                occurrences.add((start, start + len(claim.evidence_quote)))
-                cursor = local_start + 1
-            if unlocated_occurrence:
-                break
-        if unlocated_occurrence or len(occurrences) != 1:
+
+        if not unlocated_occurrence and len(occurrences) == 1:
+            resolved_start, resolved_end = next(iter(occurrences))
+            resolved.append(claim.model_copy(update={
+                "resolved_start_offset": resolved_start,
+                "resolved_end_offset": resolved_end,
+            }))
+            continue
+
+        derived = _derive_unique_claim_occurrence(claim, evidence)
+        if derived is None:
             resolved.append(claim.model_copy(update={
                 "status": ClaimStatus.AMBIGUOUS,
                 "uncertainty": claim.uncertainty or "unresolved_raw_source_occurrence",
                 "resolved_start_offset": None, "resolved_end_offset": None,
             }))
             continue
-        start, end = next(iter(occurrences))
+        quote, resolved_start, resolved_end = derived
         resolved.append(claim.model_copy(update={
-            "resolved_start_offset": start,
-            "resolved_end_offset": end,
+            "evidence_quote": quote,
+            "resolved_start_offset": resolved_start,
+            "resolved_end_offset": resolved_end,
         }))
     return tuple(resolved)
 
@@ -1190,14 +1266,14 @@ def validate_relation_metadata(
 def candidate_runtime_profiles(family: str, model_key: str, provider: str, *, context_length: int | None = None) -> tuple[ModelRuntimeProfile, ...]:
     """Return the approved family candidates; controls are checked separately."""
     if family.casefold().startswith("qwen"):
-        temperatures = (0.3, 0.5, 0.7)
+        temperatures = (0.1, 0.2, 0.3)
         return tuple(ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
                                          context_length=context_length, thinking=False,
                                          temperature=t, top_p=0.8, top_k=20) for t in temperatures)
     if family.casefold().startswith("gemma"):
         return (ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
                                     context_length=context_length, thinking=False,
-                                    temperature=1.0, top_p=0.95, top_k=64),)
+                                    temperature=0.1, top_p=0.9, top_k=64),)
     return ()
 
 
