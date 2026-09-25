@@ -139,3 +139,98 @@ TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
 NEXT_ACTION: Stage01 resolves the three decisions above; do not use a blanket
 unknown-reference veto, silently drop claims, fabricate statement offsets, or
 read/expose private payloads.
+
+## Stage 04 escalation — R16 backend capability scope gap
+
+Date: 2026-09-24 UTC (2026-09-25 Asia/Taipei). Current approved identity is
+Plan revision 16 SHA-256
+`5a5a6663e2b1258aa9b345d7dbe08249ea6661a0849ce5ba0f82dd7ad8dbc647`, Review
+attempt16 report SHA-256
+`161931f6cd3ef3f92a10399cc2a4c3452885a491d95dd16cacb88b119cc8ce62`, and
+handoff SHA-256
+`6a242ddbc7f55e5c2cc0979a7678dc989c86768355f95794f4e65b9d8cbb55fa`.
+Review attempt16 approved the cited Plan revision. This entry records a new
+implementation-scope discovery after the approved R16 handoff; do not treat the
+existing approval as covering the missing Ollama decision.
+
+### Affected approved requirements
+
+- **Decision P / W2:** native structured-output capability is required per
+  active backend and loaded model/instance; `SUPPORTED` requires a normal,
+  schema-valid source-free probe; only a narrow explicit unsupported-capability
+  result permits strict-JSON/Pydantic fallback. Unknown capability must stop
+  before source-bearing generation.
+- **C2:** capability classification is a CORE integration contract; missing or
+  false backend capability coverage is a task regression.
+- **C16:** schema/runtime retry classification is CORE; provider/runtime errors
+  must not be reclassified or silently routed into fallback/repair.
+
+### New read-only review evidence
+
+- The newly added `_probe_native_schema_capability` implementation in
+  `backend/services/summarization.py` currently recognizes only `engine ==
+  "lmstudio"` and requires an LM Studio `selection.loaded_instance_id`;
+  otherwise it returns `UNKNOWN`.
+- `_select_local_engine` and `_generate_with_local_engine` also support the
+  existing `ollama` engine. For an Ollama-selected V2 invocation, the current
+  capability probe therefore returns `UNKNOWN`, and the V2 path raises before
+  sending any user source. This is fail-loud, but leaves V2 unavailable on an
+  existing backend path.
+- The generation dispatcher has no native schema-probe/strict-schema support
+  for Ollama: the Ollama branch ignores `response_format`, which is currently
+  passed only through the LM Studio adapter. Therefore LM Studio success does
+  not establish the per-backend contract for Ollama.
+- The R16 plan requires a per-backend contract; it does not specify whether
+  Ollama can produce the exact fact-payload schema, how its source-free
+  capability probe should be represented, or whether V2 is intentionally
+  scoped to LM Studio. Choosing a JSON mode, unsupported-response allowlist,
+  fallback, or backend exclusion changes eligibility/fallback behavior and is
+  not a bounded implementation detail.
+- This gap was identified by the Stage 04 parent’s read-only contract review;
+  it was not discovered by the passing LM Studio-focused tests. The existing
+  tests verify the LM Studio probe/classifier and fake-runtime fallback, but do
+  not prove Ollama capability semantics.
+
+### Required Stage 01 decision
+
+Define V2 behavior for Ollama against the user's per-backend capability and
+strict-JSON fallback requirement. Choose and specify either (a) an Ollama
+source-free probe that tests the exact fact-payload schema plus a narrow,
+provider-specific explicit-unsupported classification and correctly wired
+schema-constrained extraction, or (b) a deliberate, documented V2 backend
+scope/exclusion with fail-loud behavior before user-source generation. The
+decision must state what counts as `SUPPORTED`, `UNSUPPORTED`, and `UNKNOWN`,
+whether fallback is authorized for that backend, and its focused contract tests.
+Do not choose either option in Stage 04. Re-review the revised plan and compile
+a fresh handoff before resuming implementation.
+
+### Safe state and verification already observed
+
+- All current working-tree changes are uncommitted and preserved. No reset,
+  stash, rebase, force-push, or cleanup was performed. No commit or push was
+  made. The product diff, tests, documentation change, R16 W0 snapshots, and
+  test outputs remain available for the replanned implementer.
+- No live-source, meeting-data, C1 acceptance, or user-content model call was
+  made during this Stage 04 work. The existing Qwen runtime audit was read-only;
+  no model was loaded or unloaded.
+- Before this Ollama gap was discovered, focused tests observed `157 passed`;
+  full `tests/` observed `904 passed, 2 skipped`; the cloud contract selection
+  observed `13 passed, 41 deselected`; `scripts/check_docs.sh` exited 0 with the
+  same two README version warnings recorded at W0; `git diff --check` exited 0.
+  These results do not close the uncovered Ollama capability contract or C2/
+  C16 for that backend.
+- Stage 04 must stop product edits and additional implementation verification
+  at this semantic boundary pending R17 review and fresh handoff. Preserve the
+  current diff unchanged until then.
+
+IMPLEMENTATION_STATUS: BLOCKED (unfinished Ollama capability/fallback contract
+cannot safely continue without Stage 01's per-backend scope decision)
+CORE_ACCEPTANCE_STATUS: BLOCKED (Decision P/C2/C16 capability coverage remains
+incomplete for an existing supported local backend)
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING replanned Stage 04 and fresh Stage 05
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Stage 01 decides the V2 Ollama capability/probe/fallback contract;
+  then obtain independent R17 review and a matching fresh handoff. Do not infer
+  Ollama support, silently fall back, or send user source while capability is
+  UNKNOWN.

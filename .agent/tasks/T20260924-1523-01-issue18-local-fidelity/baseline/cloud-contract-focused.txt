@@ -1,15 +1,8 @@
-COMMAND: uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"
-PRE-MUTATION DEFAULT ENVIRONMENT RESULT: BLOCKED DURING COLLECTION (exit 2)
-OBSERVED: backend/core/logger.py resolves DATA_DIR=/app/data; mkdir /app/data/logs fails with OSError [Errno 30] Read-only file system: '/app'.
-SAFE ENVIRONMENT-LEVEL WORKAROUND (NO PRODUCT SEMANTICS CHANGED): DATA_DIR=/tmp/meetingscribe-test
-WORKAROUND RESULT: 13 passed, 41 deselected in 0.40s (exit 0)
-NOTE: The default runner failure remains a scoped environment blocker; the workaround uses a writable test-only DATA_DIR.
+# R16 Stage04 cloud contract baseline — post-change
 
-ADDITIONAL R11 PRE-MUTATION CLOUD BASELINE (separate from the prior baseline above)
-TASK_ID: T20260924-1523-01-issue18-local-fidelity
-PLAN_REVISION: 11
-BASELINE: pre-product-mutation
-COMMAND: DATA_DIR=$(mktemp -d /tmp/convert-r11-cloud.XXXXXX) uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"
-EXIT_STATUS: 0
-RESULT: 13 passed, 41 deselected
-REDACTED_OUTPUT: all 13 selected tests passed; no payloads recorded.
+- Command: `DATA_DIR=tmp uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"`
+- Exit status: 0
+- Result: `13 passed, 41 deselected in 0.36s`
+- Privacy: no source/model payload recorded.
+- Comparison: pre-change same selection required writable test-only `DATA_DIR`; baseline was `13 passed, 41 deselected in 0.40s` (see `w0-stage04-r16-baselines-20260924T214420Z.md`).
+- Shared helper changes are confined to LM Studio local generation plumbing; the cloud-focused contract set remained green.

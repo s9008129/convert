@@ -1312,3 +1312,58 @@ def test_placeholder_repair_leaves_body_lines_untouched():
 
     assert "表格欄位「（月）」的定義請人事室確認（科長，00:05:00）。" in fixed
     assert "（年）年" not in fixed
+
+
+@pytest.mark.asyncio
+async def test_ollama_generation_dispatch_forwards_json_schema_format(monkeypatch):
+    service = SummarizationService()
+    captured = {}
+    response_format = {"type": "json_schema", "json_schema": {
+        "name": "v2_fact_payload", "strict": True,
+        "schema": {"type": "object", "properties": {"claims": {"type": "array"}},
+                   "required": ["claims"], "additionalProperties": False},
+    }}
+
+    async def summarize(*args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+        return '{"claims":[]}'
+
+    monkeypatch.setattr(service, "_summarize_with_ollama", summarize)
+    result = await service._generate_with_local_engine(
+        "ollama", "system", "SYNTHETIC_SOURCE_SENTINEL", response_format=response_format,
+    )
+
+    assert result == '{"claims":[]}'
+    assert captured["kwargs"]["response_format"] == response_format
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_json_schema_is_sent_as_api_chat_format(monkeypatch):
+    service = SummarizationService()
+    schema = {"type": "object", "properties": {"claims": {"type": "array"}},
+              "required": ["claims"], "additionalProperties": False}
+    response_format = {"type": "json_schema", "json_schema": {
+        "name": "v2_fact_payload", "strict": True, "schema": schema,
+    }}
+    captured = {}
+
+    async def get_client():
+        return object()
+
+    async def post(_client, payload, send_think_field):
+        captured.update(payload=payload, send_think_field=send_think_field)
+        return '{"claims":[]}', {"done_reason": "stop"}, False
+
+    monkeypatch.setattr(service, "_get_ollama_client", get_client)
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "qwen3.8:27b")
+    monkeypatch.setattr(service, "_post_ollama_chat", post)
+
+    result = await service._summarize_with_ollama(
+        "system", "SYNTHETIC_SOURCE_SENTINEL", num_predict=64,
+        expand_output_budget=False, response_format=response_format,
+    )
+
+    assert result == '{"claims":[]}'
+    assert captured["payload"]["format"] == schema
+    assert captured["payload"]["model"] == "qwen3.8:27b"
+    assert "SYNTHETIC_SOURCE_SENTINEL" in captured["payload"]["messages"][-1]["content"]

@@ -1697,7 +1697,6 @@ class SummarizationService:
                 context_length = (
                     config.get("context_length")
                     or instance.get("context_length")
-                    or model.get("max_context_length")
                 )
                 try:
                     context_length = int(context_length) if context_length is not None else None
@@ -1890,6 +1889,7 @@ class SummarizationService:
         raw_output_collector: Optional[list[str]] = None,
         runtime_profile: Optional[object] = None,
         runtime_control_rejection_callback: Optional[callable] = None,
+        response_format: Optional[dict] = None,
     ) -> str:
         """對選定的本地引擎執行一次生成。
 
@@ -1907,6 +1907,7 @@ class SummarizationService:
                 context_window_tokens=context_window_tokens,
                 expand_output_budget=expand_output_budget,
                 raw_output_collector=raw_output_collector,
+                response_format=response_format,
             )
 
         if engine == "lmstudio":
@@ -1923,6 +1924,7 @@ class SummarizationService:
                 raw_output_collector=raw_output_collector,
                 runtime_profile=runtime_profile,
                 runtime_control_rejection_callback=runtime_control_rejection_callback,
+                response_format=response_format,
             )
 
         raise RuntimeError(f"未知的本地引擎: {engine}")
@@ -2310,7 +2312,8 @@ class SummarizationService:
         """
         from backend.services.local_pipeline_v2 import (
             FactPayloadValidationError, LocalPipelineV2Error, build_evidence_spans, consolidate_claims,
-            parse_fact_payload, render_section, assemble_sections,
+            parse_fact_payload, render_section, assemble_sections, ClaimStatus,
+            align_whitespace_only_corrected_chunks, classify_native_schema_probe,
             fidelity_firewall, parse_section_render_payload,
             guarded_section_patch, ModelRuntimeProfile,
             validate_runtime_profile, validate_asserted_claims_against_source,
@@ -2327,19 +2330,24 @@ class SummarizationService:
 
         engine = await self._select_local_engine()
         selection = self._active_lmstudio_selection
-        context_tokens = self._effective_context_tokens()
-        if selection and selection.context_length:
-            context_tokens = selection.context_length
-        family = "Qwen" if selection and "qwen" in selection.model_identifier.casefold() else "Gemma"
+        loaded_context_tokens = selection.context_length if selection else None
+        context_tokens = loaded_context_tokens or self._effective_context_tokens()
+        effective_model = (
+            selection.model_identifier if selection
+            else self._get_effective_model() if engine == "ollama"
+            else ""
+        )
+        identity = effective_model.casefold()
+        family = "Qwen" if "qwen" in identity else "Gemma" if "gemma" in identity else "UNKNOWN"
         profile = validate_runtime_profile(
             ModelRuntimeProfile(
-                family=family, model_key=selection.model_identifier if selection else "unresolved",
+                family=family, model_key=effective_model or "unresolved",
                 provider=selection.provider if selection else engine,
                 loaded_instance_id=selection.loaded_instance_id if selection else None,
-                context_length=context_tokens, thinking=False,
-                temperature=0.7 if family == "Qwen" else 1.0,
-                top_p=0.8 if family == "Qwen" else 0.95,
-                top_k=20 if family == "Qwen" else 64,
+                context_length=loaded_context_tokens, thinking=False,
+                temperature=0.7 if family == "Qwen" else 1.0 if family == "Gemma" else None,
+                top_p=0.8 if family == "Qwen" else 0.95 if family == "Gemma" else None,
+                top_k=20 if family == "Qwen" else 64 if family == "Gemma" else None,
             ),
             # This adapter's documented chat endpoint accepts temperature,
             # top_p, and top_k. Context is sourced from the active loaded
@@ -2347,24 +2355,63 @@ class SummarizationService:
             # existing reasoning_effort compatibility path is independent and
             # does not prove native thinking-control capability.
             {"context_length": bool(engine == "lmstudio" and selection and selection.context_length),
-             "thinking": False, "temperature": engine == "lmstudio",
+             "thinking": False, "temperature": engine in {"lmstudio", "ollama"},
              "top_p": engine == "lmstudio", "top_k": engine == "lmstudio"},
         )
         # W7 defines the normal production baseline (Qwen .7, Gemma 1.0).
         # Qwen .3/.5/.7 remain extraction-only candidates for explicit C14
         # sampling; an unsampled candidate never changes production settings.
-        extraction_temperature = profile.temperature
+        extraction_temperature = profile.temperature if profile.temperature is not None else 0.2
         if extraction_temperature_candidate is not None:
             if family != "Qwen" or extraction_temperature_candidate not in {0.3, 0.5, 0.7}:
                 raise LocalPipelineV2Error("Unsupported experimental extraction profile")
             extraction_temperature = extraction_temperature_candidate
-        section_temperature = 0.7 if family == "Qwen" else profile.temperature
+        section_temperature = (0.7 if family == "Qwen" else profile.temperature
+                               if profile.temperature is not None else 0.2)
+        probe_result = await self._probe_native_schema_capability(engine, selection, profile)
+        if isinstance(probe_result, str):
+            # Preserve compatibility with focused tests/adapters that inject the
+            # normalized capability directly; production probes return the typed result.
+            capability = probe_result
+            probe_error_class = None
+            probe_http_status = None
+        else:
+            capability = probe_result.capability
+            probe_error_class = probe_result.error_class
+            probe_http_status = probe_result.http_status
+        if diagnostic_recorder:
+            model_identity = (
+                selection.loaded_instance_id if engine == "lmstudio" and selection
+                else self._get_effective_model() if engine == "ollama"
+                else "unknown"
+            )
+            diagnostic_recorder.record(
+                "v2.native-schema-capability", status=capability,
+                metadata={"backend": engine,
+                          "model_identity": model_identity,
+                          "native_schema_capability": capability,
+                          "schema": "fact_payload_v1",
+                          "error_class": probe_error_class,
+                          "http_status": probe_http_status},
+            )
+        if capability == "UNKNOWN":
+            error_detail = f" ({probe_error_class}" if probe_error_class else ""
+            if probe_http_status is not None:
+                error_detail += f", HTTP {probe_http_status}"
+            if error_detail:
+                error_detail += ")"
+            raise LocalPipelineV2Error(
+                f"V2 native schema capability is UNKNOWN{error_detail}; "
+                "no user-source extraction was sent"
+            )
+        native_response_format = self._v2_fact_response_format(fact_payload=True) if capability == "SUPPORTED" else None
         if diagnostic_recorder:
             diagnostic_recorder.record(
                 "v2.runtime.profile", status="validated" if profile.validated else "unsupported_controls",
-                metadata={"provider": profile.provider, "model_key": profile.model_key,
+                metadata={"provider": profile.provider, "family": profile.family, "model_key": profile.model_key,
                           "loaded_instance_id": profile.loaded_instance_id,
                           "context_length": profile.context_length,
+                          "planner_context_length": context_tokens,
                           "baseline_temperature": profile.temperature,
                           "unsupported_control_count": len(profile.unsupported_controls),
                           "supported_profile_control_count": len(profile.supported_controls),
@@ -2377,9 +2424,8 @@ class SummarizationService:
                     "v2.runtime.control-rejected", status="unsupported",
                     metadata={"unsupported_controls": control, "unsupported_control_count": 1},
                 )
-        # Raw ASR text is the only provenance authority. A corrected view may be
-        # used for comprehension only when spans can be aligned; this path does
-        # not have a verified aligner, so it deliberately extracts raw-only.
+        # Raw ASR text is the only provenance authority. A corrected view is
+        # comprehension-only and admitted only when conservatively aligned.
         source_transcript = raw_source_transcript if raw_source_transcript is not None else transcript
         chunk_budget = self._build_local_context_plan(
             source_transcript, system_prompt, template=template, context_window_tokens=context_tokens
@@ -2388,14 +2434,17 @@ class SummarizationService:
         chunks = chunks or [source_transcript]
         if not chunk_offsets and chunks:
             chunk_offsets = [(0, len(source_transcript))]
+        corrected_chunks = align_whitespace_only_corrected_chunks(
+            source_transcript, transcript if raw_source_transcript is not None else None, chunk_offsets
+        )
         source_sha = __import__("hashlib").sha256(source_transcript.encode("utf-8")).hexdigest()
         spans = build_evidence_spans(source_transcript, chunks, source_sha256=source_sha,
-                                     chunk_offsets=chunk_offsets)
+                                     chunk_offsets=chunk_offsets, corrected_chunks=corrected_chunks)
         if diagnostic_recorder:
             diagnostic_recorder.record("v2.source", status="raw_only" if raw_source_transcript is not None else "raw_input",
                                        metadata={"raw_source_sha256": source_sha,
                                                  "corrected_view_supplied": raw_source_transcript is not None,
-                                                 "corrected_alignment": "unavailable_not_mapped" if raw_source_transcript is not None else "not_applicable"})
+                                                 "corrected_alignment": "whitespace_only" if any(corrected_chunks) else "not_aligned" if raw_source_transcript is not None else "not_applicable"})
         claims: list = []
         for index, (chunk, span) in enumerate(zip(chunks, spans), 1):
             extraction_message = (
@@ -2411,8 +2460,11 @@ class SummarizationService:
                 "Every asserted subject/predicate/object, relation direction, polarity, condition, number/unit, date, "
                 "entity, attribution and uncertainty must be directly supported by the ordered raw source span; "
                 "unsupported values must be null or status unknown/ambiguous.\n"
-                f"SOURCE CHUNK {index}/{len(chunks)}:\n{chunk}"
+                f"RAW EVIDENCE SOURCE CHUNK {index}/{len(chunks)}:\n{chunk}"
             )
+            if spans[index - 1].corrected_text:
+                extraction_message += ("\nCORRECTED COMPREHENSION VIEW (not evidence; all quotes and offsets "
+                                       "must come from raw source):\n" + spans[index - 1].corrected_text)
             if diagnostic_recorder:
                 diagnostic_recorder.record(f"v2.extraction.chunk.{index}.input", input_text=extraction_message,
                                            source_branch="transcript_chunk",
@@ -2424,6 +2476,7 @@ class SummarizationService:
                     context_window_tokens=context_tokens, lmstudio_selection=selection,
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
+                    response_format=native_response_format,
                 )
             except Exception as generation_error:
                 if diagnostic_recorder:
@@ -2464,6 +2517,7 @@ class SummarizationService:
                         context_window_tokens=context_tokens, lmstudio_selection=selection,
                         runtime_profile=profile,
                         runtime_control_rejection_callback=report_runtime_control_rejection,
+                        response_format=native_response_format,
                     )
                     if diagnostic_recorder:
                         diagnostic_recorder.record(
@@ -2506,8 +2560,25 @@ class SummarizationService:
                           "ambiguous_count": ambiguous_count},
             )
         ledger = consolidate_claims(occurrence_claims, source_sha256=source_sha, evidence=evidence)
-        if ledger.conflicts:
-            raise LocalPipelineV2Error("V2 ledger contains unresolved same-evidence conflicts")
+        conflicted_claim_ids = {claim_id for conflict in ledger.conflicts for claim_id in conflict.claim_ids}
+        if conflicted_claim_ids:
+            # A valid same-occurrence contradiction has no winner. Keep its
+            # impact with those claims/sections instead of vetoing unrelated
+            # sections; ambiguous claims are not sent to render prompts.
+            ledger = ledger.model_copy(update={
+                "claims": tuple(
+                    claim.model_copy(update={"status": ClaimStatus.AMBIGUOUS,
+                                             "uncertainty": claim.uncertainty or "same_evidence_conflict"})
+                    if claim.claim_id in conflicted_claim_ids else claim
+                    for claim in ledger.claims
+                ),
+            })
+            if diagnostic_recorder:
+                diagnostic_recorder.record(
+                    "v2.ledger-conflicts", status="scoped_ambiguity",
+                    metadata={"conflict_count": len(ledger.conflicts),
+                              "affected_claim_count": len(conflicted_claim_ids)},
+                )
         try:
             grounded_claims = validate_asserted_claims_against_source(ledger.claims, evidence)
         except ValueError as exc:
@@ -2526,6 +2597,18 @@ class SummarizationService:
         ledger = ledger.model_copy(update={"claims": grounded_claims})
         plans = template_section_plans(template, ledger, evidence, raw_source=source_transcript)
         by_id = {claim.claim_id: claim for claim in ledger.claims}
+
+        def apply_final_byte_novelty(snapshot, candidate_text):
+            additions = unsupported_high_risk_additions(source_transcript, candidate_text)
+            if not additions:
+                return snapshot
+            return snapshot.model_copy(update={
+                "unsupported_high_risk_values": tuple(dict.fromkeys(
+                    (*snapshot.unsupported_high_risk_values, *additions)
+                )),
+                "source_trace_complete": False,
+            })
+
         selected_claim_id = None
         selected_target_relation = None
         if selected_claim_target is not None:
@@ -2570,6 +2653,7 @@ class SummarizationService:
                     context_window_tokens=context_tokens, lmstudio_selection=selection,
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
+                    response_format=self._v2_section_response_format() if capability == "SUPPORTED" else None,
                 )
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
@@ -2611,6 +2695,7 @@ class SummarizationService:
             baseline_snapshot = fidelity_firewall(plan, baseline_text, by_id, evidence,
                                                   selected_claim_id=selected_claim_id,
                                                   relation_metadata=baseline_relations)
+            baseline_snapshot = apply_final_byte_novelty(baseline_snapshot, baseline_text)
             relation_metadata_valid = True
             required_relation_ids = {
                 cid for cid in plan.required_claim_ids
@@ -2632,7 +2717,66 @@ class SummarizationService:
             candidate_snapshot = fidelity_firewall(plan, section_text, by_id, evidence,
                                                    selected_claim_id=selected_claim_id,
                                                    relation_metadata=relation_metadata if relation_metadata_valid else {})
+            candidate_snapshot = apply_final_byte_novelty(candidate_snapshot, section_text)
             patch_result = guarded_section_patch(baseline_text, section_text, baseline_snapshot, candidate_snapshot)
+            if not candidate_snapshot.accepted or not relation_metadata_valid:
+                issue_codes = []
+                issue_codes.extend(f"missing_required:{claim_id}" for claim_id in
+                                   sorted(set(candidate_snapshot.required_claim_ids)
+                                          - set(candidate_snapshot.covered_claim_ids)))
+                for field in ("coverage_issues", "attribution_issues", "numeric_issues", "date_issues",
+                              "entity_issues", "source_tag_issues", "relation_issues", "polarity_issues",
+                              "condition_issues", "unsupported_high_risk_values", "duplicate_items"):
+                    issue_codes.extend(f"{field}:{claim_id}" for claim_id in getattr(candidate_snapshot, field, ()))
+                if not relation_metadata_valid:
+                    issue_codes.append("relation_metadata_invalid")
+                patch_message = (
+                    "TARGETED SECTION PATCH. Repair only the listed validation issues for this section. "
+                    "Return ONLY JSON with text, claim_ids, relation_metadata; do not add facts.\n"
+                    f"SECTION: {plan.section_id} ({plan.title})\n"
+                    f"VALIDATION_ISSUES: {json.dumps(issue_codes, ensure_ascii=False)}\n"
+                    f"BASELINE: {baseline_text}\nCANDIDATE: {section_text}\n"
+                    f"ALLOWED_CLAIMS: {claims_json}"
+                )
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(f"v2.patch.{plan.section_id}.input", input_text=patch_message,
+                                               source_branch="section_plan", metadata={"claim_id": plan.section_id})
+                try:
+                    patch_raw = await self._generate_with_local_engine(
+                        engine, system_prompt, patch_message, temperature=section_temperature,
+                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
+                        context_window_tokens=context_tokens, lmstudio_selection=selection,
+                        runtime_profile=profile,
+                        runtime_control_rejection_callback=report_runtime_control_rejection,
+                        response_format=self._v2_section_response_format() if capability == "SUPPORTED" else None,
+                    )
+                    patch_text, patch_claim_ids, patch_relations = parse_section_render_payload(patch_raw, plan=plan)
+                    validate_relation_metadata(plan, by_id, patch_relations)
+                    patch_snapshot = fidelity_firewall(plan, patch_text, by_id, evidence,
+                                                       selected_claim_id=selected_claim_id,
+                                                       relation_metadata=patch_relations)
+                    patch_snapshot = apply_final_byte_novelty(patch_snapshot, patch_text)
+                    guarded = guarded_section_patch(baseline_text, patch_text, baseline_snapshot, patch_snapshot)
+                    if patch_snapshot.accepted and guarded.accepted:
+                        patch_result = guarded
+                        relation_metadata = patch_relations
+                    elif diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.patch.{plan.section_id}.outcome", status="rolled_back:validation_rejected",
+                            metadata={"claim_id": plan.section_id, "validation_issue_count": 1},
+                        )
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(f"v2.patch.{plan.section_id}.output", output_text=patch_raw,
+                                                   source_branch="section_plan", status="received")
+                except Exception as patch_error:
+                    # Patch is at most once and section-scoped; the source-backed
+                    # deterministic baseline remains the rollback artifact.
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.patch.{plan.section_id}.outcome",
+                            status=f"rolled_back:{type(patch_error).__name__}",
+                            metadata={"claim_id": plan.section_id, "validation_issue_count": 1},
+                        )
             rendered[plan.section_id] = patch_result.text
             section_relations[plan.section_id] = relation_metadata if patch_result.accepted else baseline_relations
             if diagnostic_recorder:
@@ -2794,6 +2938,161 @@ class SummarizationService:
             diagnostic_recorder.record("v2.ledger", status="valid", metadata={"chunk_count": len(chunks)})
             diagnostic_recorder.record("v2.selection.final", output_text=result, source_branch="structured_facts", status="selected")
         return result
+
+    @staticmethod
+    def _v2_fact_response_format(*, fact_payload: bool = False) -> dict:
+        """OpenAI-compatible strict schema for the source-free probe or V2 facts."""
+        if fact_payload:
+            nullable_string = {"type": ["string", "null"]}
+            nullable_number = {"type": ["number", "null"]}
+            claim_properties = {
+                "claim_id": {"type": "string"}, "subject": {"type": "string"},
+                "predicate": {"type": "string"}, "object": {"type": "string"},
+                "relation_type": {"type": "string", "enum": ["fact", "causal", "conditional", "temporal"]},
+                "direction": {"type": "string", "enum": ["subject_to_object", "object_to_subject"]},
+                "polarity": {"type": "string", "enum": ["positive", "negative"]},
+                "condition": nullable_string, "number": nullable_number, "unit": nullable_string,
+                "date": nullable_string, "attribution": nullable_string, "uncertainty": nullable_string,
+                "status": {"type": "string", "enum": ["asserted", "unknown", "ambiguous", "conflicted"]},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "evidence_quote": nullable_string, "evidence_start_offset": {"type": ["integer", "null"]},
+                "evidence_end_offset": {"type": ["integer", "null"]},
+            }
+            schema = {"type": "object", "properties": {
+                "claims": {"type": "array", "items": {"type": "object", "properties": claim_properties,
+                    "required": list(claim_properties), "additionalProperties": False}},
+            }, "required": ["claims"], "additionalProperties": False}
+            name = "v2_fact_payload"
+        else:
+            schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
+                      "required": ["ok"], "additionalProperties": False}
+            name = "v2_capability_probe"
+        return {"type": "json_schema", "json_schema": {
+            "name": name, "strict": True, "schema": schema,
+        }}
+
+    @staticmethod
+    def _ollama_json_schema(response_format: dict) -> dict:
+        """Translate the shared response-format wrapper to Ollama's raw JSON Schema."""
+        json_schema = response_format.get("json_schema") if isinstance(response_format, dict) else None
+        schema = json_schema.get("schema") if isinstance(json_schema, dict) else None
+        if not isinstance(schema, dict):
+            raise ValueError("Ollama native format requires a JSON Schema object")
+        return schema
+
+    @staticmethod
+    def _v2_section_response_format() -> dict:
+        relation = {"type": "object", "properties": {
+            "subject": {"type": "string"}, "predicate": {"type": "string"},
+            "object": {"type": "string"},
+            "direction": {"type": "string", "enum": ["subject_to_object", "object_to_subject"]},
+            "polarity": {"type": "string", "enum": ["positive", "negative"]},
+            "condition": {"type": ["string", "null"]},
+            "relation_type": {"type": "string", "enum": ["causal", "conditional"]},
+        }, "required": ["subject", "predicate", "object", "direction", "polarity", "condition", "relation_type"],
+            "additionalProperties": False}
+        return {"type": "json_schema", "json_schema": {
+            "name": "v2_section_render", "strict": True,
+            "schema": {"type": "object", "properties": {
+                "text": {"type": "string"},
+                "claim_ids": {"type": "array", "items": {"type": "string"}},
+                "relation_metadata": {"type": "object", "additionalProperties": relation},
+            }, "required": ["text", "claim_ids", "relation_metadata"], "additionalProperties": False},
+        }}
+
+    async def _probe_native_schema_capability(self, engine, selection, runtime_profile=None):
+        """Probe schema support on the active model using no source-bearing content."""
+        from backend.services.local_pipeline_v2 import (
+            NativeSchemaProbeResult,
+            classify_native_schema_probe,
+        )
+
+        if engine == "lmstudio":
+            identity = getattr(selection, "loaded_instance_id", "") if selection else ""
+        elif engine == "ollama":
+            identity = self._get_effective_model()
+        else:
+            return NativeSchemaProbeResult("UNKNOWN", error_class="unsupported_backend")
+        if not identity:
+            return NativeSchemaProbeResult("UNKNOWN", error_class="missing_model_identity")
+        try:
+            messages = [
+                {"role": "system", "content": "Return the requested JSON object exactly."},
+                {"role": "user", "content": 'Return {"claims":[]}.'},
+            ]
+            response_format = self._v2_fact_response_format(fact_payload=True)
+            if engine == "lmstudio":
+                response = await self._lmstudio_chat_request(
+                    self._get_lmstudio_client(), selection, messages, 0.0, 64,
+                    runtime_profile=runtime_profile, response_format=response_format,
+                )
+                content, _reasoning, finish_reason, _usage = self._parse_lmstudio_response_payload(response)
+            else:
+                client = await self._get_ollama_client()
+                payload = {
+                    "model": identity,
+                    "messages": messages,
+                    "format": self._ollama_json_schema(response_format),
+                    "stream": True,
+                    "keep_alive": settings.LOCAL_LLM_KEEP_ALIVE,
+                    "options": {
+                        "temperature": 0.0,
+                        "num_ctx": self._effective_context_tokens(),
+                        "num_predict": 64,
+                    },
+                }
+                content, metrics, _send_think_field = await self._post_ollama_chat(
+                    client, payload, False,
+                )
+                finish_reason = metrics.get("done_reason")
+            try:
+                parsed = json.loads(content)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = None
+            capability = classify_native_schema_probe(
+                backend=engine, model_identity=identity,
+                completed_normally=finish_reason == "stop",
+                schema_valid=isinstance(parsed, dict) and parsed == {"claims": []},
+                finish_reason=finish_reason,
+            )
+            error_class = None
+            if capability == "UNSUPPORTED":
+                error_class = "explicit_unsupported_capability"
+            elif capability == "UNKNOWN":
+                if finish_reason == "length":
+                    error_class = "truncated_output"
+                elif finish_reason != "stop":
+                    error_class = "incomplete_output"
+                elif not isinstance(parsed, dict) or parsed != {"claims": []}:
+                    error_class = "invalid_schema_output"
+                else:
+                    error_class = "probe_not_validated"
+            return NativeSchemaProbeResult(capability, error_class=error_class)
+        except Exception as exc:  # preserve UNKNOWN except narrow explicit unsupported
+            response = getattr(exc, "response", None)
+            try:
+                message = str(response.text or "") if response is not None else ""
+            except Exception:
+                message = ""
+            status_code = getattr(response, "status_code", None)
+            if isinstance(status_code, int):
+                error_class = "http_error"
+            elif isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+                error_class = "timeout"
+            elif isinstance(exc, (httpx.ConnectError, httpx.RemoteProtocolError, OllamaStreamRetryable)):
+                error_class = "transport_or_stream_error"
+            else:
+                error_class = "runtime_error"
+            capability = classify_native_schema_probe(
+                backend=engine, model_identity=identity,
+                status_code=status_code, error_message=message,
+            )
+            if capability == "UNSUPPORTED":
+                error_class = "explicit_unsupported_capability"
+            return NativeSchemaProbeResult(
+                capability, error_class=error_class,
+                http_status=status_code if isinstance(status_code, int) else None,
+            )
 
     @staticmethod
     def _finalize_record_text(summary: str, template: Optional[MeetingTemplate] = None) -> str:
@@ -3013,6 +3312,7 @@ class SummarizationService:
         context_window_tokens: Optional[int] = None,
         expand_output_budget: bool = True,
         raw_output_collector: Optional[list[str]] = None,
+        response_format: Optional[dict] = None,
     ) -> str:
         """
         使用 Ollama 本地模式生成摘要
@@ -3075,6 +3375,8 @@ class SummarizationService:
                         "stop": ["</think>", "</thought>", "</details>", "---\n\n---"]  # 停止標記
                     }
                 }
+                if response_format is not None:
+                    payload["format"] = self._ollama_json_schema(response_format)
                 raw_content, _metrics, send_think_field = await self._post_ollama_chat(
                     client, payload, send_think_field
                 )
@@ -3205,6 +3507,7 @@ class SummarizationService:
         raw_output_collector: Optional[list[str]] = None,
         runtime_profile: Optional[object] = None,
         runtime_control_rejection_callback: Optional[callable] = None,
+        response_format: Optional[dict] = None,
     ) -> str:
         """
         使用已選定的 LM Studio loaded instance 生成摘要。
@@ -3278,6 +3581,7 @@ class SummarizationService:
             client, selection, messages, temperature, requested_max_tokens,
             runtime_profile=runtime_profile,
             runtime_control_rejection_callback=runtime_control_rejection_callback,
+            response_format=response_format,
         )
 
         self._emit_progress(progress_callback, 85.0, "處理摘要結果...")
@@ -3552,6 +3856,7 @@ class SummarizationService:
         max_tokens: int,
         runtime_profile: Optional[object] = None,
         runtime_control_rejection_callback: Optional[callable] = None,
+        response_format: Optional[dict] = None,
     ) -> object:
         """單次 chat.completions.create（含 transient/HTTP 錯誤映射與思考關閉降級）。
 
@@ -3597,6 +3902,8 @@ class SummarizationService:
             }
             if "top_p" in profile_controls:
                 kwargs["top_p"] = profile_controls["top_p"]
+            if response_format is not None:
+                kwargs["response_format"] = response_format
             if extra:
                 kwargs["extra_body"] = extra
             return await client.chat.completions.create(**kwargs)

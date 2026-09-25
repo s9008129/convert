@@ -20,9 +20,17 @@ from backend.core.logger import log
 _SAFE_STAGE = re.compile(r"^[a-zA-Z0-9_.-]{1,120}$")
 _SAFE_METADATA_KEYS = {
     "provider",
+    "backend",
+    "family",
     "model_key",
+    "model_identity",
     "loaded_instance_id",
     "context_length",
+    "planner_context_length",
+    "native_schema_capability",
+    "error_class",
+    "http_status",
+    "schema",
     "requested_max_tokens",
     "temperature",
     "baseline_temperature",

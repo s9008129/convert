@@ -8,8 +8,9 @@ available. A V2 failure raises an explicit error; it never silently falls back.
 
 ```text
 raw transcript (immutable)
-  -> raw-only EvidenceSpan when corrected text cannot be verified/aligned
-  -> strict JSON / Pydantic FactLedger
+  -> raw EvidenceSpan + corrected comprehension view only when safely aligned
+  -> per-instance schema probe before source-bearing generation
+  -> native strict-schema output, or explicit-unsupported-only JSON/Pydantic fallback
   -> deterministic dedupe + explicit conflicts
   -> ordered MeetingTemplate header/section/subfield plan
   -> one allow-listed render per planned slot
@@ -19,7 +20,9 @@ raw transcript (immutable)
 ```
 
 `corrected_text` is an advisory comprehension view. It cannot replace
-`raw_text` or the source hash. Every asserted claim requires one or more
+`raw_text` or the source hash. Current automatic alignment is whitespace-only;
+lexical corrections without an explicit verified span map remain raw-only.
+Every asserted claim requires one or more
 evidence references. Unknown and ambiguous values remain explicit values.
 
 The production `MeetingTemplate.record_header_fields` sequence precedes its
@@ -51,9 +54,28 @@ unresolved. This does not enable broader numeral, date, or unit conversion.
 
 The quality policy is model-independent. Runtime profiles describe the active
 provider/model instance and unsupported controls; they do not redefine fidelity
-or acceptance. Native structured-output capability may be used by a future
-provider adapter, while strict JSON plus Pydantic validation is the compatibility
-path. Exactly one schema-only repair is allowed.
+or acceptance. Before sending any source-bearing V2 request, the adapter probes
+the active backend/model instance with a source-free request using the exact
+fact-payload JSON Schema. A normal, schema-valid completion is `SUPPORTED`;
+only a narrowly recognized explicit unsupported-capability response is
+`UNSUPPORTED`, which permits strict JSON plus Pydantic validation. Generic
+request/schema/provider errors, truncation and invalid probe output remain
+`UNKNOWN`; V2 stops before sending source when capability is unknown. Exactly
+one schema-only repair is allowed only after a typed output validation failure.
+The probe result is scoped to the current invocation and loaded instance.
+
+LM Studio sends the schema through Chat Completions `response_format`; local
+Ollama sends the JSON Schema itself in `/api/chat`'s `format` field for both
+the probe and structured V2 generation. Ollama Cloud is outside this contract.
+For Ollama, only a narrow HTTP 400 response that names the effective model and
+explicitly states it does not support JSON Schema structured output permits
+strict-JSON fallback. Generic 400/request/schema errors stay `UNKNOWN` and stop
+before source is sent.
+
+An unrecognized model family remains `UNKNOWN`, never Gemma by default. The
+loaded instance's reported context is distinct from a conservative planner
+budget; application defaults and advertised model maxima are not recorded as
+loaded context.
 
 Qwen's production profile is `temperature=0.7`, `top_p=0.8`, `top_k=20`, with
 thinking off. Approved Qwen extraction comparisons may vary extraction
@@ -68,6 +90,11 @@ loaded instance's reported context length remains the planning authority, not a
 per-request override. Controls absent from this adapter (including native
 thinking control) remain explicitly unsupported; no profile samples are
 counted without both a loaded compatible runtime and evaluator output.
+When a deterministic section validator identifies a repairable issue, V2 may
+request one patch for that section using only its allowed claims; it revalidates
+the candidate and restores the deterministic baseline bytes if repair fails or
+regresses a protected check. A valid candidate with no issue
+does not trigger a patch.
 
 Diagnostics are privacy-safe: tracked manifests contain IDs, hashes, counts,
 safe profile metadata, statuses and verdicts only. Raw spans/prompts/model

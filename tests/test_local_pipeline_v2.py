@@ -4,6 +4,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from backend.core.config import settings
@@ -26,6 +27,26 @@ from backend.services.local_pipeline_v2 import (
 )
 from backend.core.templates import get_template
 from backend.services.local_pipeline_diagnostics import LocalPipelineDiagnosticRecorder
+from backend.services import local_pipeline_v2 as local_v2
+
+
+@pytest.fixture(autouse=True)
+def _fake_v2_runtime_has_explicit_json_fallback(monkeypatch, request):
+    """Keep unit tests source-free; live capability probing has its own contracts."""
+    if request.node.originalname in {
+        "test_native_schema_probe_uses_exact_fact_schema_and_source_free_active_selection",
+        "test_native_schema_probe_only_explicit_unsupported_allows_fallback",
+        "test_ollama_native_schema_probe_uses_source_free_native_format_and_effective_model",
+        "test_ollama_unknown_schema_probe_stops_before_user_source_and_redacts_diagnostics",
+    }:
+        return
+    async def unsupported_for_fake_runtime(self, _engine, _selection, _profile=None):
+        return "UNSUPPORTED"
+
+    monkeypatch.setattr(
+        SummarizationService, "_probe_native_schema_capability",
+        unsupported_for_fake_runtime, raising=False,
+    )
 
 
 def _claim(cid="c1", *, object="完成", refs=("span-1",), **kwargs):
@@ -709,7 +730,14 @@ async def test_post_finalizer_bytes_fail_closed_on_required_loss_or_unsupported_
         })
 
     def finalizer(marked_text, template=None):
-        return marked_text.replace("預算導致延後", "已移除") if mutation == "drop_required" else marked_text
+        if mutation == "drop_required":
+            return marked_text.replace("預算導致延後", "已移除")
+        finalizer_additions = {
+            "add_unsupported_number": "；另增列99萬元",
+            "add_unsupported_entity": "；新增星河能源股份有限公司",
+            "add_unsupported_attribution": "；主席表示另增列措施",
+        }
+        return marked_text + finalizer_additions.get(mutation, "")
 
     monkeypatch.setattr(service, "_generate_with_local_engine", generation)
     monkeypatch.setattr(service, "_finalize_record_text", finalizer)
@@ -908,8 +936,8 @@ async def test_schema_repair_records_its_actual_request_temperature(monkeypatch)
     )
     assert extraction_calls == 2
     repair = next(event for event in recorder.events if event["stage_id"] == "v2.extraction.chunk.1.repair")
-    assert repair["temperature"] == 1.0
-    assert temperatures and set(temperatures) == {1.0}
+    assert repair["temperature"] == 0.2
+    assert temperatures and set(temperatures) == {0.2}
 
 
 @pytest.mark.parametrize("snapshots_enabled", (False, True))
@@ -1008,15 +1036,345 @@ async def test_live_v2_uses_immutable_raw_source_when_corrected_view_is_unaligne
     assert corrected not in captured["extraction"][0]
     source_event = next(event for event in recorder.events if event["stage_id"] == "v2.source")
     assert source_event["raw_source_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
-    assert source_event["corrected_alignment"] == "unavailable_not_mapped"
+    assert source_event["corrected_alignment"] == "not_aligned"
     profile_event = next(event for event in recorder.events if event["stage_id"] == "v2.runtime.profile")
-    assert profile_event["baseline_temperature"] == 1.0
+    assert profile_event["family"] == "UNKNOWN"
+    assert "baseline_temperature" not in profile_event
     assert "temperature" not in profile_event
     extraction_events = [event for event in recorder.events if event["stage_id"].startswith("v2.extraction.chunk.") and event["stage_id"].endswith(".input")]
     section_events = [event for event in recorder.events if event["stage_id"].startswith("v2.section.") and event["stage_id"].endswith(".input")]
-    assert extraction_events and all(event["temperature"] == 1.0 for event in extraction_events)
-    assert section_events and all(event["temperature"] == 1.0 for event in section_events)
-    assert captured_temperatures and {value for value, _ in captured_temperatures} == {1.0}
+    assert extraction_events and all(event["temperature"] == 0.2 for event in extraction_events)
+    assert section_events and all(event["temperature"] == 0.2 for event in section_events)
+    assert captured_temperatures and {value for value, _ in captured_temperatures} == {0.2}
+
+
+@pytest.mark.asyncio
+async def test_unknown_lmstudio_identity_and_missing_loaded_context_stay_unknown(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(service, "_effective_context_tokens", lambda *_args, **_kwargs: 8192)
+    service._active_lmstudio_selection = SimpleNamespace(
+        provider="lmstudio", model_identifier="unrecognized-local-model",
+        loaded_instance_id=None, context_length=None,
+    )
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "safe synthetic section", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    recorder = LocalPipelineDiagnosticRecorder(run_id="unknown-runtime-identity")
+    await service._summarize_with_local_pipeline_v2(
+        "safe synthetic source", "system", template=get_template("general"),
+        diagnostic_recorder=recorder,
+    )
+
+    profile = next(event for event in recorder.events if event["stage_id"] == "v2.runtime.profile")
+    assert profile["family"] == "UNKNOWN"
+    assert profile.get("context_length") is None
+    assert profile["planner_context_length"] == 8192
+
+
+def test_lmstudio_context_parser_does_not_substitute_advertised_model_maximum():
+    instances = SummarizationService._parse_lmstudio_loaded_instances({
+        "models": [{
+            "type": "llm", "key": "qwen-model", "max_context_length": 65536,
+            "loaded_instances": [{"id": "active-instance", "config": {}}],
+        }],
+    })
+    assert len(instances) == 1
+    assert instances[0].context_length is None
+
+
+@pytest.mark.asyncio
+async def test_v2_consumes_only_safely_aligned_corrected_view_while_grounding_raw(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    captured_extraction = []
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            captured_extraction.append(message)
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "安全的測試段落", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    raw = "預算導致延後。"
+    corrected = "預算 導致 延後。"
+    with pytest.raises(LocalPipelineV2Error, match="final assembly"):
+        await service._summarize_with_local_pipeline_v2(
+            corrected, "system", template=get_template("general"), raw_source_transcript=raw,
+        )
+
+    assert captured_extraction
+    message = captured_extraction[0]
+    assert "CORRECTED COMPREHENSION VIEW" in message
+    assert corrected in message
+    assert "RAW EVIDENCE SOURCE" in message
+    assert raw in message
+
+
+@pytest.mark.parametrize(("candidate_mode", "expected_patch_calls"), (("missing", 1), ("valid", 0)))
+@pytest.mark.asyncio
+async def test_v2_requests_at_most_one_targeted_patch_only_for_section_validation_issue(
+    monkeypatch, candidate_mode, expected_patch_calls,
+):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="decision", title="決議", required_claim_ids=("c1",)),
+    ))
+    patch_messages = []
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [{
+                "claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                "relation_type": "fact", "evidence_refs": ["span-1"], "evidence_quote": "預算導致延後",
+            }]})
+        if "TARGETED SECTION PATCH" in message:
+            patch_messages.append(message)
+            return json.dumps({"text": "預算導致延後〔span-1〕", "claim_ids": ["c1"], "relation_metadata": {}})
+        if candidate_mode == "missing":
+            return json.dumps({"text": "尚未確認", "claim_ids": [], "relation_metadata": {}})
+        return json.dumps({"text": "預算導致延後〔span-1〕", "claim_ids": ["c1"], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2("預算導致延後", "system")
+    assert "預算導致延後" in result
+    assert len(patch_messages) == expected_patch_calls
+    if expected_patch_calls:
+        assert len(patch_messages) == 1
+        assert "decision" in patch_messages[0]
+
+
+def test_native_schema_probe_classification_requires_valid_completion_or_explicit_unsupported():
+    classify = getattr(local_v2, "classify_native_schema_probe", lambda **_kwargs: "UNKNOWN")
+    common = {"backend": "lmstudio", "model_identity": "active-model-instance"}
+    assert classify(**common, completed_normally=True, schema_valid=True,
+                    finish_reason="stop") == "SUPPORTED"
+    assert classify(**common, status_code=400,
+                    error_message="response_format json_schema is not supported for this model") == "UNSUPPORTED"
+    assert classify(**common, status_code=400,
+                    error_message="invalid request schema: missing property") == "UNKNOWN"
+    assert classify(**common, status_code=503,
+                    error_message="server error") == "UNKNOWN"
+    assert classify(**common, completed_normally=True, schema_valid=False,
+                    finish_reason="length") == "UNKNOWN"
+    assert classify(backend="ollama", model_identity="active-model-instance",
+                    completed_normally=True, schema_valid=True,
+                    finish_reason="stop") == "SUPPORTED"
+
+
+def test_ollama_native_schema_probe_classification_is_narrow_and_model_specific():
+    classify = local_v2.classify_native_schema_probe
+    assert classify(backend="ollama", model_identity="qwen3.8:27b",
+                    completed_normally=True, schema_valid=True,
+                    finish_reason="stop") == "SUPPORTED"
+    assert classify(backend="ollama", model_identity="qwen3.8:27b", status_code=400,
+                    error_message="model qwen3.8:27b does not support JSON Schema structured output") == "UNSUPPORTED"
+    assert classify(backend="ollama", model_identity="qwen3.8:27b", status_code=400,
+                    error_message="invalid request schema: missing property") == "UNKNOWN"
+    assert classify(backend="ollama", model_identity="qwen3.8:27b", status_code=400,
+                    error_message="structured output is not supported by this model") == "UNKNOWN"
+    assert classify(backend="ollama", model_identity="qwen3.8:27b", status_code=400,
+                    error_message="model gemma4:31b does not support JSON Schema structured output") == "UNKNOWN"
+    assert classify(backend="ollama", model_identity="qwen3.8:27b", status_code=503,
+                    error_message="model qwen3.8:27b does not support JSON Schema structured output") == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_schema_probe_uses_source_free_native_format_and_effective_model(monkeypatch):
+    service = SummarizationService()
+    captured = {}
+
+    async def get_client():
+        return object()
+
+    async def post(_client, payload, send_think_field):
+        captured.update(payload=payload, send_think_field=send_think_field)
+        return '{"claims":[]}', {"done_reason": "stop"}, False
+
+    monkeypatch.setattr(service, "_get_ollama_client", get_client)
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "qwen3.8:27b")
+    monkeypatch.setattr(service, "_post_ollama_chat", post)
+
+    result = await service._probe_native_schema_capability("ollama", None)
+
+    assert result.capability == "SUPPORTED"
+    assert result.error_class is None
+    payload = captured["payload"]
+    assert payload["model"] == "qwen3.8:27b"
+    assert payload["format"] == service._v2_fact_response_format(fact_payload=True)["json_schema"]["schema"]
+    assert payload["messages"][-1]["content"] == 'Return {"claims":[]}.'
+    assert "PRIVATE_SOURCE_SENTINEL" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(("failure_kind", "expected_error_class", "expected_status"), (
+    ("http_400", "http_error", 400),
+    ("transport", "transport_or_stream_error", None),
+))
+@pytest.mark.asyncio
+async def test_ollama_unknown_schema_probe_stops_before_user_source_and_redacts_diagnostics(
+    monkeypatch, failure_kind, expected_error_class, expected_status,
+):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("ollama"))
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "qwen3.8:27b")
+
+    async def failed_post(*_args, **_kwargs):
+        if failure_kind == "http_400":
+            class ProbeError(Exception):
+                response = SimpleNamespace(status_code=400, text="invalid request schema: missing property")
+            raise ProbeError()
+        raise httpx.ConnectError("PRIVATE_EXCEPTION_MESSAGE")
+
+    async def get_client():
+        return object()
+
+    monkeypatch.setattr(service, "_get_ollama_client", get_client)
+    monkeypatch.setattr(service, "_post_ollama_chat", failed_post)
+    source_calls = []
+
+    async def generation(*_args, **_kwargs):
+        source_calls.append(True)
+        return json.dumps({"claims": []})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    recorder = LocalPipelineDiagnosticRecorder(run_id="ollama-schema-probe")
+    with pytest.raises(LocalPipelineV2Error, match="capability"):
+        await service._summarize_with_local_pipeline_v2(
+            "PRIVATE_SOURCE_SENTINEL", "system", diagnostic_recorder=recorder,
+        )
+
+    assert source_calls == []
+    manifest = json.dumps(recorder.redacted_manifest(), ensure_ascii=False)
+    assert "PRIVATE_SOURCE_SENTINEL" not in manifest
+    capability_events = [event for event in recorder.events
+                         if event["stage_id"] == "v2.native-schema-capability"]
+    assert capability_events[0]["status"] == "UNKNOWN"
+    assert capability_events[0]["backend"] == "ollama"
+    assert capability_events[0]["model_identity"] == "qwen3.8:27b"
+    assert capability_events[0]["error_class"] == expected_error_class
+    assert capability_events[0].get("http_status") == expected_status
+    assert "PRIVATE_EXCEPTION_MESSAGE" not in manifest
+    assert not any("repair" in event["stage_id"] for event in recorder.events)
+
+
+@pytest.mark.asyncio
+async def test_ollama_explicit_unsupported_uses_strict_json_generation_without_native_format(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("ollama"))
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "qwen3.8:27b")
+
+    class UnsupportedSchemaError(Exception):
+        response = SimpleNamespace(
+            status_code=400,
+            text="model qwen3.8:27b does not support JSON Schema structured output",
+        )
+
+    async def get_client():
+        return object()
+
+    async def unsupported_probe(*_args, **_kwargs):
+        raise UnsupportedSchemaError()
+
+    monkeypatch.setattr(service, "_get_ollama_client", get_client)
+    monkeypatch.setattr(service, "_post_ollama_chat", unsupported_probe)
+    generation_formats = []
+    recorder = LocalPipelineDiagnosticRecorder(run_id="ollama-explicit-unsupported")
+
+    async def generation(_engine, _system, message, **kwargs):
+        generation_formats.append(kwargs.get("response_format"))
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "safe synthetic section", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    await service._summarize_with_local_pipeline_v2(
+        "safe synthetic source", "system", template=get_template("general"),
+        diagnostic_recorder=recorder,
+    )
+
+    assert generation_formats
+    assert all(response_format is None for response_format in generation_formats)
+    capability_event = next(event for event in recorder.events
+                            if event["stage_id"] == "v2.native-schema-capability")
+    assert capability_event["status"] == "UNSUPPORTED"
+    assert capability_event["backend"] == "ollama"
+    assert capability_event["model_identity"] == "qwen3.8:27b"
+
+
+@pytest.mark.asyncio
+async def test_v2_unknown_native_schema_capability_stops_before_user_source_generation(monkeypatch):
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    calls = []
+
+    async def unknown_probe(_engine, _selection, _profile=None):
+        return "UNKNOWN"
+
+    async def generation(*_args, **_kwargs):
+        calls.append("user-generation")
+        return json.dumps({"claims": []})
+
+    monkeypatch.setattr(service, "_probe_native_schema_capability", unknown_probe, raising=False)
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    with pytest.raises(LocalPipelineV2Error, match="capability"):
+        await service._summarize_with_local_pipeline_v2("PRIVATE_SOURCE_SENTINEL", "system")
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_native_schema_probe_uses_exact_fact_schema_and_source_free_active_selection(monkeypatch):
+    service = SummarizationService()
+    captured = {}
+    monkeypatch.setattr(service, "_get_lmstudio_client", lambda: object())
+    async def chat(client, selection, messages, temperature, max_tokens, **kwargs):
+        captured.update(client=client, selection=selection, messages=messages,
+                        temperature=temperature, max_tokens=max_tokens, **kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims":[]}', reasoning_content=None),
+                                     finish_reason="stop")],
+            usage=None,
+        )
+    monkeypatch.setattr(service, "_lmstudio_chat_request", chat)
+    selection = SimpleNamespace(model_identifier="active-key", loaded_instance_id="active-instance")
+    result = await service._probe_native_schema_capability("lmstudio", selection)
+    assert result.capability == "SUPPORTED"
+    assert captured["selection"] is selection
+    assert captured["response_format"]["json_schema"]["name"] == "v2_fact_payload"
+    assert captured["messages"][-1]["content"] == 'Return {"claims":[]}.'
+
+
+@pytest.mark.parametrize(("status", "message", "expected"), (
+    (400, "response_format json_schema is not supported for this model", "UNSUPPORTED"),
+    (400, "invalid request schema: missing property", "UNKNOWN"),
+    (503, "server error", "UNKNOWN"),
+))
+@pytest.mark.asyncio
+async def test_native_schema_probe_only_explicit_unsupported_allows_fallback(
+    monkeypatch, status, message, expected,
+):
+    service = SummarizationService()
+    monkeypatch.setattr(service, "_get_lmstudio_client", lambda: object())
+    class ProbeError(Exception):
+        response = SimpleNamespace(status_code=status, text=message)
+    async def failed_chat(*_args, **_kwargs):
+        raise ProbeError()
+    monkeypatch.setattr(service, "_lmstudio_chat_request", failed_chat)
+    selection = SimpleNamespace(model_identifier="active-key", loaded_instance_id="active-instance")
+    result = await service._probe_native_schema_capability("lmstudio", selection)
+    assert result.capability == expected
 
 
 @pytest.mark.asyncio
@@ -1141,6 +1499,296 @@ async def test_lmstudio_400_downgrades_only_rejected_control_and_reports_it(monk
     assert seen[0]["extra_body"] == {"reasoning_effort": "none", "top_k": 20}
     assert seen[1]["extra_body"] == {"reasoning_effort": "none"}
     assert rejected == ["top_k"]
+
+
+def test_b_negated_claim_rejects_affirmative_rendering():
+    source = "目前不需要執行方案甲"
+    span = EvidenceSpan.from_source("span-negation", source, start_offset=0, end_offset=len(source))
+    claim = FactClaim(
+        claim_id="negative-action", subject="目前", predicate="需要",
+        object="執行方案甲", polarity="negative", evidence_refs=(span.span_id,),
+        evidence_quote=source, resolved_start_offset=0, resolved_end_offset=len(source),
+    )
+    plan = SectionPlan(section_id="decision", title="決議", required_claim_ids=(claim.claim_id,))
+    negative_meta = RelationMetadata(
+        subject=claim.subject, predicate=claim.predicate, object=claim.object,
+        polarity="negative", relation_type=claim.relation_type,
+    )
+
+    affirmative = fidelity_firewall(
+        plan, "目前需要執行方案甲〔span-negation〕", {claim.claim_id: claim},
+        {span.span_id: span}, relation_metadata={claim.claim_id: negative_meta},
+    )
+    faithful = fidelity_firewall(
+        plan, "目前需要執行方案甲（否定）〔span-negation〕", {claim.claim_id: claim},
+        {span.span_id: span}, relation_metadata={claim.claim_id: negative_meta},
+    )
+
+    assert affirmative.polarity_issues == (claim.claim_id,)
+    assert not affirmative.accepted
+    assert faithful.accepted
+
+
+@pytest.mark.parametrize(("wrong_render", "condition_is_missing"), (
+    ("A與B可同步進行〔span-condition〕", True),
+    ("B先完成才能做A〔span-condition〕", False),
+))
+def test_c_conditional_dependency_and_direction_flip_are_rejected(wrong_render, condition_is_missing):
+    source = "A先完成才能做B"
+    span = EvidenceSpan.from_source("span-condition", source, start_offset=0, end_offset=len(source))
+    claim = FactClaim(
+        claim_id="conditional-dependency", subject="A先完成", predicate="才能做",
+        object="B", relation_type=local_v2.RelationType.CONDITIONAL,
+        condition="先完成", evidence_refs=(span.span_id,), evidence_quote=source,
+        resolved_start_offset=0, resolved_end_offset=len(source),
+    )
+    plan = SectionPlan(section_id="actions", title="待辦", required_claim_ids=(claim.claim_id,))
+    metadata = RelationMetadata(
+        subject=claim.subject, predicate=claim.predicate, object=claim.object,
+        condition=claim.condition, relation_type=claim.relation_type,
+    )
+
+    result = fidelity_firewall(
+        plan, wrong_render, {claim.claim_id: claim}, {span.span_id: span},
+        relation_metadata={claim.claim_id: metadata},
+    )
+
+    assert claim.claim_id in result.relation_issues
+    assert (claim.claim_id in result.condition_issues) is condition_is_missing
+    assert not result.accepted
+
+
+def test_d_linked_numeric_relation_preserves_people_unit_price_and_total():
+    source = "17人乘每人800元等於13,600元"
+    span = EvidenceSpan.from_source("span-linked-numbers", source, start_offset=0, end_offset=len(source))
+    claims = (
+        FactClaim(
+            claim_id="headcount-times-unit-price", subject="17人", predicate="乘",
+            object="每人800元", number=17, unit="人", evidence_refs=(span.span_id,),
+            evidence_quote=source, resolved_start_offset=0, resolved_end_offset=len(source),
+        ),
+        FactClaim(
+            claim_id="unit-price", subject="每人", predicate="金額", object="800元",
+            number=800, unit="元", evidence_refs=(span.span_id,), evidence_quote=source,
+            resolved_start_offset=0, resolved_end_offset=len(source),
+        ),
+        FactClaim(
+            claim_id="linked-total", subject="17人乘每人800元", predicate="等於",
+            object="13,600元", number=13600, unit="元", evidence_refs=(span.span_id,),
+            evidence_quote=source, resolved_start_offset=0, resolved_end_offset=len(source),
+        ),
+    )
+    plan = SectionPlan(
+        section_id="budget", title="經費", required_claim_ids=tuple(c.claim_id for c in claims),
+    )
+    by_id = {claim.claim_id: claim for claim in claims}
+    rendered = render_section(plan, by_id)
+    result = fidelity_firewall(plan, rendered, by_id, {span.span_id: span})
+
+    assert "17人乘每人800元等於13,600元" in rendered
+    assert result.accepted
+    assert not result.numeric_issues
+
+
+def test_e_corrected_only_entity_cannot_become_a_raw_grounded_claim():
+    raw = "待確認公司提出建議"
+    corrected = "星河能源有限公司提出建議"
+    span = EvidenceSpan.from_source(
+        "span-corrected-entity", raw, corrected_text=corrected,
+        start_offset=0, end_offset=len(raw),
+    )
+    claim = FactClaim(
+        claim_id="corrected-only-entity", subject="星河能源有限公司",
+        predicate="提出", object="建議", evidence_refs=(span.span_id,),
+        evidence_quote=corrected,
+    )
+
+    resolved = resolve_claim_occurrences(
+        (claim,), {span.span_id: span}, source_sha256=span.source_sha256,
+    )
+    validated = validate_asserted_claims_against_source(resolved, {span.span_id: span})
+    plan = SectionPlan(section_id="discussion", title="討論", required_claim_ids=(claim.claim_id,))
+    rendered = render_section(plan, {claim.claim_id: validated[0]})
+
+    assert validated[0].status == ClaimStatus.AMBIGUOUS
+    assert "星河能源有限公司" not in raw
+    assert "星河能源有限公司" not in rendered
+
+
+def test_f_unverified_speaker_mapping_cannot_become_official_attribution():
+    raw = "發言者3報告已完成"
+    span = EvidenceSpan.from_source(
+        "span-speaker", raw, start_offset=0, end_offset=len(raw),
+    )
+    claim = FactClaim(
+        claim_id="unverified-speaker", subject="發言者3", predicate="報告",
+        object="已完成", attribution="科長", evidence_refs=(span.span_id,),
+        evidence_quote=raw,
+    )
+    resolved = resolve_claim_occurrences(
+        (claim,), {span.span_id: span}, source_sha256=span.source_sha256,
+    )
+    validated = validate_asserted_claims_against_source(resolved, {span.span_id: span})
+    plan = SectionPlan(section_id="report", title="報告", required_claim_ids=(claim.claim_id,))
+    rendered = render_section(plan, {claim.claim_id: validated[0]})
+
+    assert validated[0].status == ClaimStatus.AMBIGUOUS
+    assert "科長" not in raw
+    assert "科長" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_i_targeted_patch_with_unsupported_number_rolls_back_to_baseline(monkeypatch):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="decision", title="決議", required_claim_ids=("c1",)),
+    ))
+    patch_calls = []
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [{
+                "claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                "evidence_refs": ["span-1"], "evidence_quote": "預算導致延後",
+            }]})
+        if "TARGETED SECTION PATCH" in message:
+            patch_calls.append(message)
+            return json.dumps({
+                "text": "預算導致延後〔span-1〕；另增列1000元",
+                "claim_ids": ["c1"], "relation_metadata": {},
+            })
+        return json.dumps({
+            "text": "預算導致延後〔unresolved-span〕",
+            "claim_ids": ["c1"], "relation_metadata": {},
+        })
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2("預算導致延後。", "system")
+
+    assert len(patch_calls) == 1
+    assert "預算導致延後" in result
+    assert "unresolved-span" not in result
+    assert "1000元" not in result
+
+
+def test_unique_exact_quote_resolves_when_model_offsets_are_wrong_but_duplicate_stays_ambiguous():
+    unique = EvidenceSpan.from_source(
+        "span-quote-unique", "前綴預算導致延後後綴", start_offset=0,
+        end_offset=len("前綴預算導致延後後綴"),
+    )
+    unique_claim = FactClaim(
+        claim_id="unique-quote", subject="預算", predicate="導致", object="延後",
+        relation_type=local_v2.RelationType.CAUSAL, evidence_refs=(unique.span_id,),
+        evidence_quote="預算導致延後", evidence_start_offset=0, evidence_end_offset=6,
+    )
+    resolved = resolve_claim_occurrences(
+        (unique_claim,), {unique.span_id: unique}, source_sha256=unique.source_sha256,
+    )[0]
+    assert resolved.status == ClaimStatus.ASSERTED
+    assert (resolved.resolved_start_offset, resolved.resolved_end_offset) == (2, 8)
+
+    duplicate = EvidenceSpan.from_source(
+        "span-quote-duplicate", "預算導致延後；預算導致延後", start_offset=0, end_offset=13,
+    )
+    duplicate_claim = unique_claim.model_copy(update={
+        "claim_id": "duplicate-quote", "evidence_refs": (duplicate.span_id,),
+        "evidence_start_offset": 1, "evidence_end_offset": 7,
+    })
+    ambiguous = resolve_claim_occurrences(
+        (duplicate_claim,), {duplicate.span_id: duplicate}, source_sha256=duplicate.source_sha256,
+    )[0]
+    assert ambiguous.status == ClaimStatus.AMBIGUOUS
+    assert ambiguous.resolved_start_offset is None
+
+
+def test_unknown_runtime_family_has_no_default_candidate_profile():
+    assert candidate_runtime_profiles("Unclassified", "opaque-model-key", "ollama") == ()
+
+
+@pytest.mark.asyncio
+async def test_optional_conflict_stays_local_and_unrelated_section_continues(monkeypatch):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    source = "預算導致延後或提前。設備採購取消。"
+    span = EvidenceSpan.from_source("span-1", source, start_offset=0, end_offset=len(source))
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(service, "_finalize_record_text", lambda text, **_kwargs: text)
+    monkeypatch.setattr(v2, "build_evidence_spans", lambda *_args, **_kwargs: [span])
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="conflicted", title="衝突候選", optional_claim_ids=("c1", "c2"), template_order=0),
+        SectionPlan(section_id="unrelated", title="其他事項", required_claim_ids=("c3",), template_order=1),
+    ))
+    section_calls = []
+
+    async def generation(_engine, _system, message, **_kwargs):
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [
+                {"claim_id": "c1", "subject": "預算", "predicate": "導致", "object": "延後",
+                 "relation_type": "causal", "evidence_refs": ["span-1"],
+                 "evidence_quote": "預算導致延後或提前"},
+                {"claim_id": "c2", "subject": "預算", "predicate": "導致", "object": "提前",
+                 "relation_type": "causal", "evidence_refs": ["span-1"],
+                 "evidence_quote": "預算導致延後或提前"},
+                {"claim_id": "c3", "subject": "設備", "predicate": "採購", "object": "取消",
+                 "evidence_refs": ["span-1"], "evidence_quote": "設備採購取消"},
+            ]})
+        section_calls.append(message)
+        if "SECTION unrelated:" in message:
+            return json.dumps({"text": "設備採購取消〔span-1〕", "claim_ids": ["c3"],
+                               "relation_metadata": {}})
+        return json.dumps({"text": "", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2(source, "system")
+
+    assert any("SECTION unrelated:" in call for call in section_calls)
+    assert "設備採購取消" in result
+    assert "預算導致延後" not in result
+    assert "預算導致提前" not in result
+
+
+@pytest.mark.parametrize(("model_key", "expected_family", "expected_temperature"), (
+    ("qwen3.8:27b", "Qwen", 0.7),
+    ("gemma4:31b", "Gemma", 1.0),
+))
+@pytest.mark.asyncio
+async def test_ollama_v2_uses_effective_model_family_for_baseline_temperature(
+    monkeypatch, model_key, expected_family, expected_temperature,
+):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("ollama"))
+    monkeypatch.setattr(service, "_get_effective_model", lambda: model_key)
+    monkeypatch.setattr(service, "_finalize_record_text", lambda text, **_kwargs: text)
+    monkeypatch.setattr(v2, "template_section_plans", lambda *_args, **_kwargs: (
+        SectionPlan(section_id="one", title="一", template_order=0),
+    ))
+    captured = []
+
+    async def generation(_engine, _system, message, *, temperature, runtime_profile=None, **_kwargs):
+        captured.append((temperature, runtime_profile))
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": []})
+        return json.dumps({"text": "合成測試完成", "claim_ids": [], "relation_metadata": {}})
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2("合成來源", "system")
+
+    assert "合成測試完成" in result
+    assert captured
+    temperature, profile = captured[0]
+    assert temperature == expected_temperature
+    assert profile.family == expected_family
+    assert profile.model_key == model_key
+    assert "temperature" in profile.supported_controls
 
 
 async def _async_value(value):

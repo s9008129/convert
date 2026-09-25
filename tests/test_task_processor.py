@@ -394,6 +394,8 @@ async def test_live_taskprocessor_v2_delivery_rejects_selected_causal_inversion(
     monkeypatch.setattr(processor, "_obtain_transcript", AsyncMock(return_value=source))
     monkeypatch.setattr(processor, "_apply_semantic_correction", AsyncMock(return_value=(source, None)))
     monkeypatch.setattr(task_processor_module.summarization_service, "warmup_local_model", AsyncMock())
+    monkeypatch.setattr(task_processor_module.summarization_service, "_probe_native_schema_capability",
+                        AsyncMock(return_value="UNSUPPORTED"))
     async def select_engine():
         return "fake"
 

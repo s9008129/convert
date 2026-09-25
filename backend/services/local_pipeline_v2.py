@@ -352,6 +352,15 @@ class FactPayloadValidationError(ValueError):
     """Model output was generated but failed strict JSON/schema validation."""
 
 
+@dataclass(frozen=True)
+class NativeSchemaProbeResult:
+    """Normalized capability plus a safe operational classification, never raw error text."""
+
+    capability: str
+    error_class: str | None = None
+    http_status: int | None = None
+
+
 def parse_fact_payload(payload: str | Mapping[str, Any], *, source_sha256: str) -> FactLedger:
     """Strict JSON + Pydantic fallback used when native structured output is absent."""
     try:
@@ -372,6 +381,7 @@ def parse_fact_payload(payload: str | Mapping[str, Any], *, source_sha256: str) 
 def build_evidence_spans(
     raw_transcript: str, chunks: Sequence[str], *, source_sha256: str | None = None,
     chunk_offsets: Sequence[tuple[int, int]] | None = None,
+    corrected_chunks: Sequence[str | None] | None = None,
 ) -> tuple[EvidenceSpan, ...]:
     """Create stable spans from existing chunks without replacing raw text."""
     digest = source_sha256 or _hash(raw_transcript)
@@ -389,10 +399,86 @@ def build_evidence_spans(
             if start < 0:
                 raise ValueError("chunk cannot be aligned to exact raw-source text")
             end = start + len(chunk)
+        corrected_text = corrected_chunks[index - 1] if corrected_chunks is not None else None
         spans.append(EvidenceSpan(span_id=f"span-{index}", raw_text=raw_transcript[start:end],
+                                  corrected_text=corrected_text,
                                   start_offset=start, end_offset=end, source_sha256=digest))
         cursor = start + 1
     return tuple(spans)
+
+
+def align_whitespace_only_corrected_chunks(
+    raw_transcript: str,
+    corrected_transcript: str | None,
+    chunk_offsets: Sequence[tuple[int, int]],
+) -> tuple[str | None, ...]:
+    """Align a corrected comprehension view only when non-whitespace text is identical.
+
+    This deliberately conservative aligner permits layout normalization only;
+    lexical corrections without explicit span alignment remain raw-only.
+    """
+    if not corrected_transcript or corrected_transcript == raw_transcript:
+        return tuple(None for _ in chunk_offsets)
+    raw_positions = [index for index, char in enumerate(raw_transcript) if not char.isspace()]
+    corrected_positions = [index for index, char in enumerate(corrected_transcript) if not char.isspace()]
+    if (len(raw_positions) != len(corrected_positions)
+            or any(raw_transcript[raw_at] != corrected_transcript[corrected_at]
+                   for raw_at, corrected_at in zip(raw_positions, corrected_positions))):
+        return tuple(None for _ in chunk_offsets)
+
+    aligned: list[str | None] = []
+    for start, end in chunk_offsets:
+        indices = [index for index, raw_at in enumerate(raw_positions) if start <= raw_at < end]
+        if not indices:
+            aligned.append(None)
+            continue
+        corrected_start = corrected_positions[indices[0]]
+        corrected_end = corrected_positions[indices[-1]] + 1
+        corrected_chunk = corrected_transcript[corrected_start:corrected_end]
+        raw_chunk = raw_transcript[start:end]
+        if ("".join(corrected_chunk.split()) == "".join(raw_chunk.split())
+                and corrected_chunk):
+            aligned.append(corrected_chunk)
+        else:
+            aligned.append(None)
+    return tuple(aligned)
+
+
+def classify_native_schema_probe(
+    *,
+    backend: str,
+    model_identity: str,
+    completed_normally: bool = False,
+    schema_valid: bool = False,
+    finish_reason: str | None = None,
+    status_code: int | None = None,
+    error_message: str | None = None,
+) -> str:
+    """Classify capability for one backend/model probe without relabeling generic errors."""
+    backend_name = backend.strip().casefold()
+    identity = model_identity.strip()
+    if (backend_name in {"lmstudio", "ollama"} and identity
+            and completed_normally and schema_valid and finish_reason == "stop"):
+        return "SUPPORTED"
+    if not identity or status_code != 400 or not error_message:
+        return "UNKNOWN"
+    message = error_message.casefold()
+    if backend_name == "lmstudio":
+        explicit_unsupported = (
+            "response_format json_schema is not supported for this model" in message
+            or "json_schema response format is not supported for this model" in message
+            or "structured output is not supported for this model" in message
+        )
+    elif backend_name == "ollama":
+        # Ollama has no documented stable unsupported-capability code. Only accept
+        # a response that explicitly names this effective model and says it does
+        # not support JSON Schema structured output; generic 400s remain UNKNOWN.
+        explicit_unsupported = (
+            f"model {identity.casefold()} does not support json schema structured output" in message
+        )
+    else:
+        explicit_unsupported = False
+    return "UNSUPPORTED" if explicit_unsupported else "UNKNOWN"
 
 
 def consolidate_claims(
@@ -864,7 +950,12 @@ def _number_value_supported(number: float, unit: str | None, text: str) -> bool:
     """Accept a complete numeric token and, when supplied, its exact unit."""
     number_text = str(int(number)) if float(number).is_integer() else str(number)
     numeric_chars = r"0-9０-９.,+\-−eE"
-    arabic = re.escape(number_text)
+    arabic_variants = {number_text}
+    if float(number).is_integer() and abs(int(number)) >= 1000:
+        arabic_variants.add(f"{int(number):,}")
+    arabic = "(?:" + "|".join(
+        re.escape(value) for value in sorted(arabic_variants, key=len, reverse=True)
+    ) + ")"
     if unit:
         unit_pattern = re.escape(unit)
         arabic_with_unit = (
@@ -996,7 +1087,9 @@ def resolve_claim_occurrences(
                 if (end is not None and span.start_offset is not None
                         and span.raw_text[start:end] == claim.evidence_quote):
                     occurrences.add((span.start_offset + start, span.start_offset + end))
-                continue
+                    continue
+                # A malformed model locator cannot disable the independent
+                # unique-exact-quote path.
             cursor = 0
             while True:
                 local_start = span.raw_text.find(claim.evidence_quote, cursor)
@@ -1101,9 +1194,11 @@ def candidate_runtime_profiles(family: str, model_key: str, provider: str, *, co
         return tuple(ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
                                          context_length=context_length, thinking=False,
                                          temperature=t, top_p=0.8, top_k=20) for t in temperatures)
-    return (ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
-                                context_length=context_length, thinking=False,
-                                temperature=1.0, top_p=0.95, top_k=64),)
+    if family.casefold().startswith("gemma"):
+        return (ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
+                                    context_length=context_length, thinking=False,
+                                    temperature=1.0, top_p=0.95, top_k=64),)
+    return ()
 
 
 def summarize_profile_samples(samples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

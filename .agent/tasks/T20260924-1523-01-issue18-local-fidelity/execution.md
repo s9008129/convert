@@ -696,3 +696,154 @@ NEXT_ACTION: Fresh Stage05 attempt repeats the private source identity/hash, uni
 ```
 
 C1 is blocked at the Stage05 authority boundary pending that independent preflight; Qwen's loaded state does not prove source mapping. C9 remains unaccepted until the Qwen journey and the separately scoped Gemma run are evidenced. C10/C14 remain blocked only by missing evaluator authority. Implementation is not blocked. No commit, push, Draft PR edit, waiver, or Stage05 acceptance claim is included in this Stage04 snapshot.
+
+---
+
+## Stage 04 continuation — approved Plan Revision 17 (Ollama native schema adapter)
+
+### Identity and preserved worktree
+
+- TASK_ID: `T20260924-1523-01-issue18-local-fidelity`
+- PLAN_REVISION: 17; PLAN SHA-256: `835a2888be6b593a35dc1d59ff53b714b11371d8bd37b8cd5b373aa8d14896a5`
+- Review attempt: 17; approved the exact Plan SHA above. Review report SHA-256: `91ef4f91b56505466e2786884c2e2c276818d2dadfa1935e6985021725cdfe2f`.
+- Handoff SHA-256: `f436f7adde390c717caa6a161d9e8f420bff08a6f90516307d86a1c99946b995`.
+- Branch/HEAD: `issue-18-first-divergence-diagnostic` / `430950148cf02ece5845cc807665e0e4f35ea7e1`; `origin/issue-18-first-divergence-diagnostic` remains at HEAD. Both safety branches remain unchanged at common ancestor `c93968d7e9f5f20a2d2aa7488cf4b00f68f4abf0`.
+- R17 W0 snapshot: `baseline/w0-stage04-r17-20260924T230200Z.md`. It classifies every pre-existing dirty path as preserved R16 product/tests/docs or known task evidence; no path was unclassified. Existing R16 changes remain intact. No reset, stash, clean, checkout-overwrite, commit, push, PR edit, or model load/unload occurred.
+- The exact default C3 command again failed at import because logger initialization attempted `/app/data/logs` on the read-only `/app`. The same `DATA_DIR=tmp` workaround documented in the preserved R16 baseline was used before and after mutation; details are in `baseline/w0-stage04-r17-cloud-baseline.txt`.
+
+### Approved R17 adapter work completed
+
+- Local Ollama V2 now uses its existing `/api/chat` path with `format` set to the raw JSON Schema (`response_format.json_schema.schema`) for both the source-free exact-payload capability probe and source-bearing structured generation/render calls. LM Studio continues to use its existing `response_format` contract. Ollama Cloud is not included.
+- The source-free Ollama probe uses the effective local model identity and a synthetic `{ "claims": [] }` request. It requires `done_reason == "stop"` and parsed output equal to the exact synthetic payload for `SUPPORTED`. The probe does not send user source and omits the optional `think` request field so a generic HTTP 400 cannot enter the existing `think` compatibility retry before classification.
+- Ollama `UNSUPPORTED` is deliberately narrow: HTTP 400 response text must name the exact effective model and explicitly say it does not support JSON Schema structured output. Generic 400/request/schema errors, different model names, other/unknown wording, invalid output, truncation, timeout, cancellation, and transport/runtime failures remain `UNKNOWN`; V2 stops before user-source generation. Only `UNSUPPORTED` omits native `format` and uses the existing strict JSON plus client-side Pydantic validation path. Client validation remains active for native output too; schema repair remains limited to the existing one schema-only attempt.
+- Capability diagnostics now retain the safe backend and effective model identity fields under the allowlist. Diagnostic manifests still store metadata/status/hash/counts only; tests confirm synthetic source sentinels do not appear in diagnostics. No model/source payload was used or tracked.
+- Post-implementation independent read-only review found that UNKNOWN returned only the capability string and erased whether the probe failed as HTTP, transport, runtime, or invalid output. The approved contract was preserved with typed `NativeSchemaProbeResult(capability, error_class, http_status)`: V2 stop diagnostics and the safe top-level error retain category/status, never raw provider text. Generic HTTP 400 and transport failures remain `UNKNOWN`, do not generate source, do not enter schema repair, and do not permit fallback. No plan/handoff semantics changed.
+- Updated `doc/規格與設計/local-meeting-record-v2.md` with the per-backend wire contract and generic-error/fallback boundary.
+
+### Fail-first and verification evidence
+
+Fail-first runs were performed before implementation and failed at the intended gaps: the Ollama classification/probe/diagnostics selection produced 3 failures, and the Ollama generation dispatcher/native-wire selection produced 2 failures. After the adapter, the same focused contract selectors passed.
+
+| CHECK_ID | GOAL_CRITICALITY | EVIDENCE_ROLE | CLOSURE_GATE | CHECK_RESULT | WAIVER_STATUS | Evidence / scope |
+|---|---|---|---|---|---|---|
+| C1 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | No acceptance call. Stage05 must freshness-check this record and perform fresh source identity/occurrence/relation preflight before any C1 model call. |
+| C2 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | `DATA_DIR=tmp uv run pytest -q tests/test_local_pipeline_v2.py -k 'ollama_native_schema or ollama_unknown_schema or ollama_explicit_unsupported or native_schema_probe'` — 10 passed; service wire selector — 2 passed. Covers Ollama normal/explicit-unsupported/UNKNOWN, pre-source stop, fallback without native format, LM Studio probe contracts, payload-free diagnostics, and both native wire paths. |
+| C3 | CORE | MUST_NOT_BREAK | HARD_CLEAN | PASS | NOT_ALLOWED | Pre: safe selector — 13 passed, 41 deselected; post: same selector — 13 passed, 43 deselected (two new nonmatching test cases explain the deselected-count delta). Default environment collection error is recorded separately; the established `DATA_DIR=tmp` invocation passes. |
+| C4 | CORE | MUST_NOT_BREAK | HARD_CLEAN | PASS | NOT_ALLOWED | Targeted review of changed implementation/docs/tests: no live transcript, names, model outputs, or secrets were added; sentinels occur only in synthetic tests; diagnostics remain allowlisted metadata/hash/count/status. |
+| C5 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | `DATA_DIR=tmp uv run pytest -q tests/test_local_pipeline_v2.py tests/test_summarization_service.py tests/test_task_processor.py` — 164 passed. |
+| C6 | SUPPORTING | REPOSITORY_HEALTH | HARD_CLEAN | PASS | NOT_ALLOWED | `DATA_DIR=tmp uv run pytest tests/ -q` — 911 passed, 2 skipped. |
+| C7 | SUPPORTING | REPOSITORY_HEALTH | HARD_CLEAN | PASS | NOT_ALLOWED | `bash scripts/check_docs.sh` exited 0; the same two pre-existing README version warnings were reported. |
+| C8 | SUPPORTING | REPOSITORY_HEALTH | HARD_CLEAN | PASS | NOT_ALLOWED | `git diff --check` and `uv run python -m py_compile backend/services/local_pipeline_v2.py backend/services/summarization.py backend/services/local_pipeline_diagnostics.py tests/test_local_pipeline_v2.py tests/test_summarization_service.py` exited 0. |
+| C9 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | No Qwen/Gemma acceptance generation performed in this Stage04 continuation; no model was loaded/unloaded. |
+| C10 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | Rubric applicability adjudication remains a separate Stage05 authority decision; no blind score was generated. |
+| C11 | SUPPORTING | DIAGNOSTIC | NON_GATING | NOT_RUN | NOT_ALLOWED | No live run/cost metrics collected. |
+| C12 | SUPPORTING | DIAGNOSTIC | NON_GATING | NOT_RUN | NOT_ALLOWED | No additional privacy-approved held-out source used. |
+| C13 | CORE | MUST_NOT_BREAK | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | R17 execution/W0/docs evidence updated; PR #19 was not edited and remains a later authorized delivery step. |
+| C14 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | No evaluator-backed profile samples collected. |
+| C15 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | Synthetic post-finalizer and section-boundary contracts remain covered by the full local V2 regression file and passed in C5/C6. |
+| C16 | CORE | MUST_NOT_BREAK | HARD_CLEAN | PASS | NOT_ALLOWED | Schema validation/one-repair and provider/runtime/no-repair contracts passed in the local V2 regression suite; Ollama generic probe 400 remains UNKNOWN and pre-source. |
+| C17 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | Profile-eligibility rejection contracts passed in the full repository suite. |
+
+### Orthogonal Stage04 status and next action
+
+This continuation completes the approved implementation scope; it does not claim the overall quality outcome or independent acceptance. Required code/regression evidence is valid, but C1/C9/C10/C14 acceptance remains unrun and PR delivery remains pending.
+
+```text
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: NOT_RUN
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: PENDING_CORE_ACCEPTANCE
+NEXT_ACTION: Stage05 freshness-check this execution snapshot, then perform the required C1 source/run identity, unique occurrence, and raw-derived relation preflight; issue no C1 acceptance model call unless it passes. Continue Qwen/Gemma and evaluator work only within their scoped acceptance items.
+```
+
+Waivers remain `NOT_ALLOWED` with authority `NONE`. No live meeting data, C1 acceptance call, profile/bias experiment, blind scoring, commit, push, or Draft PR change occurred in this Stage04 continuation.
+
+---
+
+## Stage 04 continuation — root-coordinator verification snapshot
+
+Captured: 2026-09-25T00:47:40Z
+TASK_ID: `T20260924-1523-01-issue18-local-fidelity`
+PLAN_REVISION: 17; Plan SHA-256: `835a2888be6b593a35dc1d59ff53b714b11371d8bd37b8cd5b373aa8d14896a5`
+Handoff SHA-256: `f436f7adde390c717caa6a161d9e8f420bff08a6f90516307d86a1c99946b995`
+Branch/HEAD: `issue-18-first-divergence-diagnostic` / `430950148cf02ece5845cc807665e0e4f35ea7e1`
+Execution SHA-256 before this append: `9406cc344a963371f06567c2b470ffd21855d6c396f68c8053670866ab98cc41`
+
+### Newly observed verification evidence
+
+- **Repository suite:** root coordinator reports `DATA_DIR=/tmp/issue18-full uv run pytest tests/ -q` — **921 passed, 2 skipped**.
+- **R17 focused repairs:** root coordinator reports all five focused R17 repair tests **passed (5 passed)**. These cover linked numeric grouping, safe targeted-patch rollback for an unsupported number, exact-quote fallback with incorrect offsets while duplicate quotations remain ambiguous, unknown-family profile ineligibility, and conflict-locality with unrelated-section continuation.
+- **Synthetic live-runtime smoke:** production Local V2 through LM Studio completed successfully for `qwen3.8-27b-splash` and `gemma-4-31b-it-mlx`; for each, the selected causal target relation was preserved (`target relation preserved=True`). The only source was synthetic: `預算導致延後。`; the exact evidence quote included the terminal punctuation. No real meeting source was used, and this is not user-source acceptance.
+- **Harness input correction:** the first synthetic harness attempt quoted the relation without the sentence-final punctuation, so exact-quote resolution correctly could not match the full source occurrence. The harness input was corrected to include `。` and rerun; the corrected run succeeded. This first failure was a test-fixture/source-quote mismatch, not a product defect, and is not counted as a product failure.
+
+### Acceptance boundary and current orthogonal status
+
+The smoke tests establish synthetic execution only. The formal Stage05 C1 designated-source identity/hash, unique-occurrence, and raw-derived relation preflight remains incomplete/blocked; no synthetic output substitutes for it. C10 blind scoring and C14 evaluator-backed profile sampling remain blocked/not completed, and the frozen quality thresholds have not been demonstrated. Do not treat the full suite or synthetic model runs as those acceptance results.
+
+| CHECK_ID | GOAL_CRITICALITY | EVIDENCE_ROLE | CLOSURE_GATE | CHECK_RESULT | WAIVER_STATUS | Evidence / scope |
+|---|---|---|---|---|---|---|
+| C1 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Formal Stage05 source preflight remains pending; no C1 acceptance model call is authorized until fresh preflight passes. Synthetic smoke is not a substitute. |
+| C2 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | Five focused R17 repair tests passed; exact selector command was not included in the coordinator's report. |
+| C3 | CORE | MUST_NOT_BREAK | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | This continuation adds no new post-change cloud selector result; carry forward only the prior exact C3 evidence already recorded above. |
+| C6 | SUPPORTING | REPOSITORY_HEALTH | HARD_CLEAN | PASS | NOT_ALLOWED | Root coordinator reports full repository suite: `DATA_DIR=/tmp/issue18-full uv run pytest tests/ -q` — 921 passed, 2 skipped. |
+| C9 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | Synthetic selected-target smoke succeeded for both models, but no formal designated-source C1/E2E acceptance was performed. |
+| C10 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Blind cohort and quality-threshold adjudication remain incomplete/blocked; no scores or quality claims are inferred from synthetic runs. |
+| C14 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Evaluator-backed profile sampling/selection remains incomplete/blocked. |
+
+```text
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Stage05 performs the fresh designated-source C1 preflight before any acceptance call, then records C1/C9 independently; resolve evaluator authority and complete the authorized blind/profile checks for C10/C14 without substituting synthetic evidence.
+```
+
+No waiver, source-bearing acceptance call, real meeting payload, quality-threshold pass, commit, push, or Draft PR update is claimed by this snapshot.
+
+---
+
+## Stage 04 continuation — Ollama runtime-profile repair snapshot
+
+Captured: 2026-09-25T00:57:37Z
+TASK_ID: `T20260924-1523-01-issue18-local-fidelity`
+PLAN_REVISION: 17; Plan SHA-256: `835a2888be6b593a35dc1d59ff53b714b11371d8bd37b8cd5b373aa8d14896a5`
+Handoff SHA-256: `f436f7adde390c717caa6a161d9e8f420bff08a6f90516307d86a1c99946b995`
+Branch/HEAD: `issue-18-first-divergence-diagnostic` / `430950148cf02ece5845cc807665e0e4f35ea7e1`
+Execution SHA-256 before this append and trailing-whitespace-only cleanup: `6432adf9301be7a222940cb0130b257de0d1371d5ad96571979d2ffeabfed588`
+
+### Reviewed defect and mechanical repair
+
+- Review found an Ollama runtime-profile identity/family defect: identity must come from `_get_effective_model()` for Ollama, while LM Studio continues to use its active loaded-instance selection unchanged. Qwen/Gemma baseline temperatures must be selected from the effective family rather than falling through to a guessed family/default. The mechanical repair preserves the existing backend split and approved R17 semantics.
+- Focused verification: `DATA_DIR=/tmp/issue18-focused uv run pytest -q tests/test_local_pipeline_v2.py -k 'ollama_v2_uses_effective_model_family'` — **2 passed**.
+- Repository verification: `DATA_DIR=/tmp/issue18-full uv run pytest tests/ -q` — **923 passed, 2 skipped**.
+- The earlier synthetic LM Studio Qwen/Gemma selected-target runs remain as recorded in the preceding snapshot: both completed with the target relation preserved using only the synthetic source `預算導致延後。`. They are not source-bearing acceptance evidence.
+- No Ollama live-runtime sample was run because no Ollama server was verified available. No live/source-bearing C1 call was made: Stage05 attempt-12 raw-relation preflight was inconclusive. The official source preflight remains blocked at the Stage05 authority boundary.
+
+### Acceptance scope and orthogonal status
+
+The profile repair and its tests do not satisfy user-source C1, live Qwen/Gemma acceptance, or the frozen quality gate. C1 remains blocked by the inconclusive Stage05 attempt-12 raw-relation preflight. C9 remains not run as formal acceptance; C10 blind scoring and C14 evaluator-backed profile sampling remain blocked/not completed. No closure, quality pass, waiver, PR update, or user-source acceptance is claimed.
+
+| CHECK_ID | GOAL_CRITICALITY | EVIDENCE_ROLE | CLOSURE_GATE | CHECK_RESULT | WAIVER_STATUS | Evidence / scope |
+|---|---|---|---|---|---|---|
+| C1 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Stage05 attempt-12 raw-relation preflight was inconclusive; no source-bearing C1 call. |
+| C2 | CORE | OUTCOME | HARD_CLEAN | PASS | NOT_ALLOWED | Ollama effective-model/family focused selector — 2 passed; full repository suite also passed. |
+| C6 | SUPPORTING | REPOSITORY_HEALTH | HARD_CLEAN | PASS | NOT_ALLOWED | `DATA_DIR=/tmp/issue18-full uv run pytest tests/ -q` — 923 passed, 2 skipped. |
+| C9 | CORE | OUTCOME | HARD_CLEAN | NOT_RUN | NOT_ALLOWED | Prior synthetic LM Studio Qwen/Gemma runs are not formal designated-source acceptance; no Ollama runtime sample was available. |
+| C10 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Blind cohort and frozen quality-threshold evidence remain incomplete/blocked. |
+| C14 | CORE | OUTCOME | HARD_CLEAN | BLOCKED | NOT_ALLOWED | Evaluator-backed profile sampling and selection remain incomplete/blocked. |
+
+```text
+PRIMARY_OUTCOME_STATUS: UNKNOWN
+IMPLEMENTATION_STATUS: COMPLETE
+CORE_ACCEPTANCE_STATUS: BLOCKED
+REQUIRED_VERIFICATION_STATUS: INCOMPLETE
+INDEPENDENT_ACCEPTANCE_STATUS: PENDING
+TASK_CLOSURE_STATUS: CORE_ACCEPTANCE_BLOCKED
+NEXT_ACTION: Stage05 resolves the designated-source C1 preflight; do not call a source-bearing acceptance run unless it passes. Record C9 independently and resolve evaluator authority before C10/C14 sampling.
+```
+
+Waivers remain `NOT_ALLOWED` with authority `NONE`. This continuation does not alter prior Stage04 or Stage05 results and does not claim task closure.

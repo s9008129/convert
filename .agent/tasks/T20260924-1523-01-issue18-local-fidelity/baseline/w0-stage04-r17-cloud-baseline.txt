@@ -1,0 +1,19 @@
+# R17 C3 pre-mutation baseline
+
+Task: T20260924-1523-01-issue18-local-fidelity
+Plan revision: 17
+HEAD: 430950148cf02ece5845cc807665e0e4f35ea7e1
+Captured_UTC: 2026-09-24T23:03:18Z
+
+Default environment attempt:
+- Command: `uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"`
+- Exit: 2 (collection failed before selecting tests)
+- Cause: importing logger attempted to create `/app/data/logs`; `/app` is read-only (OSError 30).
+- Classification: environment limitation, consistent with preserved R16 baseline.
+
+Established safe test-environment rerun:
+- Command: `DATA_DIR=tmp uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"`
+- Exit: 0
+- Result: 13 passed, 41 deselected (54 collected), 0.47s.
+- Classification: pre-mutation C3 baseline established under the same test-only DATA_DIR workaround recorded in `w0-stage04-r16-baselines-20260924T214420Z.md`; cloud behavior baseline passes. Do not claim the default-environment invocation passes.
+- Output contained only pytest progress/counts and collection error; no source/model content.
