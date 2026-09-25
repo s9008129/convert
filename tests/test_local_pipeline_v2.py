@@ -924,7 +924,7 @@ async def test_live_final_bytes_reject_omitted_source_inventory_candidates(monke
     monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
 
     async def generation(_engine, _system, message, **_kwargs):
-        if "SOURCE CHUNK" in message:
+        if "SOURCE CHUNK" in message or "MATERIAL COVERAGE RECOVERY" in message:
             return json.dumps({"claims": []})
         return json.dumps({"text": "會議完成", "claim_ids": [], "relation_metadata": {}})
 
@@ -1208,8 +1208,9 @@ async def test_v2_consumes_only_safely_aligned_corrected_view_while_grounding_ra
     captured_extraction = []
 
     async def generation(_engine, _system, message, **_kwargs):
-        if "SOURCE CHUNK" in message:
-            captured_extraction.append(message)
+        if "SOURCE CHUNK" in message or "MATERIAL COVERAGE RECOVERY" in message:
+            if "SOURCE CHUNK" in message:
+                captured_extraction.append(message)
             return json.dumps({"claims": []})
         return json.dumps({"text": "安全的測試段落", "claim_ids": [], "relation_metadata": {}})
 
