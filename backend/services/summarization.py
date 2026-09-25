@@ -186,6 +186,22 @@ class SummarizationService:
 - 不要加入逐字稿未提及的內容，不要輸出前言。
 - 只輸出繁體中文 Markdown，不要輸出 <think>、<thought>、<details>、XML/HTML 標籤或 code fence。"""
 
+    # Issue #18: 小模型的 V2 事實萃取與段落生成使用各自最小化指令。
+    # 不再把完整「最終公文格式」system prompt 同時塞給萃取模型，避免 27B/31B
+    # 在「抽事實」與「直接寫正式紀錄」兩套目標間互相干擾。
+    LOCAL_V2_EXTRACTION_SYSTEM_PROMPT = """你是繁體中文會議逐字稿的「事實抽取器」。
+你的唯一工作是把使用者提供的 RAW EVIDENCE 轉成指定 JSON，不撰寫會議紀錄。
+每個 asserted claim 都必須能由同一段原文逐字支持；不確定就標 unknown/ambiguous。
+不得補常識、不得推算日期、不得改變因果方向、否定、條件、數字、單位、責任歸屬。
+evidence_quote 必須逐字複製來源中的最小充分片段；不要改字、不要摘要。
+只輸出符合 schema 的 JSON。"""
+
+    LOCAL_V2_SECTION_SYSTEM_PROMPT = """你是繁體中文政府會議紀錄的「受控段落編輯器」。
+只可使用使用者訊息列出的 ALLOWED_CLAIMS；required claim 每項恰好表達一次。
+文字要正式、精簡、可直接閱讀：合併贅詞與重複說法，但不得刪除必要條件、數字、
+日期、責任歸屬、否定或因果方向。不要加入逐字稿沒有的背景、理由或結論。
+來源標籤必須與 claim 綁定。只輸出符合 schema 的 JSON。"""
+
     LOCAL_CAUSAL_PRESERVATION_PROMPT = """
 
 因果與來源錨點規則：
@@ -259,6 +275,8 @@ class SummarizationService:
         self._merge_groups_last_round = 0
         self._lmstudio_client: Optional[AsyncOpenAI] = None
         self._lmstudio_client_base_url: Optional[str] = None
+        self._openrouter_client: Optional[AsyncOpenAI] = None
+        self._openrouter_client_base_url: Optional[str] = None
         self._lmstudio_http_client: Optional[httpx.AsyncClient] = None
         self._lmstudio_http_base_url: Optional[str] = None
         self._gemini_client: Optional[OpenAI] = None
@@ -357,6 +375,30 @@ class SummarizationService:
             self._lmstudio_client_base_url = base_url
             log.info("LM Studio async 客戶端初始化完成 (base_url={})", base_url)
         return self._lmstudio_client
+
+    def _get_openrouter_api_key(self) -> str:
+        """取得 OpenRouter validation provider 金鑰；不得 fallback 到其他 credential。"""
+        api_key = settings.OPENROUTER_API_KEY
+        if not api_key:
+            raise ValueError("未設定 OPENROUTER_API_KEY（LOCAL_LLM_PROVIDER=openrouter）")
+        return api_key
+
+    def _get_openrouter_client(self) -> AsyncOpenAI:
+        """OpenRouter OpenAI-compatible client；只供明確選定的 local-validation provider。"""
+        base_url = settings.OPENROUTER_BASE_URL.rstrip("/")
+        if self._openrouter_client is None or self._openrouter_client_base_url != base_url:
+            self._openrouter_client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=self._get_openrouter_api_key(),
+                timeout=settings.LOCAL_LLM_REQUEST_TIMEOUT,
+                max_retries=0,
+                default_headers={
+                    "HTTP-Referer": "https://github.com/s9008129/convert",
+                    "X-Title": "convert local-model quality validation",
+                },
+            )
+            self._openrouter_client_base_url = base_url
+        return self._openrouter_client
 
     def _get_gemini_api_key(self) -> str:
         """安全地取得目前雲端 provider 的 API Key。
@@ -1841,6 +1883,13 @@ class SummarizationService:
         """選擇可用的本地 LLM 引擎，Mac auto 只走 LM Studio。"""
         self._active_lmstudio_selection = None
         provider = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+        if provider == "openrouter":
+            # Explicit validation mode only. Production macOS auto remains LM Studio.
+            self._get_openrouter_api_key()
+            if not settings.OPENROUTER_MODEL:
+                raise RuntimeError("OPENROUTER_MODEL 必須明確指定；禁止模型自動 fallback")
+            log.info("使用 OpenRouter 驗證 local pipeline (model={})", settings.OPENROUTER_MODEL)
+            return "openrouter"
         if provider == "lmstudio":
             selection = await self._resolve_lmstudio_selection()
             log.info(
@@ -1907,6 +1956,20 @@ class SummarizationService:
                 context_window_tokens=context_window_tokens,
                 expand_output_budget=expand_output_budget,
                 raw_output_collector=raw_output_collector,
+                response_format=response_format,
+            )
+
+        if engine == "openrouter":
+            return await self._summarize_with_openrouter(
+                system_prompt,
+                user_message,
+                progress_callback=progress_callback,
+                temperature=temperature,
+                max_tokens=num_predict,
+                context_window_tokens=context_window_tokens,
+                raw_output_collector=raw_output_collector,
+                runtime_profile=runtime_profile,
+                runtime_control_rejection_callback=runtime_control_rejection_callback,
                 response_format=response_format,
             )
 
@@ -2339,35 +2402,38 @@ class SummarizationService:
         )
         identity = effective_model.casefold()
         family = "Qwen" if "qwen" in identity else "Gemma" if "gemma" in identity else "UNKNOWN"
+        profile_context_tokens = (
+            loaded_context_tokens if engine == "lmstudio"
+            else context_tokens if engine == "openrouter"
+            else None
+        )
         profile = validate_runtime_profile(
             ModelRuntimeProfile(
                 family=family, model_key=effective_model or "unresolved",
                 provider=selection.provider if selection else engine,
                 loaded_instance_id=selection.loaded_instance_id if selection else None,
-                context_length=loaded_context_tokens, thinking=False,
-                temperature=0.7 if family == "Qwen" else 1.0 if family == "Gemma" else None,
-                top_p=0.8 if family == "Qwen" else 0.95 if family == "Gemma" else None,
+                context_length=profile_context_tokens, thinking=False,
+                # Factual extraction is intentionally low-entropy for both 27B/31B models.
+                temperature=0.1 if family in {"Qwen", "Gemma"} else None,
+                top_p=0.8 if family == "Qwen" else 0.9 if family == "Gemma" else None,
                 top_k=20 if family == "Qwen" else 64 if family == "Gemma" else None,
             ),
-            # This adapter's documented chat endpoint accepts temperature,
-            # top_p, and top_k. Context is sourced from the active loaded
-            # instance for planning, not sent as a per-request knob. The
-            # existing reasoning_effort compatibility path is independent and
-            # does not prove native thinking-control capability.
-            {"context_length": bool(engine == "lmstudio" and selection and selection.context_length),
-             "thinking": False, "temperature": engine in {"lmstudio", "ollama"},
-             "top_p": engine == "lmstudio", "top_k": engine == "lmstudio"},
+            {"context_length": (
+                 bool(engine == "lmstudio" and selection and selection.context_length)
+                 or engine == "openrouter"
+             ),
+             "thinking": False,
+             "temperature": engine in {"lmstudio", "ollama", "openrouter"},
+             "top_p": engine in {"lmstudio", "openrouter"},
+             "top_k": engine == "lmstudio"},
         )
-        # W7 defines the normal production baseline (Qwen .7, Gemma 1.0).
-        # Qwen .3/.5/.7 remain extraction-only candidates for explicit C14
-        # sampling; an unsampled candidate never changes production settings.
-        extraction_temperature = profile.temperature if profile.temperature is not None else 0.2
+        extraction_temperature = profile.temperature if profile.temperature is not None else 0.1
         if extraction_temperature_candidate is not None:
-            if family != "Qwen" or extraction_temperature_candidate not in {0.3, 0.5, 0.7}:
+            if family != "Qwen" or extraction_temperature_candidate not in {0.1, 0.2, 0.3}:
                 raise LocalPipelineV2Error("Unsupported experimental extraction profile")
             extraction_temperature = extraction_temperature_candidate
-        section_temperature = (0.7 if family == "Qwen" else profile.temperature
-                               if profile.temperature is not None else 0.2)
+        # Rendering may paraphrase for readability, but stays deliberately low entropy.
+        section_temperature = 0.2
         probe_result = await self._probe_native_schema_capability(engine, selection, profile)
         if isinstance(probe_result, str):
             # Preserve compatibility with focused tests/adapters that inject the
@@ -2471,7 +2537,7 @@ class SummarizationService:
                                            metadata={"temperature": extraction_temperature})
             try:
                 raw = await self._generate_with_local_engine(
-                    engine, system_prompt, extraction_message, temperature=extraction_temperature,
+                    engine, self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT, extraction_message, temperature=extraction_temperature,
                     num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                     context_window_tokens=context_tokens, lmstudio_selection=selection,
                     runtime_profile=profile,
@@ -2512,7 +2578,7 @@ class SummarizationService:
                     )
                 try:
                     raw = await self._generate_with_local_engine(
-                        engine, system_prompt, repair_message, temperature=extraction_temperature,
+                        engine, self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT, repair_message, temperature=extraction_temperature,
                         num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                         context_window_tokens=context_tokens, lmstudio_selection=selection,
                         runtime_profile=profile,
@@ -2648,7 +2714,7 @@ class SummarizationService:
                                                      "temperature": section_temperature})
             try:
                 raw_section = await self._generate_with_local_engine(
-                    engine, system_prompt, section_message, temperature=section_temperature,
+                    engine, self.LOCAL_V2_SECTION_SYSTEM_PROMPT, section_message, temperature=section_temperature,
                     num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                     context_window_tokens=context_tokens, lmstudio_selection=selection,
                     runtime_profile=profile,
@@ -2743,7 +2809,7 @@ class SummarizationService:
                                                source_branch="section_plan", metadata={"claim_id": plan.section_id})
                 try:
                     patch_raw = await self._generate_with_local_engine(
-                        engine, system_prompt, patch_message, temperature=section_temperature,
+                        engine, self.LOCAL_V2_SECTION_SYSTEM_PROMPT, patch_message, temperature=section_temperature,
                         num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
                         context_window_tokens=context_tokens, lmstudio_selection=selection,
                         runtime_profile=profile,
@@ -3009,7 +3075,7 @@ class SummarizationService:
 
         if engine == "lmstudio":
             identity = getattr(selection, "loaded_instance_id", "") if selection else ""
-        elif engine == "ollama":
+        elif engine in {"ollama", "openrouter"}:
             identity = self._get_effective_model()
         else:
             return NativeSchemaProbeResult("UNKNOWN", error_class="unsupported_backend")
@@ -3024,6 +3090,12 @@ class SummarizationService:
             if engine == "lmstudio":
                 response = await self._lmstudio_chat_request(
                     self._get_lmstudio_client(), selection, messages, 0.0, 64,
+                    runtime_profile=runtime_profile, response_format=response_format,
+                )
+                content, _reasoning, finish_reason, _usage = self._parse_lmstudio_response_payload(response)
+            elif engine == "openrouter":
+                response = await self._openrouter_chat_request(
+                    messages, 0.0, 64,
                     runtime_profile=runtime_profile, response_format=response_format,
                 )
                 content, _reasoning, finish_reason, _usage = self._parse_lmstudio_response_payload(response)
@@ -3491,6 +3563,117 @@ class SummarizationService:
             if first > 0:
                 cleaned = cleaned[first:]
 
+        return cleaned.strip()
+
+    async def _openrouter_chat_request(
+        self,
+        messages: list[dict],
+        temperature: float,
+        max_tokens: int,
+        *,
+        runtime_profile: Optional[object] = None,
+        runtime_control_rejection_callback: Optional[callable] = None,
+        response_format: Optional[dict] = None,
+    ) -> object:
+        """One bounded OpenRouter request for CI/local-model parity validation.
+
+        The first request disables reasoning so visible meeting-record tokens are
+        not consumed by hidden chain-of-thought. If a routed backend rejects that
+        control with HTTP 400, retry exactly once without the control; never
+        switch models and never retry arbitrary provider errors.
+        """
+        model = settings.OPENROUTER_MODEL
+        if not model:
+            raise RuntimeError("OPENROUTER_MODEL 必須明確指定")
+        client = self._get_openrouter_client()
+        profile_controls = {}
+        if runtime_profile is not None:
+            profile_controls = {
+                key: getattr(runtime_profile, key)
+                for key in ("top_p",)
+                if key in getattr(runtime_profile, "supported_controls", ())
+                and getattr(runtime_profile, key, None) is not None
+            }
+
+        async def _create(*, disable_reasoning: bool):
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if "top_p" in profile_controls:
+                kwargs["top_p"] = profile_controls["top_p"]
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+            if disable_reasoning and settings.LOCAL_LLM_DISABLE_THINKING:
+                kwargs["extra_body"] = {"reasoning": {"enabled": False}}
+            return await client.chat.completions.create(**kwargs)
+
+        try:
+            return await _create(disable_reasoning=True)
+        except Exception as exc:  # noqa: BLE001 - compatibility retry is intentionally narrow
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code != 400 or not settings.LOCAL_LLM_DISABLE_THINKING:
+                raise
+            if runtime_control_rejection_callback:
+                runtime_control_rejection_callback("reasoning")
+            log.warning("OpenRouter routed provider rejected reasoning control; retrying once without it")
+            return await _create(disable_reasoning=False)
+
+    async def _summarize_with_openrouter(
+        self,
+        system_prompt: str,
+        user_message: str,
+        progress_callback: Optional[callable] = None,
+        temperature: float = 0.2,
+        max_tokens: Optional[int] = None,
+        context_window_tokens: Optional[int] = None,
+        raw_output_collector: Optional[list[str]] = None,
+        runtime_profile: Optional[object] = None,
+        runtime_control_rejection_callback: Optional[callable] = None,
+        response_format: Optional[dict] = None,
+    ) -> str:
+        """Run the same local-pipeline call through OpenRouter for macOS CI validation."""
+        requested_max_tokens = max(1, int(max_tokens or settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS))
+        context_budget = int(context_window_tokens or settings.LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS)
+        prompt_tokens = self._estimate_tokens(system_prompt) + self._estimate_tokens(user_message) + 64
+        available_output_tokens = context_budget - prompt_tokens - 64
+        if requested_max_tokens > available_output_tokens:
+            raise StableServiceError(
+                LOCAL_LLM_CONTEXT_BUDGET_EXCEEDED,
+                f"OpenRouter validation request budget 不足：max_tokens={requested_max_tokens}, "
+                f"prompt≈{prompt_tokens}, context={context_budget}",
+            )
+        self._emit_progress(progress_callback, 65.0, f"OpenRouter 驗證模型（{settings.OPENROUTER_MODEL}）...")
+        response = await self._openrouter_chat_request(
+            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}],
+            temperature,
+            requested_max_tokens,
+            runtime_profile=runtime_profile,
+            runtime_control_rejection_callback=runtime_control_rejection_callback,
+            response_format=response_format,
+        )
+        content, reasoning_text, finish_reason, usage_tokens = self._parse_lmstudio_response_payload(response)
+        if raw_output_collector is not None:
+            raw_output_collector.append(str(content))
+        self._lmstudio_last_response_metadata = {
+            "finish_reason": finish_reason,
+            "requested_max_tokens": requested_max_tokens,
+            "prompt_tokens": usage_tokens.get("prompt_tokens"),
+            "completion_tokens": usage_tokens.get("completion_tokens"),
+            "reasoning_tokens": usage_tokens.get("reasoning_tokens"),
+            "reasoning_present": bool(reasoning_text and reasoning_text.strip()),
+            "reasoning_char_count": len(reasoning_text or ""),
+        }
+        cleaned = self._clean_ollama_output(str(content))
+        if not cleaned.strip():
+            raise StableServiceError(
+                LMSTUDIO_NO_FINAL_CONTENT,
+                f"OpenRouter model {settings.OPENROUTER_MODEL} returned no visible final content",
+            )
+        if finish_reason == "length":
+            log.warning("OpenRouter validation response reached completion limit (model={})", settings.OPENROUTER_MODEL)
         return cleaned.strip()
 
     async def _summarize_with_lmstudio(
@@ -4520,7 +4703,10 @@ class SummarizationService:
         """
         取得有效的模型名稱（Ollama 解析結果或 LM Studio 工作選擇）。
         """
-        if resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER) == "lmstudio":
+        provider = resolve_local_llm_provider(settings.LOCAL_LLM_PROVIDER)
+        if provider == "openrouter":
+            return settings.OPENROUTER_MODEL or "OpenRouter（未指定模型）"
+        if provider == "lmstudio":
             selection = self._active_lmstudio_selection
             if selection:
                 return selection.model_identifier
