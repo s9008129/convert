@@ -610,6 +610,20 @@ def test_core_relation_metadata_requires_exact_claim_and_predicate():
         validate_relation_metadata(plan, {"c1": claim}, {"c1": expected.model_copy(update={"direction": "object_to_subject"})})
 
 
+def test_relation_order_accepts_later_valid_occurrence_when_object_appears_earlier():
+    raw = "延後背景；預算導致延後。"
+    claim = FactClaim(
+        claim_id="c1", subject="預算", predicate="導致", object="延後",
+        relation_type="causal", evidence_refs=("span-1",),
+        evidence_quote=raw,
+        resolved_start_offset=0, resolved_end_offset=len(raw),
+    )
+    span = EvidenceSpan.from_source(
+        "span-1", raw, start_offset=0, end_offset=len(raw)
+    )
+    assert relation_is_supported_in_order(claim, (span,))
+
+
 def test_relation_firewall_allows_benign_endpoint_comention_after_grounded_relation():
     raw = "預算導致延後。"
     claim = FactClaim(
