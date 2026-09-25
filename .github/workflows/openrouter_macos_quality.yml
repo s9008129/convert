@@ -94,9 +94,16 @@ jobs:
             > "$RUNNER_TEMP/transcript.txt"
           git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record.md \
             > "$RUNNER_TEMP/baseline_record.md"
+          git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C5-cloud-baseline/coverage.json \
+            > "$RUNNER_TEMP/cloud_coverage.json"
           uv run --frozen python scripts/e2e/run_openrouter_v2_real_diagnostic.py \
             --transcript "$RUNNER_TEMP/transcript.txt" \
             --checklist "$RUNNER_TEMP/fact_checklist.json" \
             --baseline-record "$RUNNER_TEMP/baseline_record.md" \
+            --cloud-coverage "$RUNNER_TEMP/cloud_coverage.json" \
             --template section_meeting
-          rm -f "$RUNNER_TEMP/transcript.txt" "$RUNNER_TEMP/fact_checklist.json" "$RUNNER_TEMP/baseline_record.md"
+          rm -f \
+            "$RUNNER_TEMP/transcript.txt" \
+            "$RUNNER_TEMP/fact_checklist.json" \
+            "$RUNNER_TEMP/baseline_record.md" \
+            "$RUNNER_TEMP/cloud_coverage.json"
