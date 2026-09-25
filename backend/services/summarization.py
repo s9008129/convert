@@ -3312,10 +3312,36 @@ class SummarizationService:
             if decisive_required_issues or plan.coverage_issues:
                 # Privacy-safe root-cause telemetry: opaque claim IDs/counts only,
                 # never source/model text.
+                relation_diag = []
+                for issue_claim_id in sorted(set(final_snapshot.relation_issues) & required_ids):
+                    issue_claim = by_id.get(issue_claim_id)
+                    issue_meta = section_relations[plan.section_id].get(issue_claim_id)
+                    if issue_claim is None:
+                        continue
+                    expected_meta = RelationMetadata(
+                        subject=issue_claim.subject,
+                        predicate=issue_claim.predicate,
+                        object=issue_claim.object,
+                        direction=issue_claim.direction,
+                        polarity=issue_claim.polarity,
+                        condition=issue_claim.condition,
+                        relation_type=issue_claim.relation_type,
+                    )
+                    relation_diag.append({
+                        "subject_present": issue_claim.subject in section_slice,
+                        "predicate_present": issue_claim.predicate in section_slice,
+                        "object_present": issue_claim.object in section_slice,
+                        "concat_present": (
+                            f"{issue_claim.subject}{issue_claim.predicate}{issue_claim.object}"
+                            in section_slice
+                        ),
+                        "metadata_match": issue_meta == expected_meta,
+                    })
                 log.warning(
                     "V2 final section rejected: section={}, missing_required={}, "
                     "relation={}, polarity={}, condition={}, attribution={}, "
-                    "numeric={}, date={}, entity={}, source_tag={}, coverage_issues={}",
+                    "numeric={}, date={}, entity={}, source_tag={}, coverage_issues={}, "
+                    "relation_diag={}",
                     plan.section_id,
                     len(set(final_snapshot.required_claim_ids) - set(final_snapshot.covered_claim_ids)),
                     len(set(final_snapshot.relation_issues) & required_ids),
@@ -3327,6 +3353,7 @@ class SummarizationService:
                     len(set(final_snapshot.entity_issues) & required_ids),
                     len(set(final_snapshot.source_tag_issues) & required_ids),
                     len(plan.coverage_issues),
+                    json.dumps(relation_diag, ensure_ascii=True, sort_keys=True),
                 )
                 final_firewall_issues.append(f"required-coverage:{plan.section_id}")
             if selected_claim_id and selected_claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
