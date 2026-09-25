@@ -2413,9 +2413,11 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 provider=selection.provider if selection else engine,
                 loaded_instance_id=selection.loaded_instance_id if selection else None,
                 context_length=profile_context_tokens, thinking=False,
-                # Factual extraction is intentionally low-entropy for both 27B/31B models.
-                temperature=0.1 if family in {"Qwen", "Gemma"} else None,
-                top_p=0.8 if family == "Qwen" else 0.9 if family == "Gemma" else None,
+                # Preserve vendor-recommended sampling presets. Quality improvements
+                # come from decomposition + grounding + deterministic guards rather
+                # than arbitrary temperature suppression.
+                temperature=0.7 if family == "Qwen" else 1.0 if family == "Gemma" else None,
+                top_p=0.8 if family == "Qwen" else 0.95 if family == "Gemma" else None,
                 top_k=20 if family == "Qwen" else 64 if family == "Gemma" else None,
             ),
             {"context_length": (
@@ -2427,13 +2429,16 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
              "top_p": engine in {"lmstudio", "openrouter"},
              "top_k": engine == "lmstudio"},
         )
-        extraction_temperature = profile.temperature if profile.temperature is not None else 0.1
+        extraction_temperature = profile.temperature if profile.temperature is not None else 0.2
         if extraction_temperature_candidate is not None:
-            if family != "Qwen" or extraction_temperature_candidate not in {0.1, 0.2, 0.3}:
+            if family != "Qwen" or extraction_temperature_candidate not in {0.3, 0.5, 0.7}:
                 raise LocalPipelineV2Error("Unsupported experimental extraction profile")
             extraction_temperature = extraction_temperature_candidate
-        # Rendering may paraphrase for readability, but stays deliberately low entropy.
-        section_temperature = 0.2
+        section_temperature = (
+            0.7 if family == "Qwen"
+            else 1.0 if family == "Gemma"
+            else 0.2
+        )
         probe_result = await self._probe_native_schema_capability(engine, selection, profile)
         if isinstance(probe_result, str):
             # Preserve compatibility with focused tests/adapters that inject the
