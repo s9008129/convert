@@ -594,6 +594,73 @@ def test_chinese_single_digit_plus_unit_is_losslessly_grounded_and_rendered():
         assert "c1" in changed_snapshot.numeric_issues
 
 
+def test_temporal_condition_requires_text_but_not_relation_metadata():
+    raw = "完成驗證後再上線。"
+    claim = FactClaim(
+        claim_id="c1",
+        subject="系統",
+        predicate="上線",
+        object="正式環境",
+        relation_type="temporal",
+        condition="完成驗證後",
+        evidence_refs=("span-1",),
+        evidence_quote=raw[:-1],
+        resolved_start_offset=0,
+        resolved_end_offset=len(raw) - 1,
+    )
+    evidence = {
+        "span-1": EvidenceSpan.from_source(
+            "span-1", raw, start_offset=0, end_offset=len(raw)
+        )
+    }
+    plan = SectionPlan(
+        section_id="s", title="決議", required_claim_ids=("c1",)
+    )
+    rendered = "完成驗證後，系統上線正式環境〔span-1〕"
+    snapshot = fidelity_firewall(
+        plan, rendered, {"c1": claim}, evidence, relation_metadata={}
+    )
+    assert snapshot.condition_issues == ()
+    assert snapshot.accepted
+
+    omitted = fidelity_firewall(
+        plan, "系統上線正式環境〔span-1〕", {"c1": claim}, evidence,
+        relation_metadata={},
+    )
+    assert omitted.condition_issues == ("c1",)
+    assert not omitted.accepted
+
+
+def test_causal_condition_still_requires_exact_relation_metadata():
+    raw = "完成驗證後，測試完成導致上線。"
+    claim = FactClaim(
+        claim_id="c1",
+        subject="測試完成",
+        predicate="導致",
+        object="上線",
+        relation_type="causal",
+        condition="完成驗證後",
+        evidence_refs=("span-1",),
+        evidence_quote=raw[:-1],
+        resolved_start_offset=0,
+        resolved_end_offset=len(raw) - 1,
+    )
+    evidence = {
+        "span-1": EvidenceSpan.from_source(
+            "span-1", raw, start_offset=0, end_offset=len(raw)
+        )
+    }
+    plan = SectionPlan(
+        section_id="s", title="決議", required_claim_ids=("c1",)
+    )
+    rendered = "完成驗證後，測試完成導致上線〔span-1〕"
+    missing_meta = fidelity_firewall(
+        plan, rendered, {"c1": claim}, evidence, relation_metadata={}
+    )
+    assert missing_meta.condition_issues == ("c1",)
+    assert not missing_meta.accepted
+
+
 def test_core_relation_metadata_requires_exact_claim_and_predicate():
     claim = _claim(relation_type="causal", predicate="導致", object="完成")
     plan = SectionPlan(section_id="s", title="決議", required_claim_ids=("c1",))
