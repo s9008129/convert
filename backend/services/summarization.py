@@ -189,12 +189,19 @@ class SummarizationService:
     # Issue #18: 小模型的 V2 事實萃取與段落生成使用各自最小化指令。
     # 不再把完整「最終公文格式」system prompt 同時塞給萃取模型，避免 27B/31B
     # 在「抽事實」與「直接寫正式紀錄」兩套目標間互相干擾。
-    LOCAL_V2_EXTRACTION_SYSTEM_PROMPT = """你是繁體中文會議逐字稿的「事實抽取器」。
-你的唯一工作是把使用者提供的 RAW EVIDENCE 轉成指定 JSON，不撰寫會議紀錄。
-每個 asserted claim 都必須能由同一段原文逐字支持；不確定就標 unknown/ambiguous。
-不得補常識、不得推算日期、不得改變因果方向、否定、條件、數字、單位、責任歸屬。
-evidence_quote 必須逐字複製來源中的最小充分片段；不要改字、不要摘要。
-只輸出符合 schema 的 JSON。"""
+    LOCAL_V2_EXTRACTION_SYSTEM_PROMPT = """你是繁體中文會議逐字稿的「高召回事實抽取器」。
+你的唯一工作是把 RAW EVIDENCE 拆成可回溯的原子事實 JSON，不撰寫最終會議紀錄。
+
+高召回規則：
+- 逐段掃描，保留所有「對正式會議紀錄有資訊價值」的不同事實；不要只抓決議。
+- 必須涵蓋：決議／裁示／交辦、待辦與負責對象、期限與日期、數字與比例、限制／禁止／
+  注意事項、原因與結果、風險、組織／名稱／業務變更、各方立場與理由、重要背景及後續安排。
+- 同一句有多個獨立事實時拆成多個 claim；不同工作項目不要合併成籠統一句。
+- subject、predicate、object、condition 必須直接出現在 evidence_quote 中；不得用同義詞替換。
+- evidence_quote 必須逐字複製 RAW EVIDENCE 中的最小充分片段，禁止摘要、改字、修正 ASR 或補常識。
+- 因果、條件、否定、數字、日期與責任歸屬不得改變；無法直接支持的內容不要輸出。
+- 不要輸出「不知道／待確認」的空泛 claim，也不要重複同一事實。
+只輸出符合指定 schema 的 JSON。"""
 
     LOCAL_V2_SECTION_SYSTEM_PROMPT = """你是繁體中文政府會議紀錄的「受控段落編輯器」。
 只可使用使用者訊息列出的 ALLOWED_CLAIMS；required claim 每項恰好表達一次。
@@ -2436,16 +2443,17 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
              "top_p": engine in {"lmstudio", "openrouter"},
              "top_k": engine == "lmstudio"},
         )
-        extraction_temperature = profile.temperature if profile.temperature is not None else 0.2
+        # Extraction is a constrained factual task, not prose generation.
+        # Keep it low-entropy even when the model's general prose preset is
+        # higher; this materially improves exact quoting and schema stability.
+        extraction_temperature = 0.2
         if extraction_temperature_candidate is not None:
-            if family != "Qwen" or extraction_temperature_candidate not in {0.3, 0.5, 0.7}:
+            if family != "Qwen" or extraction_temperature_candidate not in {0.1, 0.2, 0.3}:
                 raise LocalPipelineV2Error("Unsupported experimental extraction profile")
             extraction_temperature = extraction_temperature_candidate
-        section_temperature = (
-            0.7 if family == "Qwen"
-            else 1.0 if family == "Gemma"
-            else 0.2
-        )
+        # Rendering needs a little freedom for readable formal prose, but the
+        # allow-list + firewall own factual correctness.
+        section_temperature = 0.35 if family in {"Qwen", "Gemma"} else 0.2
         probe_result = await self._probe_native_schema_capability(engine, selection, profile)
         if isinstance(probe_result, str):
             # Preserve compatibility with focused tests/adapters that inject the
@@ -2508,6 +2516,12 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         chunk_budget = self._build_local_context_plan(
             source_transcript, system_prompt, template=template, context_window_tokens=context_tokens
         ).chunk_input_budget_tokens
+        # A 32K context does not mean a small model should receive a 3.2K-token
+        # extraction chunk. In observed real meetings Qwen exhausted a 4K JSON
+        # completion and Gemma under-extracted. Smaller exact-source windows
+        # increase recall and make structured output bounded.
+        if family in {"Qwen", "Gemma"}:
+            chunk_budget = min(chunk_budget, 1600)
         chunks, chunk_offsets = self._split_v2_source_into_chunks(source_transcript, chunk_budget)
         chunks = chunks or [source_transcript]
         if not chunk_offsets and chunks:
@@ -2524,37 +2538,56 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                                                  "corrected_view_supplied": raw_source_transcript is not None,
                                                  "corrected_alignment": "whitespace_only" if any(corrected_chunks) else "not_aligned" if raw_source_transcript is not None else "not_applicable"})
         claims: list = []
+        max_claims_per_chunk = 18
+        primary_response_format = (
+            self._v2_recovery_response_format(max_claims=max_claims_per_chunk)
+            if capability == "SUPPORTED"
+            else None
+        )
+        primary_output_tokens = min(
+            settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS, 3072
+        )
         for index, (chunk, span) in enumerate(zip(chunks, spans), 1):
             extraction_message = (
-                "Return ONLY strict JSON (no markdown) matching this shape: "
-                '{"claims":[{"claim_id":"...","subject":"...","predicate":"...",'
-                '"object":"...","relation_type":"fact|causal|conditional|temporal",'
-                '"direction":"subject_to_object|object_to_subject",'
-                '"polarity":"positive|negative","condition":null,"number":null,"unit":null,'
-                '"date":null,"attribution":null,"uncertainty":null,"status":"asserted|unknown|ambiguous",'
-                '"evidence_refs":["' + span.span_id + '"],"evidence_quote":"exact raw-source quote",'
-                '"evidence_start_offset":null,"evidence_end_offset":null}]}\n'
-                "Unknown or ambiguous values must be represented explicitly; never invent facts.\n"
-                "Every asserted subject/predicate/object, relation direction, polarity, condition, number/unit, date, "
-                "entity, attribution and uncertainty must be directly supported by the ordered raw source span; "
-                "unsupported values must be null or status unknown/ambiguous.\n"
+                "EXHAUSTIVE ATOMIC FACT EXTRACTION. Return ONLY strict JSON "
+                "with a claims array. Extract every distinct record-worthy fact "
+                "from this chunk, up to the schema limit. Each claim contains "
+                "ONLY subject, predicate, object, relation_type, direction, "
+                "polarity, condition, evidence_quote. Use exact source wording "
+                "for subject/predicate/object and evidence_quote; the server "
+                "owns IDs, evidence refs and offsets. Do not omit facts merely "
+                "because they are background rather than a decision.\n"
+                f"EVIDENCE_REF: {span.span_id}\n"
                 f"RAW EVIDENCE SOURCE CHUNK {index}/{len(chunks)}:\n{chunk}"
             )
             if spans[index - 1].corrected_text:
-                extraction_message += ("\nCORRECTED COMPREHENSION VIEW (not evidence; all quotes and offsets "
-                                       "must come from raw source):\n" + spans[index - 1].corrected_text)
+                extraction_message += (
+                    "\nCORRECTED COMPREHENSION VIEW (not evidence; exact wording "
+                    "and quotes must still come from RAW EVIDENCE):\n"
+                    + spans[index - 1].corrected_text
+                )
             if diagnostic_recorder:
-                diagnostic_recorder.record(f"v2.extraction.chunk.{index}.input", input_text=extraction_message,
-                                           source_branch="transcript_chunk",
-                                           metadata={"temperature": extraction_temperature})
+                diagnostic_recorder.record(
+                    f"v2.extraction.chunk.{index}.input",
+                    input_text=extraction_message,
+                    source_branch="transcript_chunk",
+                    metadata={
+                        "temperature": extraction_temperature,
+                        "requested_max_tokens": primary_output_tokens,
+                    },
+                )
             try:
                 raw = await self._generate_with_local_engine(
-                    engine, self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT, extraction_message, temperature=extraction_temperature,
-                    num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                    context_window_tokens=context_tokens, lmstudio_selection=selection,
+                    engine,
+                    self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
+                    extraction_message,
+                    temperature=extraction_temperature,
+                    num_predict=primary_output_tokens,
+                    context_window_tokens=context_tokens,
+                    lmstudio_selection=selection,
                     runtime_profile=profile,
                     runtime_control_rejection_callback=report_runtime_control_rejection,
-                    response_format=native_response_format,
+                    response_format=primary_response_format,
                 )
             except Exception as generation_error:
                 if diagnostic_recorder:
@@ -2567,41 +2600,78 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                 ) from generation_error
             if diagnostic_recorder:
                 diagnostic_recorder.record(
-                    f"v2.extraction.chunk.{index}.output", output_text=raw,
-                    source_branch="transcript_chunk", status="received",
+                    f"v2.extraction.chunk.{index}.output",
+                    output_text=raw,
+                    source_branch="transcript_chunk",
+                    status="received",
                 )
             try:
-                parsed = parse_fact_payload(raw, source_sha256=source_sha)
+                parsed_claims = parse_recovery_fact_payload(
+                    raw,
+                    source_sha256=source_sha,
+                    evidence_ref=span.span_id,
+                    max_claims=max_claims_per_chunk,
+                    claim_id_prefix=f"chunk-{index}",
+                )
             except FactPayloadValidationError as first_error:
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
                         f"v2.extraction.chunk.{index}.outcome",
                         status=f"schema_failed:{type(first_error).__name__}",
                     )
-                # Exactly one schema-only repair; changing source/policy is not
-                # a repair and would violate the V2 contract.
-                repair_message = extraction_message + "\nSCHEMA REPAIR: output valid JSON only."
+                # Exactly one schema-only repair on the same source and compact
+                # schema. Do not change facts/source in a repair attempt.
+                repair_message = extraction_message + (
+                    "\nSCHEMA REPAIR: emit one complete valid JSON object only; "
+                    "preserve the same source-grounded facts and exact quotes."
+                )
                 if diagnostic_recorder:
                     diagnostic_recorder.record(
                         f"v2.extraction.chunk.{index}.repair",
                         input_text=repair_message,
                         source_branch="transcript_chunk",
-                        metadata={"temperature": extraction_temperature},
+                        metadata={
+                            "temperature": 0.0,
+                            "requested_max_tokens": primary_output_tokens,
+                        },
                     )
                 try:
                     raw = await self._generate_with_local_engine(
-                        engine, self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT, repair_message, temperature=extraction_temperature,
-                        num_predict=settings.LOCAL_LLM_RESERVED_OUTPUT_TOKENS,
-                        context_window_tokens=context_tokens, lmstudio_selection=selection,
+                        engine,
+                        self.LOCAL_V2_EXTRACTION_SYSTEM_PROMPT,
+                        repair_message,
+                        temperature=0.0,
+                        num_predict=primary_output_tokens,
+                        context_window_tokens=context_tokens,
+                        lmstudio_selection=selection,
                         runtime_profile=profile,
                         runtime_control_rejection_callback=report_runtime_control_rejection,
-                        response_format=native_response_format,
+                        response_format=primary_response_format,
                     )
                     if diagnostic_recorder:
                         diagnostic_recorder.record(
-                            f"v2.extraction.chunk.{index}.repair.output", output_text=raw,
-                            source_branch="transcript_chunk", status="received",
+                            f"v2.extraction.chunk.{index}.repair.output",
+                            output_text=raw,
+                            source_branch="transcript_chunk",
+                            status="received",
                         )
+                    parsed_claims = parse_recovery_fact_payload(
+                        raw,
+                        source_sha256=source_sha,
+                        evidence_ref=span.span_id,
+                        max_claims=max_claims_per_chunk,
+                        claim_id_prefix=f"chunk-{index}",
+                    )
+                except FactPayloadValidationError as repair_schema_error:
+                    if diagnostic_recorder:
+                        diagnostic_recorder.record(
+                            f"v2.extraction.chunk.{index}.repair.outcome",
+                            status=f"schema_failed:{type(repair_schema_error).__name__}",
+                        )
+                    raise LocalPipelineV2Error(
+                        f"V2 structured extraction failed after one schema-only "
+                        f"repair (chunk {index})"
+                    ) from repair_schema_error
                 except Exception as repair_generation_error:
                     if diagnostic_recorder:
                         diagnostic_recorder.record(
@@ -2611,22 +2681,13 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
                     raise LocalPipelineV2Error(
                         f"V2 extraction repair generation failed (chunk {index})"
                     ) from repair_generation_error
-                try:
-                    parsed = parse_fact_payload(raw, source_sha256=source_sha)
-                except FactPayloadValidationError as repair_schema_error:
-                    if diagnostic_recorder:
-                        diagnostic_recorder.record(
-                            f"v2.extraction.chunk.{index}.repair.outcome",
-                            status=f"schema_failed:{type(repair_schema_error).__name__}",
-                        )
-                    raise LocalPipelineV2Error(
-                        f"V2 structured extraction failed after one schema-only repair (chunk {index})"
-                    ) from repair_schema_error
             if diagnostic_recorder:
                 diagnostic_recorder.record(
-                    f"v2.extraction.chunk.{index}.outcome", status="parsed",
+                    f"v2.extraction.chunk.{index}.outcome",
+                    status="parsed",
+                    metadata={"claim_count": len(parsed_claims)},
                 )
-            claims.extend(parsed.claims)
+            claims.extend(parsed_claims)
         evidence = {span.span_id: span for span in spans}
         occurrence_claims = resolve_claim_occurrences(claims, evidence, source_sha256=source_sha)
         if diagnostic_recorder:
