@@ -2392,6 +2392,12 @@ evidence_quote 必須逐字複製來源中的最小充分片段；不要改字�
         if getattr(settings, "LOCAL_PIPELINE_VERSION", "v1").strip().lower() != "v2":
             raise LocalPipelineV2Error("Local V2 execution requires LOCAL_PIPELINE_VERSION=v2")
 
+        # Internal/focused callers historically omitted template and relied on
+        # template_section_plans() to resolve the default. Normalize once here
+        # so every V2 stage (context planning, recovery, render, finalizer)
+        # operates on the same concrete template contract.
+        template = template or get_template(None)
+
         engine = await self._select_local_engine()
         selection = self._active_lmstudio_selection
         loaded_context_tokens = selection.context_length if selection else None
