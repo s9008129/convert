@@ -780,7 +780,7 @@ def _bounded_statement_window(
     """
     if start < 0 or end <= start or end > len(raw_source):
         return None
-    boundaries = "\n。！？!?；;"
+    boundaries = "\n。！？!?；;，,、"
     left = max(raw_source.rfind(char, 0, start) for char in boundaries) + 1
     right_candidates = [
         pos for char in boundaries
