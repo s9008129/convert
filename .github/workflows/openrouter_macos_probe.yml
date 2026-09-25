@@ -1,0 +1,54 @@
+name: OpenRouter macOS probe
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'issue-18-first-divergence-diagnostic'
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - name: Runner
+        run: |
+          sw_vers
+          uname -m
+      - name: OpenRouter connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${OPENROUTER_API_KEY:-}"
+          python3 - <<'PY'
+          import json, os, urllib.request
+          key=os.environ["OPENROUTER_API_KEY"]
+          for model in ("google/gemma-4-31b-it","qwen/qwen3.8-27b"):
+              body=json.dumps({
+                  "model":model,
+                  "messages":[{"role":"user","content":"Connectivity test. Reply exactly CONNECTED"}],
+                  "temperature":0,
+                  "max_tokens":64
+              }).encode()
+              req=urllib.request.Request(
+                  "https://openrouter.ai/api/v1/chat/completions",
+                  data=body,
+                  headers={
+                      "Authorization":"Bearer "+key,
+                      "Content-Type":"application/json",
+                      "HTTP-Referer":"https://github.com/s9008129/convert",
+                      "X-Title":"convert macOS probe"
+                  },
+                  method="POST"
+              )
+              with urllib.request.urlopen(req, timeout=90) as r:
+                  data=json.loads(r.read())
+              msg=((data.get("choices") or [{}])[0].get("message") or {}).get("content","").strip()
+              usage=data.get("usage") or {}
+              print(f"PROBE model={model} http=200 returned_model={data.get('model')} provider={data.get('provider')} prompt_tokens={usage.get('prompt_tokens')} completion_tokens={usage.get('completion_tokens')} response={msg[:80]!r}")
+              if not msg:
+                  raise SystemExit("empty response")
+          print("OPENROUTER_CONNECTIVITY=PASS")
+          PY
