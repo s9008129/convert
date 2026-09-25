@@ -1266,14 +1266,14 @@ def validate_relation_metadata(
 def candidate_runtime_profiles(family: str, model_key: str, provider: str, *, context_length: int | None = None) -> tuple[ModelRuntimeProfile, ...]:
     """Return the approved family candidates; controls are checked separately."""
     if family.casefold().startswith("qwen"):
-        temperatures = (0.1, 0.2, 0.3)
+        temperatures = (0.3, 0.5, 0.7)
         return tuple(ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
                                          context_length=context_length, thinking=False,
                                          temperature=t, top_p=0.8, top_k=20) for t in temperatures)
     if family.casefold().startswith("gemma"):
         return (ModelRuntimeProfile(family=family, model_key=model_key, provider=provider,
                                     context_length=context_length, thinking=False,
-                                    temperature=0.1, top_p=0.9, top_k=64),)
+                                    temperature=1.0, top_p=0.95, top_k=64),)
     return ()
 
 
