@@ -221,6 +221,14 @@ def test_material_recovery_uses_template_cue_not_every_relation_token():
     assert kinds == ["決議"]
 
 
+def test_section_meeting_observes_generic_instruction_word_without_hard_veto():
+    raw = "房屋稅科股別名稱已調整。哦這是現場指示的。"
+    observed = [kind for kind, _start, _end in inventory_source_candidates("section_meeting", raw)]
+    assert "指示" in observed
+    assert uncovered_material_candidates("section_meeting", raw, ()) == ()
+
+
+
 def test_material_cues_share_only_a_bounded_clause_not_the_next_clause():
     raw = "主席決議由資訊科負責盤點系統權限，期限為10月15日。"
     digest = hashlib.sha256(raw.encode()).hexdigest()
