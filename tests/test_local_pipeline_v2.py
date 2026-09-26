@@ -728,6 +728,48 @@ def test_causal_condition_still_requires_exact_relation_metadata():
     assert not missing_meta.accepted
 
 
+def test_relation_firewall_allows_second_source_backed_fact_with_same_endpoints():
+    raw = "預算導致延後。預算影響延後。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    span = EvidenceSpan(
+        span_id="span-1", raw_text=raw, start_offset=0, end_offset=len(raw),
+        source_sha256=digest,
+    )
+    causal_quote = "預算導致延後"
+    fact_quote = "預算影響延後"
+    causal = FactClaim(
+        claim_id="c1", subject="預算", predicate="導致", object="延後",
+        relation_type=local_v2.RelationType.CAUSAL,
+        evidence_refs=("span-1",), evidence_quote=causal_quote,
+        resolved_start_offset=raw.index(causal_quote),
+        resolved_end_offset=raw.index(causal_quote) + len(causal_quote),
+    )
+    sibling = FactClaim(
+        claim_id="c2", subject="預算", predicate="影響", object="延後",
+        relation_type=local_v2.RelationType.FACT,
+        evidence_refs=("span-1",), evidence_quote=fact_quote,
+        resolved_start_offset=raw.index(fact_quote),
+        resolved_end_offset=raw.index(fact_quote) + len(fact_quote),
+    )
+    plan = SectionPlan(
+        section_id="s", title="報告", required_claim_ids=("c1", "c2")
+    )
+    metadata = {
+        "c1": RelationMetadata(
+            subject="預算", predicate="導致", object="延後",
+            direction="subject_to_object", polarity="positive", condition=None,
+            relation_type=local_v2.RelationType.CAUSAL,
+        )
+    }
+    rendered = "預算導致延後〔span-1〕；預算影響延後〔span-1〕"
+    result = fidelity_firewall(
+        plan, rendered, {"c1": causal, "c2": sibling}, {"span-1": span},
+        relation_metadata=metadata,
+    )
+    assert result.relation_issues == ()
+    assert result.accepted
+
+
 def test_core_relation_metadata_requires_exact_claim_and_predicate():
     claim = _claim(relation_type="causal", predicate="導致", object="完成")
     plan = SectionPlan(section_id="s", title="決議", required_claim_ids=("c1",))
