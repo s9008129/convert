@@ -2188,6 +2188,58 @@ def test_unknown_runtime_family_has_no_default_candidate_profile():
 
 
 @pytest.mark.asyncio
+async def test_oversized_section_uses_lossless_deterministic_renderer(monkeypatch):
+    from backend.services import local_pipeline_v2 as v2
+
+    service = SummarizationService()
+    source_parts = [f"單位{i}辦理事項{i}" for i in range(1, 18)]
+    source = "。".join(source_parts) + "。"
+    claims = [
+        {
+            "claim_id": f"c{i}",
+            "subject": f"單位{i}",
+            "predicate": "辦理",
+            "object": f"事項{i}",
+            "evidence_refs": ["span-1"],
+            "evidence_quote": source_parts[i - 1],
+        }
+        for i in range(1, 18)
+    ]
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
+    monkeypatch.setattr(service, "_finalize_record_text", lambda text, **_kwargs: text)
+    monkeypatch.setattr(
+        v2,
+        "template_section_plans",
+        lambda *_args, **_kwargs: (
+            SectionPlan(
+                section_id="report",
+                title="報告",
+                required_claim_ids=tuple(f"c{i}" for i in range(1, 18)),
+                template_order=0,
+            ),
+        ),
+    )
+    calls = []
+
+    async def generation(_engine, _system, message, **_kwargs):
+        calls.append(message)
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": claims})
+        pytest.fail("oversized section must not call the model renderer")
+
+    monkeypatch.setattr(service, "_generate_with_local_engine", generation)
+    result = await service._summarize_with_local_pipeline_v2(
+        source, "system", template=get_template("section_meeting")
+    )
+
+    assert len(calls) == 1
+    for i in range(1, 18):
+        assert f"單位{i}辦理事項{i}" in result
+    assert result.count("〔span-1〕") == 17
+
+
+@pytest.mark.asyncio
 async def test_optional_conflict_stays_local_and_unrelated_section_continues(monkeypatch):
     from backend.services import local_pipeline_v2 as v2
 
