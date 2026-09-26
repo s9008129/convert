@@ -2192,7 +2192,8 @@ async def test_oversized_section_uses_lossless_deterministic_renderer(monkeypatc
     from backend.services import local_pipeline_v2 as v2
 
     service = SummarizationService()
-    source_parts = [f"單位{i}辦理事項{i}" for i in range(1, 18)]
+    source_parts = [f"單位{i}辦理事項{i}" for i in range(1, 17)]
+    source_parts.append("驗證完成後系統上線正式環境")
     source = "。".join(source_parts) + "。"
     claims = [
         {
@@ -2203,8 +2204,18 @@ async def test_oversized_section_uses_lossless_deterministic_renderer(monkeypatc
             "evidence_refs": ["span-1"],
             "evidence_quote": source_parts[i - 1],
         }
-        for i in range(1, 18)
+        for i in range(1, 17)
     ]
+    claims.append({
+        "claim_id": "c17",
+        "subject": "系統",
+        "predicate": "上線",
+        "object": "正式環境",
+        "relation_type": "conditional",
+        "condition": "驗證完成後",
+        "evidence_refs": ["span-1"],
+        "evidence_quote": source_parts[-1],
+    })
     monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
     monkeypatch.setattr(service, "_select_local_engine", lambda: _async_value("fake"))
     monkeypatch.setattr(service, "_finalize_record_text", lambda text, **_kwargs: text)
@@ -2215,7 +2226,8 @@ async def test_oversized_section_uses_lossless_deterministic_renderer(monkeypatc
             SectionPlan(
                 section_id="report",
                 title="報告",
-                required_claim_ids=tuple(f"c{i}" for i in range(1, 18)),
+                required_claim_ids=tuple(f"c{i}" for i in range(1, 17)),
+                optional_claim_ids=("c17",),
                 template_order=0,
             ),
         ),
@@ -2234,8 +2246,9 @@ async def test_oversized_section_uses_lossless_deterministic_renderer(monkeypatc
     )
 
     assert len(calls) == 1
-    for i in range(1, 18):
+    for i in range(1, 17):
         assert f"單位{i}辦理事項{i}" in result
+    assert "驗證完成後時，系統上線正式環境" in result
     assert result.count("〔span-1〕") == 17
 
 
