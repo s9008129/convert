@@ -214,7 +214,15 @@ async def main() -> int:
     parser.add_argument("--baseline-record", type=Path)
     parser.add_argument("--cloud-coverage", type=Path)
     parser.add_argument("--template", default="section_meeting")
+    parser.add_argument(
+        "--min-cloud-ratio",
+        type=float,
+        default=0.90,
+        help="Minimum local/cloud coverage ratio for both all facts and core facts.",
+    )
     args = parser.parse_args()
+    if not (0 < args.min_cloud_ratio <= 1):
+        raise SystemExit("--min-cloud-ratio must be in (0, 1]")
 
     if not settings.OPENROUTER_API_KEY:
         raise SystemExit("OPENROUTER_API_KEY is required")
@@ -266,6 +274,13 @@ async def main() -> int:
             result["core_coverage_vs_cloud_ratio"] = round(
                 result["core_coverage_ratio"] / cloud_core, 6
             )
+            result["coverage_parity_threshold"] = args.min_cloud_ratio
+            result["coverage_parity_pass"] = bool(
+                result["coverage_vs_cloud_ratio"] > args.min_cloud_ratio
+                and result["core_coverage_vs_cloud_ratio"] > args.min_cloud_ratio
+            )
+            if not result["coverage_parity_pass"]:
+                failed = True
         results.append(result)
         print(
             "REAL_DIAGNOSTIC_MODEL "
