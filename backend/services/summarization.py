@@ -3053,8 +3053,83 @@ class SummarizationService:
                 raise LocalPipelineV2Error("V2 selected-target acceptance binding failed") from exc
         rendered: dict[str, str] = {}
         section_relations: dict[str, dict[str, RelationMetadata]] = {}
+        # Small models are reliable editors for bounded sections, not giant JSON
+        # serializers. Above this size, the source-grounded deterministic renderer
+        # is the authoritative lossless fallback; it cannot omit or invent claims.
+        max_model_render_claims = 16
         for plan in plans:
             allowed = tuple(dict.fromkeys((*plan.required_claim_ids, *plan.optional_claim_ids)))
+
+            baseline_text = render_section(plan, by_id)
+            baseline_relations = {
+                cid: RelationMetadata(
+                    subject=by_id[cid].subject,
+                    predicate=by_id[cid].predicate,
+                    object=by_id[cid].object,
+                    direction=by_id[cid].direction,
+                    polarity=by_id[cid].polarity,
+                    condition=by_id[cid].condition,
+                    relation_type=by_id[cid].relation_type,
+                )
+                for cid in plan.required_claim_ids
+                if cid in by_id
+                and by_id[cid].relation_type.value in {"causal", "conditional"}
+            }
+            if (
+                selected_claim_id in by_id
+                and by_id[selected_claim_id].relation_type.value
+                in {"causal", "conditional"}
+            ):
+                selected_claim = by_id[selected_claim_id]
+                baseline_relations[selected_claim_id] = RelationMetadata(
+                    subject=selected_claim.subject,
+                    predicate=selected_claim.predicate,
+                    object=selected_claim.object,
+                    direction=selected_claim.direction,
+                    polarity=selected_claim.polarity,
+                    condition=selected_claim.condition,
+                    relation_type=selected_claim.relation_type,
+                )
+            baseline_snapshot = fidelity_firewall(
+                plan,
+                baseline_text,
+                by_id,
+                evidence,
+                selected_claim_id=selected_claim_id,
+                relation_metadata=baseline_relations,
+            )
+            baseline_snapshot = apply_final_byte_novelty(
+                baseline_snapshot, baseline_text
+            )
+
+            if len(allowed) > max_model_render_claims:
+                if not baseline_snapshot.accepted:
+                    raise LocalPipelineV2Error(
+                        f"V2 deterministic oversized section failed source-alignment "
+                        f"firewall ({plan.section_id})"
+                    )
+                rendered[plan.section_id] = baseline_text
+                section_relations[plan.section_id] = baseline_relations
+                if diagnostic_recorder:
+                    diagnostic_recorder.record(
+                        f"v2.section.{plan.section_id}.outcome",
+                        status="deterministic_oversize",
+                        metadata={
+                            "claim_id": plan.section_id,
+                            "claim_count": len(allowed),
+                            "model_render_claim_limit": max_model_render_claims,
+                        },
+                    )
+                    diagnostic_recorder.record(
+                        f"v2.patch.{plan.section_id}",
+                        status="deterministic_oversize",
+                        metadata={
+                            "claim_id": plan.section_id,
+                            "validation_issue_count": 0,
+                        },
+                    )
+                continue
+
             claims_json = json.dumps([
                 by_id[cid].model_dump(mode="json") for cid in allowed if cid in by_id
             ], ensure_ascii=False)
@@ -3103,29 +3178,8 @@ class SummarizationService:
                     )
                 raise LocalPipelineV2Error(f"V2 fidelity firewall rejected section {plan.section_id}") from exc
             # Missing required identity is candidate non-regression failure,
-            # not permission to erase the source-backed baseline. The guarded
-            # patch below detects the coverage loss and restores prior bytes.
-            baseline_text = render_section(plan, by_id)
-            baseline_relations = {
-                cid: RelationMetadata(subject=by_id[cid].subject, predicate=by_id[cid].predicate,
-                                      object=by_id[cid].object, direction=by_id[cid].direction,
-                                      polarity=by_id[cid].polarity, condition=by_id[cid].condition,
-                                      relation_type=by_id[cid].relation_type)
-                for cid in plan.required_claim_ids if cid in by_id
-                and by_id[cid].relation_type.value in {"causal", "conditional"}
-            }
-            if selected_claim_id in by_id and by_id[selected_claim_id].relation_type.value in {"causal", "conditional"}:
-                selected_claim = by_id[selected_claim_id]
-                baseline_relations[selected_claim_id] = RelationMetadata(
-                    subject=selected_claim.subject, predicate=selected_claim.predicate,
-                    object=selected_claim.object, direction=selected_claim.direction,
-                    polarity=selected_claim.polarity, condition=selected_claim.condition,
-                    relation_type=selected_claim.relation_type,
-                )
-            baseline_snapshot = fidelity_firewall(plan, baseline_text, by_id, evidence,
-                                                  selected_claim_id=selected_claim_id,
-                                                  relation_metadata=baseline_relations)
-            baseline_snapshot = apply_final_byte_novelty(baseline_snapshot, baseline_text)
+            # not permission to erase the already validated source-backed
+            # baseline constructed before the model call.
             relation_metadata_valid = True
             required_relation_ids = {
                 cid for cid in plan.required_claim_ids
