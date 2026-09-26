@@ -286,17 +286,21 @@ async def test_process_task_warms_up_before_correction_and_reports_timeout(monke
 
     async def fake_obtain(_task, _path):
         calls.append("transcript")
-        return "逐字稿內容"
+        return "不可變ASR原文"
 
     async def fake_warmup():
         calls.append("warmup")
 
     async def fake_correction(_task, transcript):
         calls.append("correction")
-        return transcript, None
+        assert transcript == "不可變ASR原文"
+        return "校正後理解文字", None
 
-    async def fake_summarize(*_args, **_kwargs):
+    observed_summary: dict = {}
+    async def fake_summarize(*args, **kwargs):
         calls.append("summarize")
+        observed_summary["transcript"] = args[0]
+        observed_summary.update(kwargs)
         raise httpx.ReadTimeout("")
 
     async def fake_save_result(_task_id, _filename, content):
@@ -319,9 +323,125 @@ async def test_process_task_warms_up_before_correction_and_reports_timeout(monke
     await processor._process_task(task)
 
     assert calls == ["transcript", "warmup", "correction", "summarize"]
+    assert observed_summary["transcript"] == "校正後理解文字"
+    assert observed_summary["raw_source_transcript"] == "不可變ASR原文"
     assert task.summary_failed is True
     assert "失敗原因：ReadTimeout" in saved["content"]
     assert "會議紀錄生成失敗" in saved["content"]
+
+
+@pytest.mark.asyncio
+async def test_task_processor_routes_ephemeral_selected_claim_target_to_local_summary(monkeypatch):
+    """Acceptance-only target follows the actual caller without entering TaskInfo."""
+    processor = TaskProcessor()
+    _patch_device(monkeypatch)
+    task = _make_task()
+    target = {
+        "source_quote": "預算導致延後",
+        "subject": "預算",
+        "predicate": "導致",
+        "object": "延後",
+        "relation_type": "causal",
+    }
+    observed: dict = {}
+
+    monkeypatch.setattr(task_processor_module.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(processor, "_update_progress", AsyncMock())
+    monkeypatch.setattr(processor, "_obtain_transcript", AsyncMock(return_value="預算導致延後。"))
+    monkeypatch.setattr(processor, "_apply_semantic_correction", AsyncMock(return_value=("預算導致延後。", None)))
+    monkeypatch.setattr(task_processor_module.summarization_service, "warmup_local_model", AsyncMock())
+
+    async def summarize(*args, **kwargs):
+        observed.update(kwargs)
+        return "會議紀錄"
+
+    monkeypatch.setattr(task_processor_module.summarization_service, "summarize", summarize)
+    monkeypatch.setattr(task_processor_module.file_manager, "save_transcript_result", AsyncMock())
+    monkeypatch.setattr(task_processor_module.file_manager, "save_result", AsyncMock())
+    monkeypatch.setattr(task_processor_module.task_queue, "complete_task", AsyncMock())
+
+    await processor._process_task(task, selected_claim_target=target)
+
+    assert observed["selected_claim_target"] == target
+    assert "selected_claim_target" not in task.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_live_taskprocessor_v2_delivery_rejects_selected_causal_inversion(monkeypatch):
+    """C1: exercise caller→service→V2→final delivery with a bad section candidate."""
+    import json
+    import re
+
+    from backend.core.config import settings
+    processor = TaskProcessor()
+    _patch_device(monkeypatch)
+    task = _make_task()
+    task.template_id = "general"
+    source = "預算導致延後。"
+    target = {
+        "source_quote": "預算導致延後",
+        "subject": "預算",
+        "predicate": "導致",
+        "object": "延後",
+        "relation_type": "causal",
+    }
+    captured_prompts: list[str] = []
+    saved: dict[str, str] = {}
+
+    monkeypatch.setattr(settings, "LOCAL_PIPELINE_VERSION", "v2")
+    monkeypatch.setattr(task_processor_module.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(processor, "_update_progress", AsyncMock())
+    monkeypatch.setattr(processor, "_obtain_transcript", AsyncMock(return_value=source))
+    monkeypatch.setattr(processor, "_apply_semantic_correction", AsyncMock(return_value=(source, None)))
+    monkeypatch.setattr(task_processor_module.summarization_service, "warmup_local_model", AsyncMock())
+    monkeypatch.setattr(task_processor_module.summarization_service, "_probe_native_schema_capability",
+                        AsyncMock(return_value="UNSUPPORTED"))
+    async def select_engine():
+        return "fake"
+
+    monkeypatch.setattr(task_processor_module.summarization_service, "_select_local_engine", select_engine)
+
+    async def generation(_engine, _system, message, **_kwargs):
+        captured_prompts.append(message)
+        if "SOURCE CHUNK" in message:
+            return json.dumps({"claims": [{
+                "claim_id": "opaque-claim",
+                "subject": "預算",
+                "predicate": "導致",
+                "object": "延後",
+                "relation_type": "causal",
+                "direction": "subject_to_object",
+                "polarity": "positive",
+                "evidence_refs": ["span-1"],
+                "evidence_quote": "預算導致延後",
+            }]}, ensure_ascii=False)
+        allowed_match = re.search(r"ALLOWED_CLAIMS: (\[[^\n]*\])", message)
+        allowed = json.loads(allowed_match.group(1)) if allowed_match else []
+        ids = [claim["claim_id"] for claim in allowed]
+        metadata = ({"opaque-claim": {
+            "subject": "預算", "predicate": "避免", "object": "延後",
+            "direction": "subject_to_object", "polarity": "positive",
+            "condition": None, "relation_type": "causal",
+        }} if "opaque-claim" in ids else {})
+        text = "預算避免延後〔span-1〕" if ids else ""
+        return json.dumps({"text": text, "claim_ids": ids, "relation_metadata": metadata}, ensure_ascii=False)
+
+    monkeypatch.setattr(task_processor_module.summarization_service, "_generate_with_local_engine", generation)
+    monkeypatch.setattr(task_processor_module.file_manager, "save_transcript_result", AsyncMock())
+
+    async def save_result(_task_id, _filename, content):
+        saved["content"] = content
+
+    monkeypatch.setattr(task_processor_module.file_manager, "save_result", save_result)
+    monkeypatch.setattr(task_processor_module.task_queue, "complete_task", AsyncMock())
+
+    await processor._process_task(task, selected_claim_target=target)
+
+    assert "預算導致延後" in saved["content"]
+    assert "預算避免延後" not in saved["content"]
+    assert task.summary_failed is False
+    assert "selected_claim_target" not in task.model_dump()
+    assert all('"source_quote"' not in prompt for prompt in captured_prompts)
 
 
 def test_device_info_reports_gpu_present_even_when_busy(monkeypatch):

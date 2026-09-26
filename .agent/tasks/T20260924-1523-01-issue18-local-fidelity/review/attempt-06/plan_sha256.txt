@@ -1,0 +1,1 @@
+24d1eddaf2ab494d0b424f1e72f30edbcac02b4a599ea3ae5bad482f8724fb87  .agent/tasks/T20260924-1523-01-issue18-local-fidelity/review/attempt-06/plan_snapshot.md

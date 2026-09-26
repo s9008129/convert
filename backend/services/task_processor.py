@@ -270,7 +270,7 @@ class TaskProcessor:
             log.warning(f"語意校正失敗，沿用清理後逐字稿: {describe_exception(exc)}")
             return cleaned, None
 
-    async def _process_task(self, task: TaskInfo):
+    async def _process_task(self, task: TaskInfo, *, selected_claim_target=None):
         """處理單一任務的完整生命週期，並在失敗時回寫錯誤狀態給前端。"""
         start_time = time.time()
 
@@ -289,6 +289,10 @@ class TaskProcessor:
 
             # 步驟 1：轉錄（含快取）
             transcript = await self._obtain_transcript(task, file_path)
+            # Keep immutable ASR output alongside the existing corrected view.
+            # Only local V2 consumes this optional argument; legacy/cloud paths
+            # continue receiving the same `transcript` value as before.
+            raw_source_transcript = transcript
 
             # 步驟 1.5：預熱本地 LLM（v4.6.2）
             # ASR 前已強制卸載 Ollama 模型（VRAM 交接），這裡先以 load-only
@@ -323,13 +327,16 @@ class TaskProcessor:
             summary = None
             summary_error: Optional[str] = None
             try:
-                summary = await summarization_service.summarize(
-                    transcript,
-                    mode=task.processing_mode,
-                    user_prompt=task.user_prompt,
-                    progress_callback=sync_progress_cb,
-                    template_id=task.template_id,
-                )
+                summary_kwargs = {
+                    "mode": task.processing_mode,
+                    "user_prompt": task.user_prompt,
+                    "progress_callback": sync_progress_cb,
+                    "template_id": task.template_id,
+                    "raw_source_transcript": raw_source_transcript,
+                }
+                if selected_claim_target is not None:
+                    summary_kwargs["selected_claim_target"] = selected_claim_target
+                summary = await summarization_service.summarize(transcript, **summary_kwargs)
             except Exception as e:
                 # P0-5：摘要失敗不偽裝成功——保留逐字稿輸出，但以顯著警告標示
                 # v4.6.2：timeout 類例外 str() 為空，必須帶類別名稱＋完整 traceback

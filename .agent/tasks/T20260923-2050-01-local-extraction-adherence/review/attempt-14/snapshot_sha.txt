@@ -1,0 +1,1 @@
+2b663c68a8f49d0cf769000db5d6d7629c54e589bff8e6c62a5168bc34fbe588  .agent/tasks/T20260923-2050-01-local-extraction-adherence/review/attempt-14/plan_snapshot.md

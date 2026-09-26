@@ -1,0 +1,1 @@
+6ec180cfa6a1d1e4cec0b057ecf7662ccd1a03961e9c15efff98d532d810fa79  .agent/tasks/T20260924-1523-01-issue18-local-fidelity/plan.md

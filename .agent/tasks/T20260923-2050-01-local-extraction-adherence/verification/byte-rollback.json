@@ -1,0 +1,33 @@
+{
+  "check_id": "BYTE-ROLLBACK",
+  "plan_revision": 8,
+  "baseline_commit": "ab2528b718e8c91557fd72db174b0f9bb78d3a68",
+  "fixture_id": "P7C-BYTE-ROLLBACK-SYNTHETIC-AB2528B",
+  "baseline_fixture_sha256": "117914c3a7503e941ce6c977fe4430418916bf6fc9dc744ac1296a256b7c529d",
+  "comparison_command": "DATA_DIR=/tmp/p7c-post-final-20260924 uv run --frozen pytest tests/ -q",
+  "comparison_exit_code": 0,
+  "comparison_summary": "1153 passed, 2 skipped in 10.60s",
+  "focused_contract_command": "DATA_DIR=/tmp/p7c-focused-fixed-KBXYnJ uv run --frozen pytest tests/test_t20260923_p7c_byte_rollback.py tests/test_t20260923_p7c_local_controls.py tests/test_t20260923_p7c_proper_noun_normalize.py tests/test_t20260923_p4a_record_coverage.py -q",
+  "focused_contract_exit_code": 0,
+  "focused_contract_summary": "59 passed in 0.53s",
+  "fields": {
+    "coverage_issues": {"expected_sha256": "2a7d6d6eef89e96606d93fbcf2a3068f1cbaf1f6b1c6b4a652935f0432cd852c", "actual_sha256": "2a7d6d6eef89e96606d93fbcf2a3068f1cbaf1f6b1c6b4a652935f0432cd852c", "equal": true},
+    "coverage_metrics": {"expected_sha256": "d61b2c6f0cbaa681638e26a4e90ace082b99ab087443001c3d9761505327e920", "actual_sha256": "d61b2c6f0cbaa681638e26a4e90ace082b99ab087443001c3d9761505327e920", "equal": true},
+    "local_extraction_system": {"expected_sha256": "bec0e5cfb53f85645d7ff7b0a39a55d243b6e25684ec768f8c62e9c8f52ecb95", "actual_sha256": "bec0e5cfb53f85645d7ff7b0a39a55d243b6e25684ec768f8c62e9c8f52ecb95", "equal": true},
+    "local_extraction_user": {"expected_sha256": "4981f3ee706cd05b08a4370bf3a00ba7b16e16de740bef78cfd91168bb6db371", "actual_sha256": "4981f3ee706cd05b08a4370bf3a00ba7b16e16de740bef78cfd91168bb6db371", "equal": true},
+    "local_initial_system": {"expected_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "actual_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "equal": true},
+    "local_initial_user": {"expected_sha256": "67c53e66700519b5d33473708f4528a4f32b2d847f658e4e32ebe86362850a9a", "actual_sha256": "67c53e66700519b5d33473708f4528a4f32b2d847f658e4e32ebe86362850a9a", "equal": true},
+    "local_refinement_system": {"expected_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "actual_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "equal": true},
+    "local_refinement_user": {"expected_sha256": "558727cb286ce462554b458c132fcdf3d71abbdbee54f31678452a45006bca65", "actual_sha256": "558727cb286ce462554b458c132fcdf3d71abbdbee54f31678452a45006bca65", "equal": true},
+    "local_finalized_record": {"expected_sha256": "b578fb0f30895d349b0d4b7783a2bf465cc9a8db521ca2c1f2135fe6ed233802", "actual_sha256": "b578fb0f30895d349b0d4b7783a2bf465cc9a8db521ca2c1f2135fe6ed233802", "equal": true},
+    "cloud_summary_system": {"expected_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "actual_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "equal": true},
+    "cloud_summary_user": {"expected_sha256": "a62f9863a2f99631c97b74a4856b018519386099d588f56b63a968533c43a4e2", "actual_sha256": "a62f9863a2f99631c97b74a4856b018519386099d588f56b63a968533c43a4e2", "equal": true},
+    "cloud_refinement_system": {"expected_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "actual_sha256": "c6c2e80afba863934968de157a62860a6928c336b2e68db9509224d4ea61a44f", "equal": true},
+    "cloud_refinement_user": {"expected_sha256": "f718f39593836c78cba46a59b80bb970b6e5f174eea4ae69500c58d89cce41f7", "actual_sha256": "f718f39593836c78cba46a59b80bb970b6e5f174eea4ae69500c58d89cce41f7", "equal": true},
+    "cloud_finalized_output": {"expected_sha256": "f18b55538ac654a3ce0cd69a1fc48b27e769c9e29ddb82061137ec66875431b1", "actual_sha256": "f18b55538ac654a3ce0cd69a1fc48b27e769c9e29ddb82061137ec66875431b1", "equal": true}
+  },
+  "mocked_generation_boundary_calls": 3,
+  "real_provider_calls": 0,
+  "raw_prompts_records_transcripts_stored": false,
+  "check_result": "PASS"
+}

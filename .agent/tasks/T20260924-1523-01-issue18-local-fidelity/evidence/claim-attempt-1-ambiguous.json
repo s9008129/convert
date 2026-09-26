@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "claim_id": "internal_audit_prep_attribution_0656",
+  "claim_adjudication": "AMBIGUOUS",
+  "adjudication_reason_code": "speaker_role_mapping_unverified",
+  "first_divergence_stage": null,
+  "final_delivery_status": "AMBIGUOUS",
+  "note": "Observed stage content is not used to assign claim status because the claimed role mapping is unverified.",
+  "runs": [
+    {
+      "run_id": "03129fa7709a42f285c38f6b82fe5a0d",
+      "code_revision": "722797b6fa42c8cca73838b1bd9e50fbdb12161f",
+      "manifest_sha256": "0bdd5a98a736902db308723537cb55ba1440bf4c5bf3ebe502a91ab762f89e69",
+      "observed_extraction_event": {
+        "stage_id": "extraction.chunk.1.raw",
+        "input_sha256": null,
+        "output_sha256": "2ea7e82fc8090a724244a974b090109f9d910f4bb3efd4383596c3886bf9827b"
+      },
+      "observed_final_event": {
+        "stage_id": "selection.final",
+        "input_sha256": null,
+        "output_sha256": "ecb346487583eab9dbc119fba1f96762f5a086753af98917e2598c2f43c3f581"
+      }
+    },
+    {
+      "run_id": "16c2ffac86224d6dacb0aa8cef6ea088",
+      "code_revision": "e5fa07dcffc4d303f99dbab9ee91fe460d40a563",
+      "manifest_sha256": "7b91b5a4d767329bbe252764b9f5beb7a04b28043ce5f63b5882e16ab324b8cb",
+      "observed_extraction_event": {
+        "stage_id": "extraction.chunk.1.raw",
+        "input_sha256": null,
+        "output_sha256": "9b95947948d88308bc5011dd14e18e96441334e3909f225e2a80065ab3345780"
+      },
+      "observed_final_event": {
+        "stage_id": "selection.final",
+        "input_sha256": null,
+        "output_sha256": "8b4504a88e7d945e5cebe390884e5e05faa88716266f492b7d35db7432eda28a"
+      }
+    }
+  ]
+}

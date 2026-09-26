@@ -1,0 +1,1 @@
+72d23f2facf0a88b12ec2f18a6850db011a2ff0dd9e15cefa1037bc230220c89  .agent/tasks/T20260924-1523-01-issue18-local-fidelity/plan.md

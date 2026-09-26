@@ -1,0 +1,22 @@
+TASK_ID: T20260924-1523-01-issue18-local-fidelity
+PLAN_REVISION: 11
+PLAN_SHA256: 1ef80c7807d7078981051f740346668a827b20266a39b1f1ebdad081ee3975a2
+HANDOFF_SHA256: bc29f344f7066f8e44b6b1dcebedc1da6b140b2c80851c515848a4b707b21fc0
+REVIEW: attempt-10 PLAN_APPROVED for the same revision and SHA
+TIMESTAMP_UTC: 2026-09-24T18:24:10Z
+BRANCH: issue-18-first-divergence-diagnostic
+HEAD: 693f7ee354f73895ed4ed02352cf2a89e3d2fe1b
+UPSTREAM_RELATION: 4 commits ahead, 0 behind
+SAFETY_REFS: backup/issue-18-before-gpt6-20260924-074037 and backup/issue-18-before-gpt6-20260924-153522 both point to c93968d7e9f5f20a2d2aa7488cf4b00f68f4abf0; both are ancestors of HEAD
+PATH_CLASSIFICATION:
+- MODIFIED: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/{execution.md,handoff.md,plan.md}; task artifacts, preserve append-only.
+- UNTRACKED: .agent/tasks/T20260924-1523-01-issue18-local-fidelity/e2e/attempt-06/, handoff-history/handoff-plan-r9-20260924-182148.md, review/attempt-09/, review/attempt-10/; task evidence/history, preserve immutable.
+- UNCLASSIFIED: none.
+PRODUCT_CODE_DIRTY_AT_START: no
+NO_RESET_STASH_CLEAN_OR_OVERWRITE: confirmed
+C3_PRECHANGE: DATA_DIR=$(mktemp -d /tmp/convert-r11-cloud.XXXXXX) uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"; exit 0; 13 passed, 41 deselected.
+C6_PRECHANGE: DATA_DIR=$(mktemp -d /tmp/convert-r11-full.XXXXXX) uv run pytest tests/ -q; exit 0; 864 passed, 2 skipped.
+C7_PRECHANGE: bash scripts/check_docs.sh; exit 0; same two pre-existing README version warnings.
+LOCAL_RUNTIME: LM Studio /v1/models and /api/v0/models HTTP 200. qwen3.8-27b-splash reports loaded; gemma-4-31b-it-mlx reports not-loaded. No raw meeting/model output recorded. Loading/unloading not attempted.
+FROZEN_EVALUATOR: parent audit reports no authoritative rubric/protocol or original unrounded baseline/sample set in current task/referenced architecture evidence; C10/C14 AUTHORITY blocker is QUALITY_ACCEPTANCE_BLOCKED_BY_MISSING_FROZEN_EVALUATOR. No replacement/rounding/waiver.
+PR_19: OPEN, DRAFT, target branch head oid eb3ca049cc72d21d2f4db974db5314b5f399d736 at observation.

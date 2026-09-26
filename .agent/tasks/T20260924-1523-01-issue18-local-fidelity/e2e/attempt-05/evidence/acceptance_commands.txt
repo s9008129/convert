@@ -1,0 +1,30 @@
+Stage05 attempt 05 evidence (redacted)
+Captured: 2026-09-25 Asia/Taipei
+Repository: /Users/hsiaojohnny/dev/convert
+Branch: issue-18-first-divergence-diagnostic
+HEAD: 1cd649f2fd9ff74129d3194f29e2320477ec52a0
+
+Startup identity checks:
+- git rev-parse HEAD -> 1cd649f2fd9ff74129d3194f29e2320477ec52a0
+- sha256sum plan.md -> 63b30bcae58abbba98e15a9d3b62ef23da391cbcbded19d6e22e494b29f1ba67
+- sha256sum handoff.md -> 78ffbdec979529e0e1648054cda32abe86cc94f596d1ecdd08a763d23d0beb71
+- sha256sum execution.md before report creation -> 45d55b0aaf4104a69e4f7d47089876aa54a2f434ca37df52098451cf5266f2ef
+- clean working tree observed before Stage05 report creation.
+
+Focused independent regression check:
+- DATA_DIR=$(mktemp -d /tmp/stage05-r9.XXXXXX) uv run pytest -q tests/test_local_pipeline_v2.py
+- Exit 0; 37 passed in 0.44s.
+
+Verifier-only in-memory probes (synthetic strings, no transcript/cache/model payload access):
+- Consolidation: three same-subject/predicate/object/evidence claims, differing in direction/status -> 1 retained asserted-forward claim and 0 conflicts.
+- Relation firewall: exact expected causal clause plus a contradictory predicate variant -> accepted=True; no relation issues or unsupported values.
+- These probes directly exercise current repository functions and are recorded in findings.md; they are not model E2E.
+
+Parent-reported controlled Qwen E2E (not executed by this verifier):
+- Two attempts were run by the parent with Qwen 3.8 27B.
+- Both ended in explicit LocalPipelineV2Error during structured extraction after schema repair; the second reproduced the same parse-failure class.
+- This verifier did not inspect raw transcript, prompts, generated model text, cache outputs, or raw snapshots. No payload-derived diagnosis is claimed.
+
+Privacy boundary:
+- No raw transcript/model output/cache files were opened or copied into this attempt.
+- Only synthetic in-memory probes and redacted, parent-reported status are recorded.

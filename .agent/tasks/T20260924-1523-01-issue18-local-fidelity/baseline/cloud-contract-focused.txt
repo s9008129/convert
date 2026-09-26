@@ -1,0 +1,8 @@
+# R16 Stage04 cloud contract baseline — post-change
+
+- Command: `DATA_DIR=tmp uv run pytest -q tests/test_summarization_service.py -k "cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat"`
+- Exit status: 0
+- Result: `13 passed, 41 deselected in 0.36s`
+- Privacy: no source/model payload recorded.
+- Comparison: pre-change same selection required writable test-only `DATA_DIR`; baseline was `13 passed, 41 deselected in 0.40s` (see `w0-stage04-r16-baselines-20260924T214420Z.md`).
+- Shared helper changes are confined to LM Studio local generation plumbing; the cloud-focused contract set remained green.

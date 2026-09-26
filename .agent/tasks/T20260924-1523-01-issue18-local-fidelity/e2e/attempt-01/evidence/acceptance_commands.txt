@@ -1,0 +1,52 @@
+Stage 05 independent acceptance attempt 01
+Timestamp: 2026-09-24 19:35-19:36 Asia/Taipei
+
+Environment: macOS; repository branch issue-18-first-divergence-diagnostic; HEAD eb3ca049cc72d21d2f4db974db5314b5f399d736. All pytest commands used a fresh process-scoped writable DATA_DIR=$(mktemp -d). No raw transcript, prompt, model output, or private cache was read or written.
+
+CHECK C2
+Command: DATA_DIR=$(mktemp -d) uv run pytest -q tests/test_local_pipeline_v2.py
+Observed: 9 passed in 0.43s; exit 0.
+
+CHECK C3
+Command: DATA_DIR=$(mktemp -d) uv run pytest -q tests/test_summarization_service.py -k 'cloud_pipeline or cloud_generation or validate_cloud or cloud_finalize or gemini_chat'
+Observed: 13 passed, 41 deselected in 0.45s; exit 0.
+
+CHECK C5/C6
+Command: DATA_DIR=$(mktemp -d) uv run pytest tests/ -q
+Observed: 826 passed, 2 skipped in 10.20s; exit 0.
+
+CHECK C7
+Command: bash scripts/check_docs.sh
+Observed: exit 0; two pre-existing version warnings for README.md and doc/README.md.
+
+CHECK C8
+Command: git diff --check
+Observed: clean; exit 0.
+
+RUNTIME INVENTORY
+Command: ollama list; curl --max-time 2 http://127.0.0.1:11434/api/tags
+Observed at 19:35: Ollama inventory empty; API returned {"models":[]}. A later LM Studio inventory became available and is recorded below.
+
+SELECTED-GATE PROBE (deterministic, no model or private data)
+Command: construct one typed causal claim/evidence span and call fidelity_firewall with rendered text containing the source subject/object but a different predicate.
+Observed: accepted=True, covered_claims=(C-R03-F056-CAUSAL-DIRECTION,), relation_issues=(), source_trace_complete=True. This demonstrates the selected causal-direction gate is not enforced by the current implementation.
+
+FROZEN QUALITY ARTIFACT SEARCH
+Command: find .agent/tasks/T20260924-1523-01-issue18-local-fidelity -type f | rg -i 'eval|rubric|blind|baseline|frozen'
+Observed: only historical claim-attempt-3-baseline.json and cloud-contract-focused.txt; no frozen evaluator/protocol or original unrounded Gemini baselines.
+
+LIVE LM STUDIO INVENTORY (later observation)
+Command: curl --max-time 3 http://127.0.0.1:1234/v1/models; curl --max-time 3 http://127.0.0.1:1234/api/v1/models
+Observed: required model IDs are listed; only qwen3.8-27b-splash has a loaded instance (context_length 32000). gemma-4-31b-it-mlx is listed but has no loaded instance.
+
+CHECK C9 QWEN LIVE V2
+Command: process-scoped DATA_DIR, LOCAL_LLM_PROVIDER=lmstudio, LMSTUDIO_MODEL=qwen3.8-27b-splash, LOCAL_PIPELINE_VERSION=v2; invoke SummarizationService._summarize_with_local_pipeline on a short synthetic Chinese causal transcript; print only length/hash/health.
+Observed: STATUS=PASS; one output length 42; selected model qwen3.8-27b-splash; server reachable; one loaded instance. Output content was not recorded.
+
+CHECK C9 GEMMA LIVE V2
+Command: same synthetic invocation with LMSTUDIO_MODEL=gemma-4-31b-it-mlx.
+Observed: `StableServiceError`, code `LMSTUDIO_MODEL_NOT_LOADED`; inventory had only qwen3.8-27b-splash loaded. No Gemma generation executed.
+
+CHECK C14 QWEN REPEATED BASELINE SAMPLE
+Command: three fresh process-scoped V2 invocations with qwen3.8-27b-splash at the implementation's fixed extraction temperature 0.3; print only length/hash/time.
+Observed: all three completed: lengths 90/42/61, distinct output hashes, elapsed 4.9/1.4/2.9s. This is not candidate-profile comparison: implementation exposes no live A/B profile controls and no N=3 samples for the required 0.3/0.5/0.7 extraction candidates.

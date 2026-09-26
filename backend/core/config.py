@@ -69,7 +69,23 @@ class Settings(BaseSettings):
         default=None,
         description="LM Studio optional explicit model/instance override；未設定時依 loaded instance 決定"
     )
-    
+
+    # OpenRouter 僅用於可重現的雲端驗證／CI，正式 Mac 預設仍為 LM Studio。
+    # 這條路徑刻意沿用 local pipeline，讓同一份 V2 prompt、schema、firewall
+    # 可在沒有實體 Mac/LM Studio 的 GitHub Actions 上驗證相同模型家族。
+    OPENROUTER_API_KEY: Optional[str] = Field(
+        default=None,
+        description="OpenRouter API 金鑰（LOCAL_LLM_PROVIDER=openrouter 時使用）"
+    )
+    OPENROUTER_BASE_URL: str = Field(
+        default="https://openrouter.ai/api/v1",
+        description="OpenRouter OpenAI-compatible API endpoint"
+    )
+    OPENROUTER_MODEL: Optional[str] = Field(
+        default=None,
+        description="OpenRouter 模型 ID；驗證時必須明確指定，不以其他模型偷偷 fallback"
+    )
+
     GEMINI_API_KEY: Optional[str] = Field(default=None, description="Gemini API 金鑰")
     
     @field_validator('GEMINI_API_KEY')
@@ -123,11 +139,35 @@ class Settings(BaseSettings):
     @classmethod
     def validate_local_llm_provider(cls, value: str) -> str:
         normalized = (value or "auto").strip().lower()
-        if normalized not in {"auto", "lmstudio", "ollama"}:
+        if normalized not in {"auto", "lmstudio", "ollama", "openrouter"}:
             raise ValueError(
-                "LOCAL_LLM_PROVIDER 必須是 auto、lmstudio 或 ollama"
+                "LOCAL_LLM_PROVIDER 必須是 auto、lmstudio、ollama 或 openrouter"
             )
         return normalized
+
+    @field_validator("OPENROUTER_API_KEY", mode="before")
+    @classmethod
+    def normalize_openrouter_api_key(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("OPENROUTER_API_KEY 必須是字串")
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("OPENROUTER_BASE_URL", mode="before")
+    @classmethod
+    def normalize_openrouter_base_url(cls, value: Optional[str]) -> str:
+        normalized = (value or "").strip().rstrip("/")
+        return normalized or "https://openrouter.ai/api/v1"
+
+    @field_validator("OPENROUTER_MODEL", mode="before")
+    @classmethod
+    def normalize_openrouter_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
     @field_validator("LMSTUDIO_MODEL", mode="before")
     @classmethod
@@ -219,6 +259,18 @@ class Settings(BaseSettings):
         default=True,
         description="關閉思考型模型（如 gemma4）的 thinking 輸出；否則 num_predict 預算會被思考耗盡導致正文極短或為空（E2E 實測根因）"
     )
+    LOCAL_PIPELINE_VERSION: str = Field(
+        default="v1",
+        description="本地摘要流程版本；僅明確設定 v2 才啟用結構化證據流程，v1 為相容預設"
+    )
+
+    @field_validator("LOCAL_PIPELINE_VERSION", mode="before")
+    @classmethod
+    def validate_local_pipeline_version(cls, value: str) -> str:
+        normalized = (value or "v1").strip().lower()
+        if normalized not in {"v1", "v2"}:
+            raise ValueError("LOCAL_PIPELINE_VERSION 必須是 v1 或 v2")
+        return normalized
 
     # ========================================
     # LLM 請求逾時與重試（v4.6.2）

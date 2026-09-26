@@ -1,0 +1,109 @@
+name: Issue18 OpenRouter macOS quality
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue18-openrouter-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-and-live:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'issue-18-first-divergence-diagnostic'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      DATA_DIR: ${{ github.workspace }}/data
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync locked dependencies
+        run: uv sync --frozen
+
+      - name: Focused regression suite
+        run: |
+          uv run --frozen pytest -q \
+            tests/test_issue18_openrouter_provider.py \
+            tests/test_local_pipeline_v2.py \
+            tests/test_issue18_diagnostics.py
+
+      - name: Compile touched runtime
+        run: |
+          uv run --frozen python -m py_compile \
+            backend/core/platform_config.py \
+            backend/core/config.py \
+            backend/services/local_pipeline_v2.py \
+            backend/services/summarization.py \
+            scripts/e2e/run_openrouter_v2_smoke.py \
+            scripts/e2e/run_openrouter_v2_real_diagnostic.py
+
+      - name: Full repository regression suite
+        run: uv run --frozen pytest tests/ -q
+
+      - name: Repository hygiene
+        run: |
+          git diff --check
+          bash scripts/check_docs.sh
+
+      - name: Live production-V2 smoke through OpenRouter
+        env:
+          LOCAL_LLM_PROVIDER: openrouter
+          LOCAL_PIPELINE_VERSION: v2
+          LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
+          LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
+          LOCAL_LLM_DISABLE_THINKING: "true"
+        run: |
+          test -n "${OPENROUTER_API_KEY:-}"
+          uv run --frozen python scripts/e2e/run_openrouter_v2_smoke.py
+
+      - name: Privacy-safe real-meeting diagnostic
+        env:
+          LOCAL_LLM_PROVIDER: openrouter
+          LOCAL_PIPELINE_VERSION: v2
+          LOCAL_LLM_EFFECTIVE_CONTEXT_TOKENS: "32768"
+          LOCAL_LLM_RESERVED_OUTPUT_TOKENS: "4096"
+          LOCAL_LLM_DISABLE_THINKING: "true"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${OPENROUTER_API_KEY:-}"
+          # These historical source/checklist files stay in RUNNER_TEMP and are
+          # never copied into the working tree or uploaded as artifacts.
+          git fetch --no-tags --depth=1 origin \
+            fix/local-lmstudio-record-quality:refs/remotes/origin/fix/local-lmstudio-record-quality \
+            fix/qwen-local-quality-parity:refs/remotes/origin/fix/qwen-local-quality-parity
+          git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/quality/fact_checklist.json \
+            > "$RUNNER_TEMP/fact_checklist.json"
+          git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/transcript.txt \
+            > "$RUNNER_TEMP/transcript.txt"
+          git show origin/fix/local-lmstudio-record-quality:.agent/tasks/T20260922-1930-01-local-record-quality-parity/e2e/attempt-04/record.md \
+            > "$RUNNER_TEMP/baseline_record.md"
+          git show origin/fix/qwen-local-quality-parity:.agent/tasks/T20260922-2037-02-local-model-quality-parity/e2e/attempt-C5-cloud-baseline/coverage.json \
+            > "$RUNNER_TEMP/cloud_coverage.json"
+          uv run --frozen python scripts/e2e/run_openrouter_v2_real_diagnostic.py \
+            --transcript "$RUNNER_TEMP/transcript.txt" \
+            --checklist "$RUNNER_TEMP/fact_checklist.json" \
+            --baseline-record "$RUNNER_TEMP/baseline_record.md" \
+            --cloud-coverage "$RUNNER_TEMP/cloud_coverage.json" \
+            --template section_meeting
+          rm -f \
+            "$RUNNER_TEMP/transcript.txt" \
+            "$RUNNER_TEMP/fact_checklist.json" \
+            "$RUNNER_TEMP/baseline_record.md" \
+            "$RUNNER_TEMP/cloud_coverage.json"

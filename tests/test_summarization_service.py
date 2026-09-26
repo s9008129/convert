@@ -178,7 +178,7 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
     transcript = "\n".join(
         [
             "甲：今天先確認專案時程。",
-            "乙：請王主任整理測試清單。",
+            "[00:00:02] 乙：方案甲使管線乙外露。",
             "丙：請陳科長準備上線公告。",
             "丁：下週三前要完成整合測試。",
             "戊：本週五前送出公告草案。",
@@ -189,9 +189,16 @@ def test_split_transcript_into_chunks_keeps_overlap(monkeypatch):
     chunks = service._split_transcript_into_chunks(transcript, max_input_tokens=25)
 
     assert len(chunks) >= 2
-    assert "乙：請王主任整理測試清單。" in chunks[0]
-    assert "乙：請王主任整理測試清單。" in chunks[1], "第二塊應保留前一塊的重疊行"
+    anchored_relation = "[00:00:02] 乙：方案甲使管線乙外露。"
+    assert anchored_relation in chunks[0]
+    assert anchored_relation in chunks[1], "重疊塊應保留原因→結果方向與來源錨點"
     assert all(service._estimate_tokens(chunk) <= 35 for chunk in chunks)
+
+    source_evidence_chunks = service._deduplicate_chunk_source_overlaps(chunks, overlap_line_limit=2)
+    source_evidence = "\n".join(source_evidence_chunks)
+    assert source_evidence.count(anchored_relation) == 1
+    assert "方案甲使管線乙外露" in source_evidence
+    assert "管線乙使方案甲外露" not in source_evidence
 
 
 def test_validate_summary_quality_flags_missing_sections_and_actions():
@@ -1305,3 +1312,58 @@ def test_placeholder_repair_leaves_body_lines_untouched():
 
     assert "表格欄位「（月）」的定義請人事室確認（科長，00:05:00）。" in fixed
     assert "（年）年" not in fixed
+
+
+@pytest.mark.asyncio
+async def test_ollama_generation_dispatch_forwards_json_schema_format(monkeypatch):
+    service = SummarizationService()
+    captured = {}
+    response_format = {"type": "json_schema", "json_schema": {
+        "name": "v2_fact_payload", "strict": True,
+        "schema": {"type": "object", "properties": {"claims": {"type": "array"}},
+                   "required": ["claims"], "additionalProperties": False},
+    }}
+
+    async def summarize(*args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+        return '{"claims":[]}'
+
+    monkeypatch.setattr(service, "_summarize_with_ollama", summarize)
+    result = await service._generate_with_local_engine(
+        "ollama", "system", "SYNTHETIC_SOURCE_SENTINEL", response_format=response_format,
+    )
+
+    assert result == '{"claims":[]}'
+    assert captured["kwargs"]["response_format"] == response_format
+
+
+@pytest.mark.asyncio
+async def test_ollama_native_json_schema_is_sent_as_api_chat_format(monkeypatch):
+    service = SummarizationService()
+    schema = {"type": "object", "properties": {"claims": {"type": "array"}},
+              "required": ["claims"], "additionalProperties": False}
+    response_format = {"type": "json_schema", "json_schema": {
+        "name": "v2_fact_payload", "strict": True, "schema": schema,
+    }}
+    captured = {}
+
+    async def get_client():
+        return object()
+
+    async def post(_client, payload, send_think_field):
+        captured.update(payload=payload, send_think_field=send_think_field)
+        return '{"claims":[]}', {"done_reason": "stop"}, False
+
+    monkeypatch.setattr(service, "_get_ollama_client", get_client)
+    monkeypatch.setattr(service, "_get_effective_model", lambda: "qwen3.8:27b")
+    monkeypatch.setattr(service, "_post_ollama_chat", post)
+
+    result = await service._summarize_with_ollama(
+        "system", "SYNTHETIC_SOURCE_SENTINEL", num_predict=64,
+        expand_output_budget=False, response_format=response_format,
+    )
+
+    assert result == '{"claims":[]}'
+    assert captured["payload"]["format"] == schema
+    assert captured["payload"]["model"] == "qwen3.8:27b"
+    assert "SYNTHETIC_SOURCE_SENTINEL" in captured["payload"]["messages"][-1]["content"]

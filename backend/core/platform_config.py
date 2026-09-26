@@ -14,7 +14,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 
-SUPPORTED_LOCAL_LLM_PROVIDERS = frozenset({"auto", "lmstudio", "ollama"})
+SUPPORTED_LOCAL_LLM_PROVIDERS = frozenset({"auto", "lmstudio", "ollama", "openrouter"})
 SUPPORTED_ASR_BACKENDS = frozenset({"auto", "transformers", "faster_whisper", "mlx_whisper", "apple"})
 #: macOS（Apple Silicon）可用的 ASR backend：只提供 Apple SpeechAnalyzer（Owner 2026-09-13）。
 APPLE_PLATFORM_ASR_BACKENDS = frozenset({"auto", "apple"})
@@ -48,7 +48,7 @@ def resolve_local_llm_provider(provider: str = "auto") -> str:
     normalized = (provider or "auto").strip().lower()
     if normalized not in SUPPORTED_LOCAL_LLM_PROVIDERS:
         raise ValueError(
-            f"LOCAL_LLM_PROVIDER 必須是 auto、lmstudio 或 ollama（收到 {provider!r}）"
+            f"LOCAL_LLM_PROVIDER 必須是 auto、lmstudio、ollama 或 openrouter（收到 {provider!r}）"
         )
     if normalized == "auto" and is_darwin_arm64():
         return "lmstudio"
