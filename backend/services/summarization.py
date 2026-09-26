@@ -2773,13 +2773,14 @@ class SummarizationService:
                 len(missing_material),
                 ",".join(sorted(kind for kind, _start, _end in missing_material)),
             )
-            # Group missing cues by a small deterministic raw-source statement
-            # window instead of resending the entire extraction chunk. This keeps
-            # recovery focused and prevents 27B/31B models from expanding a
-            # five-cue repair into thousands of tokens.
-            recovery_groups: dict[
-                tuple[str, int, int], list[tuple[str, int, int]]
-            ] = {}
+            # Recover exactly one missing cue per bounded source window.
+            # A small model otherwise tends to satisfy only a subset when several
+            # cues share one sentence. One cue -> one minimal claim request makes
+            # recall deterministic while still keeping every call tiny and
+            # source-grounded.
+            recovery_units: list[
+                tuple[str, int, int, tuple[str, int, int]]
+            ] = []
             span_by_id = {span.span_id: span for span in spans}
             for candidate in missing_material:
                 _kind, start, end = candidate
@@ -2812,14 +2813,15 @@ class SummarizationService:
                     right = min(len(containing.raw_text), left + width)
                     left = max(0, right - width)
                     window = (left, right)
-                recovery_groups.setdefault(
-                    (containing.span_id, window[0], window[1]), []
-                ).append(candidate)
+                recovery_units.append(
+                    (containing.span_id, window[0], window[1], candidate)
+                )
 
             recovered_claims = []
             for recovery_index, (
-                (span_id, window_start, window_end), candidates
-            ) in enumerate(recovery_groups.items(), start=1):
+                span_id, window_start, window_end, candidate
+            ) in enumerate(recovery_units, start=1):
+                candidates = [candidate]
                 span = span_by_id[span_id]
                 span_origin = span.start_offset or 0
                 window_text = span.raw_text[window_start:window_end]
@@ -2839,7 +2841,7 @@ class SummarizationService:
                         }
                     )
 
-                max_claims = max(1, min(len(candidates), 4))
+                max_claims = 1
                 recovery_temperature = min(extraction_temperature, 0.2)
                 # One strict FactClaim object carries many nullable fields; Gemma
                 # can legitimately need >768 tokens even for one claim. Give the
@@ -2857,7 +2859,7 @@ class SummarizationService:
                 )
                 recovery_message = (
                     "MATERIAL COVERAGE RECOVERY. Extract only the fact(s) needed "
-                    "to cover the listed missing cues from this SMALL raw-source "
+                    "to cover the ONE listed missing cue from this SMALL raw-source "
                     "window. Do not summarize the meeting and do not repeat "
                     "unrelated facts. evidence_refs must contain only the supplied "
                     "EVIDENCE_REF. evidence_quote must be an exact substring of "
