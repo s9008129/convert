@@ -753,6 +753,15 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
     coverage_issues: dict[str, list[str]] = {spec["id"]: [] for spec in specs}
     body_specs = [spec for spec in specs if spec["kind"] in {"section", "subfield"}]
     first_body = next((spec for spec in body_specs if spec["kind"] == "section"), None)
+    # section_meeting's first body slot is the historical tracking table, not a
+    # general catch-all. Unmatched record-worthy facts belong in the "科長轉知"
+    # narrative section so they are not silently squeezed into the table.
+    default_body = first_body
+    if template.id == "section_meeting":
+        default_body = next(
+            (spec for spec in body_specs if spec["id"] == "section-2"),
+            first_body,
+        )
     policy = template_claim_policy(template.id)
     for claim in ledger.claims:
         if claim.status != ClaimStatus.ASSERTED:
@@ -768,8 +777,27 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
         if match is None:
             match = next((spec for spec in body_specs if spec["kind"] == "section" and
                           spec["pattern"].search(source)), None)
+        if match is None and template.id == "section_meeting":
+            # Only explicit historical tracking language belongs in the tracking
+            # table. Generic facts default to the narrative report section.
+            if any(
+                cue in source
+                for cue in ("解除列管", "繼續列管", "歷次", "前次會議列管")
+            ):
+                match = next(
+                    (spec for spec in body_specs if spec["id"] == "section-1"),
+                    default_body,
+                )
+            elif any(
+                cue in source
+                for cue in ("交辦", "裁示", "科長指示", "主席指示", "提醒事項")
+            ):
+                match = next(
+                    (spec for spec in body_specs if spec["id"] == "section-3"),
+                    default_body,
+                )
         if match is None:
-            match = first_body
+            match = default_body
         if match is not None:
             assigned[match["id"]].append(claim.claim_id)
     plans: list[SectionPlan] = []
@@ -782,12 +810,22 @@ def template_section_plans(template: Any | None, ledger: FactLedger,
                 coverage_issues[target_spec["id"]].append(f"{kind}@{start}:{end}")
     for order, spec in enumerate(specs):
         ids = tuple(assigned[spec["id"]])
-        required_ids = tuple(
-            claim_id for claim_id in ids
-            if policy.is_required(next(claim.evidence_quote or "" for claim in ledger.claims
-                                       if claim.claim_id == claim_id))
-        )
-        optional_ids = tuple(claim_id for claim_id in ids if claim_id not in set(required_ids))
+        if template.id == "section_meeting" and spec["kind"] in {"section", "subfield"}:
+            # Primary extraction is already the salience filter ("record-worthy
+            # facts only"). Once a claim survives exact occurrence resolution,
+            # source validation and conflict handling, treating it as optional
+            # lets small render models silently drop most of the meeting. Make
+            # grounded body claims lossless at the render boundary; the guarded
+            # renderer may combine wording, but every claim must remain covered.
+            required_ids = ids
+        else:
+            required_ids = tuple(
+                claim_id for claim_id in ids
+                if policy.is_required(next(claim.evidence_quote or "" for claim in ledger.claims
+                                           if claim.claim_id == claim_id))
+            )
+        required_set = set(required_ids)
+        optional_ids = tuple(claim_id for claim_id in ids if claim_id not in required_set)
         refs = tuple(dict.fromkeys(ref for claim in ledger.claims if claim.claim_id in ids for ref in claim.evidence_refs))
         plans.append(SectionPlan(section_id=spec["id"], title=spec["title"],
                                  required_claim_ids=required_ids, optional_claim_ids=optional_ids,
