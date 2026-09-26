@@ -1115,14 +1115,22 @@ def _relation_mentions_are_source_supported(
     """
     target_ends = {relation.subject.strip().casefold(), relation.object.strip().casefold()}
     supported: list[RelationMetadata] = []
+    supported_triples: list[tuple[str, str, str]] = []
     for claim_id in (*plan.required_claim_ids, *plan.optional_claim_ids):
         claim = claims.get(claim_id)
-        if (claim is None or claim.status != ClaimStatus.ASSERTED
-                or claim.relation_type not in {RelationType.CAUSAL, RelationType.CONDITIONAL}):
+        if claim is None or claim.status != ClaimStatus.ASSERTED:
             continue
         candidate_ends = {claim.subject.strip().casefold(), claim.object.strip().casefold()}
         spans = claim_occurrence_spans(claim, evidence)
-        if (candidate_ends != target_ends or not relation_is_supported_in_order(claim, spans)):
+        if candidate_ends != target_ends or not relation_is_supported_in_order(claim, spans):
+            continue
+
+        # A section can legitimately contain more than one source-backed
+        # assertion about the same endpoints.  Track every exact planned triple,
+        # including ordinary FACT claims, so one valid sibling assertion is not
+        # mistaken for a hallucinated competing predicate.
+        supported_triples.append((claim.subject, claim.predicate, claim.object))
+        if claim.relation_type not in {RelationType.CAUSAL, RelationType.CONDITIONAL}:
             continue
         candidate_metadata = relation_metadata.get(claim_id)
         expected_metadata = RelationMetadata(
@@ -1178,7 +1186,11 @@ def _relation_mentions_are_source_supported(
             candidate for candidate in supported
             if _relation_core_is_rendered(clause, candidate)
         ]
-        if not matching:
+        matching_triples = [
+            triple for triple in supported_triples
+            if "".join(triple) in clause
+        ]
+        if not matching_triples:
             if has_assertive_bridge(clause):
                 if diagnostics is not None:
                     diagnostics["assertive_without_matching"] += 1
@@ -1187,12 +1199,10 @@ def _relation_mentions_are_source_supported(
         if diagnostics is not None:
             diagnostics["matching_clause_count"] += 1
         residual = clause
-        for candidate in matching:
-            # Remove every repetition of an already validated exact relation.
-            # Repetition is a usability concern, not a new semantic predicate.
-            residual = residual.replace(
-                f"{candidate.subject}{candidate.predicate}{candidate.object}", ""
-            )
+        for subject, predicate, obj in matching_triples:
+            # Remove every source-backed planned assertion sharing the target
+            # endpoints. Repetition is a usability concern, not semantic drift.
+            residual = residual.replace(f"{subject}{predicate}{obj}", "")
         if relation.subject in residual and relation.object in residual and has_assertive_bridge(residual):
             if diagnostics is not None:
                 diagnostics["residual_assertive"] += 1
