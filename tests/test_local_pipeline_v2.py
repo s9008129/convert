@@ -459,6 +459,40 @@ def test_template_plan_follows_header_section_subfield_topology_and_assigns_clai
     assert plans == tuple(sorted(plans, key=lambda p: p.template_order))
 
 
+def test_section_meeting_routes_generic_facts_to_report_and_requires_grounded_body_claims():
+    raw = "土地稅科倉庫漏水。歷次會議列管案件解除列管。"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    span = EvidenceSpan(
+        span_id="span-1", raw_text=raw, start_offset=0, end_offset=len(raw),
+        source_sha256=digest,
+    )
+    generic_quote = "土地稅科倉庫漏水"
+    tracking_quote = "歷次會議列管案件解除列管"
+    generic = _claim(
+        "generic", subject="土地稅科倉庫", predicate="發生", object="漏水",
+        evidence_quote=generic_quote,
+        resolved_start_offset=raw.index(generic_quote),
+        resolved_end_offset=raw.index(generic_quote) + len(generic_quote),
+    )
+    tracking = _claim(
+        "tracking", subject="歷次會議列管案件", predicate="解除", object="列管",
+        evidence_quote=tracking_quote,
+        resolved_start_offset=raw.index(tracking_quote),
+        resolved_end_offset=raw.index(tracking_quote) + len(tracking_quote),
+    )
+    plans = template_section_plans(
+        get_template("section_meeting"),
+        FactLedger(source_sha256=digest, claims=(generic, tracking)),
+        {"span-1": span},
+        raw_source=raw,
+    )
+    by_id = {plan.section_id: plan for plan in plans}
+    assert "generic" in by_id["section-2"].required_claim_ids
+    assert "tracking" in by_id["section-1"].required_claim_ids
+    assert "generic" not in by_id["section-1"].required_claim_ids
+    assert not by_id["section-2"].optional_claim_ids
+
+
 def test_trusted_template_policies_are_source_present_and_candidate_gaps_are_scoped():
     cues = {
         "general": "決議事項",
