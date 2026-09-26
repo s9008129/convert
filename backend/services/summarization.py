@@ -3061,6 +3061,11 @@ class SummarizationService:
             allowed = tuple(dict.fromkeys((*plan.required_claim_ids, *plan.optional_claim_ids)))
 
             baseline_text = render_section(plan, by_id)
+            # The deterministic renderer is the lossless authority for an
+            # oversized section. Carry structured semantics for every rendered
+            # claim that needs them, not only required causal claims. Otherwise
+            # an optional conditional/negative claim can make the deterministic
+            # fallback reject its own source-grounded bytes.
             baseline_relations = {
                 cid: RelationMetadata(
                     subject=by_id[cid].subject,
@@ -3071,9 +3076,13 @@ class SummarizationService:
                     condition=by_id[cid].condition,
                     relation_type=by_id[cid].relation_type,
                 )
-                for cid in plan.required_claim_ids
+                for cid in allowed
                 if cid in by_id
-                and by_id[cid].relation_type.value in {"causal", "conditional"}
+                and (
+                    by_id[cid].relation_type.value in {"causal", "conditional"}
+                    or by_id[cid].condition is not None
+                    or by_id[cid].polarity.casefold() in {"negative", "negated"}
+                )
             }
             if (
                 selected_claim_id in by_id
@@ -3104,6 +3113,25 @@ class SummarizationService:
 
             if len(allowed) > max_model_render_claims:
                 if not baseline_snapshot.accepted:
+                    log.warning(
+                        "V2 oversized deterministic baseline rejected: section={}, "
+                        "missing_required={}, relation={}, polarity={}, condition={}, "
+                        "attribution={}, numeric={}, date={}, entity={}, source_tag={}, "
+                        "coverage={}, unsupported={}",
+                        plan.section_id,
+                        len(set(baseline_snapshot.required_claim_ids)
+                            - set(baseline_snapshot.covered_claim_ids)),
+                        len(baseline_snapshot.relation_issues),
+                        len(baseline_snapshot.polarity_issues),
+                        len(baseline_snapshot.condition_issues),
+                        len(baseline_snapshot.attribution_issues),
+                        len(baseline_snapshot.numeric_issues),
+                        len(baseline_snapshot.date_issues),
+                        len(baseline_snapshot.entity_issues),
+                        len(baseline_snapshot.source_tag_issues),
+                        len(baseline_snapshot.coverage_issues),
+                        len(baseline_snapshot.unsupported_high_risk_values),
+                    )
                     raise LocalPipelineV2Error(
                         f"V2 deterministic oversized section failed source-alignment "
                         f"firewall ({plan.section_id})"
